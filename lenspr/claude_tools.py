@@ -203,6 +203,13 @@ LENS_TOOLS: list[dict[str, Any]] = [
                     "type": "integer",
                     "description": "How many levels of callers/callees to include. Default: 1.",
                 },
+                "include_source": {
+                    "type": "boolean",
+                    "description": (
+                        "Include full source code for callers/callees/tests. "
+                        "When false, returns only signature, file, line. Default: true."
+                    ),
+                },
             },
             "required": ["node_id"],
         },
@@ -235,6 +242,53 @@ LENS_TOOLS: list[dict[str, Any]] = [
             "required": ["pattern"],
         },
     },
+    {
+        "name": "lens_diff",
+        "description": (
+            "Show what changed since last sync without syncing. "
+            "Returns lists of added, modified, and deleted files/nodes."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+    {
+        "name": "lens_batch",
+        "description": (
+            "Apply multiple node updates atomically. All changes are validated first, "
+            "then applied together with a single reparse. Rolls back everything on error."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "updates": {
+                    "type": "array",
+                    "description": "List of {node_id, new_source} pairs to apply.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "node_id": {"type": "string"},
+                            "new_source": {"type": "string"},
+                        },
+                        "required": ["node_id", "new_source"],
+                    },
+                },
+            },
+            "required": ["updates"],
+        },
+    },
+    {
+        "name": "lens_health",
+        "description": (
+            "Get health report for the code graph: total nodes/edges, "
+            "edge confidence breakdown, nodes without docstrings, circular imports."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
 ]
 
 
@@ -258,6 +312,9 @@ def handle_tool_call(
         "lens_rename": _handle_rename,
         "lens_context": _handle_context,
         "lens_grep": _handle_grep,
+        "lens_diff": _handle_diff,
+        "lens_batch": _handle_batch,
+        "lens_health": _handle_health,
     }
 
     handler = handlers.get(tool_name)
@@ -610,6 +667,7 @@ def _handle_context(params: dict, ctx: LensContext) -> ToolResponse:
     include_callers = params.get("include_callers", True)
     include_callees = params.get("include_callees", True)
     include_tests = params.get("include_tests", True)
+    include_source = params.get("include_source", True)
     depth = params.get("depth", 1)
 
     node = database.get_node(node_id, ctx.graph_db)
@@ -650,16 +708,21 @@ def _handle_context(params: dict, ctx: LensContext) -> ToolResponse:
                 pred_node = database.get_node(pred_id, ctx.graph_db)
                 if pred_node:
                     edge_data = G.edges.get((pred_id, node_id), {})
-                    callers.append({
+                    caller_info: dict[str, Any] = {
                         "id": pred_node.id,
                         "type": pred_node.type.value,
                         "name": pred_node.name,
                         "file_path": pred_node.file_path,
                         "signature": pred_node.signature,
-                        "source_code": pred_node.source_code,
                         "edge_type": edge_data.get("type", "unknown"),
                         "depth": _level + 1,
-                    })
+                    }
+                    if include_source:
+                        caller_info["source_code"] = pred_node.source_code
+                    else:
+                        caller_info["start_line"] = pred_node.start_line
+                        caller_info["end_line"] = pred_node.end_line
+                    callers.append(caller_info)
                     if _level + 1 < depth:
                         next_frontier.update(G.predecessors(pred_id))
             frontier = next_frontier
@@ -678,16 +741,21 @@ def _handle_context(params: dict, ctx: LensContext) -> ToolResponse:
                 succ_node = database.get_node(succ_id, ctx.graph_db)
                 if succ_node:
                     edge_data = G.edges.get((node_id, succ_id), {})
-                    callees.append({
+                    callee_info: dict[str, Any] = {
                         "id": succ_node.id,
                         "type": succ_node.type.value,
                         "name": succ_node.name,
                         "file_path": succ_node.file_path,
                         "signature": succ_node.signature,
-                        "source_code": succ_node.source_code,
                         "edge_type": edge_data.get("type", "unknown"),
                         "depth": _level + 1,
-                    })
+                    }
+                    if include_source:
+                        callee_info["source_code"] = succ_node.source_code
+                    else:
+                        callee_info["start_line"] = succ_node.start_line
+                        callee_info["end_line"] = succ_node.end_line
+                    callees.append(callee_info)
                     if _level + 1 < depth:
                         next_frontier_out.update(G.successors(succ_id))
             frontier_out = next_frontier_out
@@ -705,12 +773,14 @@ def _handle_context(params: dict, ctx: LensContext) -> ToolResponse:
                 if pred_name.startswith("test_") or pred_file.startswith("test_"):
                     pred_node = database.get_node(pred_id, ctx.graph_db)
                     if pred_node:
-                        tests.append({
+                        test_info: dict[str, Any] = {
                             "id": pred_node.id,
                             "name": pred_node.name,
                             "file_path": pred_node.file_path,
-                            "source_code": pred_node.source_code,
-                        })
+                        }
+                        if include_source:
+                            test_info["source_code"] = pred_node.source_code
+                        tests.append(test_info)
 
         # Strategy 2: Find test functions by naming convention (test_<name>)
         test_nodes = database.search_nodes(
@@ -719,12 +789,14 @@ def _handle_context(params: dict, ctx: LensContext) -> ToolResponse:
         seen_ids = {t["id"] for t in tests}
         for tn in test_nodes:
             if tn.id not in seen_ids and tn.type.value in ("function", "method"):
-                tests.append({
+                tn_info: dict[str, Any] = {
                     "id": tn.id,
                     "name": tn.name,
                     "file_path": tn.file_path,
-                    "source_code": tn.source_code,
-                })
+                }
+                if include_source:
+                    tn_info["source_code"] = tn.source_code
+                tests.append(tn_info)
 
     result: dict[str, Any] = {
         "target": target,
@@ -830,3 +902,219 @@ def _find_containing_node(
                 best = {"id": nid, "name": data.get("name", ""), "type": data.get("type", "")}
 
     return best
+
+
+def _handle_diff(params: dict, ctx: LensContext) -> ToolResponse:
+    """Compare current filesystem against graph DB without syncing."""
+    parser = ctx._parser
+    extensions = set(parser.get_file_extensions())
+    skip_dirs = {
+        "__pycache__", ".git", ".lens", ".venv", "venv", "env",
+        "node_modules", ".mypy_cache", ".pytest_cache", ".ruff_cache",
+        "dist", "build", ".eggs", ".tox",
+    }
+
+    # Load current graph nodes
+    old_nodes, _ = database.load_graph(ctx.graph_db)
+    old_by_file: dict[str, list[dict[str, Any]]] = {}
+    for n in old_nodes:
+        old_by_file.setdefault(n.file_path, []).append({
+            "id": n.id, "name": n.name, "type": n.type.value, "hash": n.hash,
+        })
+    old_files = set(old_by_file.keys())
+
+    # Scan current filesystem
+    current_files: set[str] = set()
+    for file_path in sorted(ctx.project_root.rglob("*")):
+        if not file_path.is_file():
+            continue
+        if any(part in skip_dirs for part in file_path.parts):
+            continue
+        if file_path.suffix not in extensions:
+            continue
+        current_files.add(str(file_path.relative_to(ctx.project_root)))
+
+    # Compare using fingerprints for speed
+    fingerprints = ctx._load_fingerprints()
+
+    added_files: list[str] = sorted(current_files - old_files)
+    deleted_files: list[str] = sorted(old_files - current_files)
+    modified_files: list[str] = []
+
+    for rel in sorted(current_files & old_files):
+        file_path = ctx.project_root / rel
+        stat = file_path.stat()
+        old_fp = fingerprints.get(rel, {})
+        if (
+            stat.st_mtime != old_fp.get("mtime")
+            or stat.st_size != old_fp.get("size")
+        ):
+            modified_files.append(rel)
+
+    return ToolResponse(
+        success=True,
+        data={
+            "added_files": added_files,
+            "deleted_files": deleted_files,
+            "modified_files": modified_files,
+            "total_changes": (
+                len(added_files) + len(deleted_files) + len(modified_files)
+            ),
+            "deleted_nodes": [
+                node_info
+                for f in deleted_files
+                for node_info in old_by_file.get(f, [])
+            ],
+        },
+    )
+
+
+def _handle_batch(params: dict, ctx: LensContext) -> ToolResponse:
+    """Apply multiple node updates atomically."""
+    updates = params["updates"]
+    if not updates:
+        return ToolResponse(success=False, error="No updates provided.")
+
+    # Phase 1: Validate all updates
+    nodes_to_update: list[tuple[Any, str]] = []  # (node, new_source)
+    for upd in updates:
+        node_id = upd["node_id"]
+        new_source = upd["new_source"]
+
+        node = database.get_node(node_id, ctx.graph_db)
+        if not node:
+            return ToolResponse(
+                success=False,
+                error=f"Node not found: {node_id}",
+                hint="All updates aborted. Fix the node_id and retry.",
+            )
+
+        validation = validate_full(new_source, node)
+        if not validation.valid:
+            return ToolResponse(
+                success=False,
+                error=(
+                    f"Validation failed for {node_id}: "
+                    f"{validation.errors[0] if validation.errors else 'unknown'}"
+                ),
+                hint="All updates aborted. Fix the source and retry.",
+                warnings=validation.warnings,
+            )
+
+        nodes_to_update.append((node, new_source))
+
+    # Phase 2: Buffer all patches
+    files_to_reparse: set[str] = set()
+    for node, new_source in nodes_to_update:
+        file_path = ctx.project_root / node.file_path
+        ctx.patch_buffer.add(file_path, node, new_source)
+        files_to_reparse.add(node.file_path)
+
+    # Phase 3: Apply all patches at once
+    try:
+        ctx.patch_buffer.flush()
+    except PatchError as e:
+        ctx.patch_buffer.discard()
+        return ToolResponse(
+            success=False,
+            error=f"Patch failed: {e}",
+            hint="All updates rolled back.",
+        )
+
+    # Phase 4: Record history and reparse
+    from lenspr.tracker import record_change
+
+    results: list[dict[str, str]] = []
+    for node, new_source in nodes_to_update:
+        new_hash = hashlib.sha256(new_source.encode()).hexdigest()
+        record_change(
+            node_id=node.id,
+            action="modified",
+            old_source=node.source_code,
+            new_source=new_source,
+            old_hash=node.hash,
+            new_hash=new_hash,
+            affected_nodes=[],
+            description=f"Batch update: {node.name}",
+            db_path=ctx.history_db,
+        )
+        results.append({"node_id": node.id, "new_hash": new_hash})
+
+    # Single reparse for all affected files
+    for rel_path in files_to_reparse:
+        ctx.reparse_file(ctx.project_root / rel_path)
+
+    return ToolResponse(
+        success=True,
+        data={
+            "updated": results,
+            "count": len(results),
+            "files_reparsed": len(files_to_reparse),
+        },
+    )
+
+
+def _handle_health(params: dict, ctx: LensContext) -> ToolResponse:
+    """Generate health report for the code graph."""
+    G = ctx.get_graph()
+
+    # Node stats
+    total_nodes = G.number_of_nodes()
+    nodes_by_type: dict[str, int] = {}
+    nodes_without_docstring = 0
+    for _nid, data in G.nodes(data=True):
+        ntype = data.get("type", "unknown")
+        nodes_by_type[ntype] = nodes_by_type.get(ntype, 0) + 1
+        if ntype in ("function", "method", "class") and not data.get("docstring"):
+            nodes_without_docstring += 1
+
+    # Edge stats
+    total_edges = G.number_of_edges()
+    edges_by_type: dict[str, int] = {}
+    edges_by_confidence: dict[str, int] = {}
+    unresolved_edges: list[dict[str, str]] = []
+    for u, v, data in G.edges(data=True):
+        etype = data.get("type", "unknown")
+        edges_by_type[etype] = edges_by_type.get(etype, 0) + 1
+        conf = data.get("confidence", "unknown")
+        edges_by_confidence[conf] = edges_by_confidence.get(conf, 0) + 1
+        if conf == "unresolved":
+            reason = data.get("untracked_reason", "")
+            unresolved_edges.append({
+                "from": u, "to": v, "reason": reason,
+            })
+
+    # Circular imports
+    from lenspr.graph import detect_circular_imports
+    cycles = detect_circular_imports(G)
+
+    resolved = edges_by_confidence.get("resolved", 0)
+    confidence_pct = (resolved / total_edges * 100) if total_edges > 0 else 100.0
+
+    documentable = (
+        nodes_by_type.get("function", 0)
+        + nodes_by_type.get("method", 0)
+        + nodes_by_type.get("class", 0)
+    )
+    docstring_pct = (
+        ((documentable - nodes_without_docstring) / documentable * 100)
+        if documentable > 0
+        else 100.0
+    )
+
+    return ToolResponse(
+        success=True,
+        data={
+            "total_nodes": total_nodes,
+            "nodes_by_type": nodes_by_type,
+            "total_edges": total_edges,
+            "edges_by_type": edges_by_type,
+            "edges_by_confidence": edges_by_confidence,
+            "confidence_pct": round(confidence_pct, 1),
+            "nodes_without_docstring": nodes_without_docstring,
+            "docstring_pct": round(docstring_pct, 1),
+            "circular_imports": cycles,
+            "unresolved_edges": unresolved_edges[:20],
+            "unresolved_count": len(unresolved_edges),
+        },
+    )

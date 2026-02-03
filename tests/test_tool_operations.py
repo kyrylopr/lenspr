@@ -13,9 +13,12 @@ import pytest
 from lenspr import database
 from lenspr.claude_tools import (
     _handle_add_node,
+    _handle_batch,
     _handle_context,
     _handle_delete_node,
+    _handle_diff,
     _handle_grep,
+    _handle_health,
     _handle_update_node,
 )
 from lenspr.context import LensContext
@@ -348,3 +351,154 @@ class TestGrep:
         assert result.success
         assert result.data is not None
         assert result.data["count"] == 0
+
+
+class TestContextIncludeSource:
+    def test_include_source_true(self, project_with_tests: LensContext) -> None:
+        result = _handle_context(
+            {"node_id": "app.greet", "include_source": True},
+            project_with_tests,
+        )
+        assert result.success
+        assert result.data is not None
+        for caller in result.data["callers"]:
+            assert "source_code" in caller
+
+    def test_include_source_false(self, project_with_tests: LensContext) -> None:
+        result = _handle_context(
+            {"node_id": "app.greet", "include_source": False},
+            project_with_tests,
+        )
+        assert result.success
+        assert result.data is not None
+        for caller in result.data["callers"]:
+            assert "source_code" not in caller
+            assert "start_line" in caller
+            assert "end_line" in caller
+
+
+class TestDiff:
+    def test_no_changes(self, project_with_tests: LensContext) -> None:
+        result = _handle_diff({}, project_with_tests)
+        assert result.success
+        assert result.data is not None
+        assert result.data["total_changes"] == 0
+
+    def test_detects_new_file(self, project_with_tests: LensContext) -> None:
+        new_file = project_with_tests.project_root / "new_module.py"
+        new_file.write_text("def new_fn():\n    pass\n")
+        result = _handle_diff({}, project_with_tests)
+        assert result.success
+        assert result.data is not None
+        assert "new_module.py" in result.data["added_files"]
+
+    def test_detects_deleted_file(self, project_with_tests: LensContext) -> None:
+        (project_with_tests.project_root / "utils.py").unlink()
+        result = _handle_diff({}, project_with_tests)
+        assert result.success
+        assert result.data is not None
+        assert "utils.py" in result.data["deleted_files"]
+        # Should also list deleted nodes
+        deleted_ids = [n["id"] for n in result.data["deleted_nodes"]]
+        assert "utils.welcome" in deleted_ids
+
+    def test_detects_modified_file(self, project_with_tests: LensContext) -> None:
+        app_py = project_with_tests.project_root / "app.py"
+        app_py.write_text(
+            "def greet(name):\n"
+            '    return f"Hi, {name}"\n'
+        )
+        result = _handle_diff({}, project_with_tests)
+        assert result.success
+        assert result.data is not None
+        assert "app.py" in result.data["modified_files"]
+
+
+class TestBatch:
+    def test_batch_update_two_nodes(self, project: LensContext) -> None:
+        result = _handle_batch(
+            {
+                "updates": [
+                    {
+                        "node_id": "app.greet",
+                        "new_source": (
+                            "def greet(name):\n"
+                            '    return f"Hi, {name}"\n'
+                        ),
+                    },
+                    {
+                        "node_id": "app.farewell",
+                        "new_source": (
+                            "def farewell(name):\n"
+                            '    return f"Bye, {name}"\n'
+                        ),
+                    },
+                ],
+            },
+            project,
+        )
+        assert result.success
+        assert result.data is not None
+        assert result.data["count"] == 2
+        # Verify both changes applied
+        content = (project.project_root / "app.py").read_text()
+        assert "Hi, {name}" in content
+        assert "Bye, {name}" in content
+
+    def test_batch_rolls_back_on_invalid(self, project: LensContext) -> None:
+        original = (project.project_root / "app.py").read_text()
+        result = _handle_batch(
+            {
+                "updates": [
+                    {
+                        "node_id": "app.greet",
+                        "new_source": "def greet(name):\n    return 'ok'\n",
+                    },
+                    {
+                        "node_id": "app.farewell",
+                        "new_source": "def farewell(name:\n",  # syntax error
+                    },
+                ],
+            },
+            project,
+        )
+        assert not result.success
+        # File should be unchanged
+        assert (project.project_root / "app.py").read_text() == original
+
+    def test_batch_nonexistent_node(self, project: LensContext) -> None:
+        result = _handle_batch(
+            {
+                "updates": [
+                    {"node_id": "app.nope", "new_source": "def nope():\n    pass\n"},
+                ],
+            },
+            project,
+        )
+        assert not result.success
+
+    def test_batch_empty(self, project: LensContext) -> None:
+        result = _handle_batch({"updates": []}, project)
+        assert not result.success
+
+
+class TestHealth:
+    def test_returns_stats(self, project_with_tests: LensContext) -> None:
+        result = _handle_health({}, project_with_tests)
+        assert result.success
+        assert result.data is not None
+        assert result.data["total_nodes"] > 0
+        assert result.data["total_edges"] > 0
+        assert "nodes_by_type" in result.data
+        assert "edges_by_type" in result.data
+        assert "edges_by_confidence" in result.data
+        assert "confidence_pct" in result.data
+        assert "docstring_pct" in result.data
+        assert "circular_imports" in result.data
+
+    def test_node_types_present(self, project_with_tests: LensContext) -> None:
+        result = _handle_health({}, project_with_tests)
+        assert result.data is not None
+        types = result.data["nodes_by_type"]
+        assert "function" in types
+        assert types["function"] > 0

@@ -299,6 +299,7 @@ def run_server(project_path: str) -> None:
         include_callees: bool = True,
         include_tests: bool = True,
         depth: int = 1,
+        include_source: bool = True,
     ) -> str:
         """Get full context for a node in one call: source, callers, callees, tests, imports.
 
@@ -311,6 +312,7 @@ def run_server(project_path: str) -> None:
             include_callees: Include nodes this node calls/uses.
             include_tests: Include related test functions.
             depth: How many levels of callers/callees to include.
+            include_source: Include full source code for callers/callees/tests.
         """
         result = lenspr.handle_tool("lens_context", {
             "node_id": node_id,
@@ -318,6 +320,7 @@ def run_server(project_path: str) -> None:
             "include_callees": include_callees,
             "include_tests": include_tests,
             "depth": depth,
+            "include_source": include_source,
         })
         return json.dumps(result, indent=2)
 
@@ -342,6 +345,39 @@ def run_server(project_path: str) -> None:
             "file_glob": file_glob,
             "max_results": max_results,
         })
+        return json.dumps(result, indent=2)
+
+    @mcp.tool()
+    def lens_diff() -> str:
+        """Show what changed since last sync without syncing.
+
+        Returns lists of added, modified, and deleted files compared
+        to the current graph state.
+        """
+        result = lenspr.handle_tool("lens_diff", {})
+        return json.dumps(result, indent=2)
+
+    @mcp.tool()
+    def lens_batch(updates: list[dict]) -> str:
+        """Apply multiple node updates atomically with a single reparse.
+
+        All changes are validated first. If any validation fails, nothing is applied.
+        On patch error, all changes are rolled back.
+
+        Args:
+            updates: List of {node_id, new_source} pairs to apply.
+        """
+        result = lenspr.handle_tool("lens_batch", {"updates": updates})
+        return json.dumps(result, indent=2)
+
+    @mcp.tool()
+    def lens_health() -> str:
+        """Get health report for the code graph.
+
+        Returns: total nodes/edges, breakdown by type and confidence,
+        percentage of resolved edges, nodes without docstrings, circular imports.
+        """
+        result = lenspr.handle_tool("lens_health", {})
         return json.dumps(result, indent=2)
 
     logger.info("Starting LensPR MCP server for: %s", project_path)
