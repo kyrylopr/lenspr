@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 LENS_TOOLS: list[dict[str, Any]] = [
     {
         "name": "lens_list_nodes",
-        "description": "List all nodes in the codebase, optionally filtered by type, file, or name.",
+        "description": "List all nodes, optionally filtered by type, file, or name.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -36,7 +36,10 @@ LENS_TOOLS: list[dict[str, Any]] = [
                 },
                 "name": {
                     "type": "string",
-                    "description": "Filter by name (substring match, e.g. 'parse' finds 'parse_file', 'reparse').",
+                    "description": (
+                        "Filter by name (substring match, "
+                        "e.g. 'parse' finds 'parse_file')."
+                    ),
                 },
             },
         },

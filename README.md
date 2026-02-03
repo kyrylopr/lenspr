@@ -80,6 +80,13 @@ connections = lenspr.get_connections("app.utils.validate_email")
 
 # Search by name, code, or docstring
 results = lenspr.list_nodes()  # all nodes
+
+# Get full context in one call (source + callers + callees + tests)
+context = lenspr.handle_tool("lens_context", {"node_id": "app.utils.validate"})
+
+# Check graph health
+health = lenspr.handle_tool("lens_health", {})
+print(f"Nodes: {health['data']['total_nodes']}, Confidence: {health['data']['confidence_pct']}%")
 ```
 
 ### With Claude API
@@ -128,6 +135,8 @@ Create `.mcp.json` in your project root:
 
 Restart Claude Code — the `lens_*` tools will be available automatically.
 
+The MCP server automatically watches for file changes and re-syncs the graph (using watchdog or polling fallback).
+
 ### With Claude Desktop (MCP)
 
 Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
@@ -145,18 +154,35 @@ Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_
 
 ## Available Tools
 
+### Navigation & Discovery
+
 | Tool | Description |
 |------|-------------|
-| `lens_list_nodes` | List all functions, classes, modules with optional type/file filters |
+| `lens_list_nodes` | List all functions/classes/modules with type/file/name filters |
 | `lens_get_node` | Get full source code of a specific node |
-| `lens_get_connections` | See what calls a node and what it calls (incoming/outgoing/both) |
+| `lens_get_connections` | See what calls a node and what it calls |
+| `lens_context` | **One call = source + callers + callees + tests** — the most useful tool |
+| `lens_search` | Search nodes by name, code content, or docstring |
+| `lens_grep` | Text/regex search with graph context (which function contains each match) |
+| `lens_get_structure` | Compact project overview (files, classes, functions) |
+
+### Analysis & Safety
+
+| Tool | Description |
+|------|-------------|
 | `lens_check_impact` | **Always call before modifying** — shows all affected nodes |
+| `lens_health` | Graph quality report: nodes, edges, confidence %, docstring coverage |
+| `lens_diff` | Show what changed since last sync (added/modified/deleted files) |
+
+### Modification
+
+| Tool | Description |
+|------|-------------|
 | `lens_update_node` | Update node source with 3-level validation |
 | `lens_add_node` | Add new function/class to a file |
 | `lens_delete_node` | Remove a node from the codebase |
 | `lens_rename` | Rename a function/class across the entire project |
-| `lens_search` | Search nodes by name, code content, or docstring |
-| `lens_get_structure` | Compact project overview (files, classes, functions) |
+| `lens_batch` | Apply multiple updates atomically (all-or-nothing)
 
 ## Architecture
 
@@ -217,6 +243,9 @@ lenspr/
 │   ├── test_graph.py          # Graph algorithm tests (impact, dead code, cycles)
 │   ├── test_patcher.py        # Patching tests (single, multi, insert, remove)
 │   ├── test_validator.py      # Validation tests (syntax, structure, signature)
+│   ├── test_tool_operations.py # Tool handler tests (update, add, delete, context, grep, batch, health)
+│   ├── test_mcp_server.py     # MCP server tests (watcher, auto-sync, tool wrappers)
+│   ├── test_cli.py            # CLI command tests
 │   └── fixtures/              # Sample project for testing
 │       └── sample_project/
 ├── Makefile                   # Dev commands (test, lint, typecheck, serve, etc.)
@@ -257,7 +286,7 @@ make demo
 
 - Python 3.11+
 - Core: `networkx`, `jedi`
-- MCP server: `mcp` (optional, install with `pip install lenspr[mcp]`)
+- MCP server: `mcp`, `watchdog` (optional, install with `pip install lenspr[mcp]`)
 - Dev: `pytest`, `pytest-cov`, `ruff`, `mypy`
 
 ## License

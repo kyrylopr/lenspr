@@ -1,4 +1,4 @@
-.PHONY: install dev test test-cov lint lint-fix format typecheck check clean build serve demo
+.PHONY: install dev test test-cov lint lint-fix format typecheck check clean build serve demo health
 
 # Install package in production mode
 install:
@@ -61,3 +61,7 @@ demo:
 # Show project structure
 tree:
 	@find lenspr -name '*.py' | sort
+
+# Show graph health report
+health:
+	@python3 -c "import lenspr; lenspr.init('.'); r=lenspr.handle_tool('lens_health',{}); d=r['data']; print(f'Nodes: {d[\"total_nodes\"]} | Edges: {d[\"total_edges\"]} | Confidence: {d[\"confidence_pct\"]}% | Docstrings: {d[\"docstring_pct\"]}%')"
