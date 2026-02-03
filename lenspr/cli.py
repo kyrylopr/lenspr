@@ -23,6 +23,7 @@ def main() -> None:
     # -- sync --
     p_sync = subparsers.add_parser("sync", help="Resync graph with filesystem changes")
     p_sync.add_argument("path", nargs="?", default=".", help="Project root (default: cwd)")
+    p_sync.add_argument("--full", action="store_true", help="Force full reparse")
 
     # -- status --
     p_status = subparsers.add_parser("status", help="Show graph statistics")
@@ -46,6 +47,10 @@ def main() -> None:
     p_impact.add_argument("path", nargs="?", default=".", help="Project root (default: cwd)")
     p_impact.add_argument("--depth", type=int, default=2, help="Traversal depth (default: 2)")
 
+    # -- watch --
+    p_watch = subparsers.add_parser("watch", help="Watch for changes and auto-sync")
+    p_watch.add_argument("path", nargs="?", default=".", help="Project root (default: cwd)")
+
     # -- serve --
     p_serve = subparsers.add_parser("serve", help="Start MCP server (stdio transport)")
     p_serve.add_argument("path", nargs="?", default=".", help="Project root (default: cwd)")
@@ -62,6 +67,7 @@ def main() -> None:
         "status": cmd_status,
         "search": cmd_search,
         "impact": cmd_impact,
+        "watch": cmd_watch,
         "serve": cmd_serve,
     }
     handlers[args.command](args)
@@ -90,7 +96,7 @@ def cmd_sync(args: argparse.Namespace) -> None:
     path = str(Path(args.path).resolve())
     try:
         lenspr.init(path)
-        result = lenspr.sync()
+        result = lenspr.sync(full=args.full)
     except lenspr.LensError as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
@@ -151,6 +157,70 @@ def cmd_impact(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     print(json.dumps(result, indent=2))
+
+
+def cmd_watch(args: argparse.Namespace) -> None:
+    try:
+        from watchdog.events import FileSystemEventHandler
+        from watchdog.observers import Observer
+    except ImportError:
+        print(
+            "Watch dependencies not installed. Install with:\n"
+            "  pip install lenspr[watch]",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    import time
+
+    import lenspr
+
+    path = str(Path(args.path).resolve())
+    try:
+        lenspr.init(path)
+    except lenspr.LensError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    class SyncHandler(FileSystemEventHandler):  # type: ignore[misc]
+        def __init__(self) -> None:
+            self._pending = False
+
+        def on_modified(self, event: object) -> None:
+            if hasattr(event, "src_path") and event.src_path.endswith(".py"):  # type: ignore[union-attr]
+                self._pending = True
+
+        def on_created(self, event: object) -> None:
+            if hasattr(event, "src_path") and event.src_path.endswith(".py"):  # type: ignore[union-attr]
+                self._pending = True
+
+        def on_deleted(self, event: object) -> None:
+            if hasattr(event, "src_path") and event.src_path.endswith(".py"):  # type: ignore[union-attr]
+                self._pending = True
+
+    handler = SyncHandler()
+    observer = Observer()
+    observer.schedule(handler, path, recursive=True)
+    observer.start()
+
+    print(f"Watching {path} for changes... (Ctrl+C to stop)")
+    try:
+        while True:
+            time.sleep(1)
+            if handler._pending:
+                handler._pending = False
+                try:
+                    result = lenspr.sync()
+                    print(
+                        f"Synced: +{len(result.added)} "
+                        f"~{len(result.modified)} "
+                        f"-{len(result.deleted)}"
+                    )
+                except Exception as e:
+                    print(f"Sync error: {e}", file=sys.stderr)
+    except KeyboardInterrupt:
+        observer.stop()
+    observer.join()
 
 
 def cmd_serve(args: argparse.Namespace) -> None:

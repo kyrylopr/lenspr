@@ -40,6 +40,9 @@ dev = [
 mcp = [
     "mcp>=1.0",
 ]
+watch = [
+    "watchdog>=3.0",
+]
 
 [project.scripts]
 lenspr = "lenspr.cli:main"

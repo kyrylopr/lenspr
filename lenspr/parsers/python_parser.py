@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import logging
 import uuid
 from pathlib import Path
 
@@ -18,6 +19,8 @@ from lenspr.models import (
     Resolution,
 )
 from lenspr.parsers.base import BaseParser
+
+logger = logging.getLogger(__name__)
 
 # AST node types that indicate dynamic/untrackable patterns
 _DYNAMIC_CALL_NAMES = {"exec", "eval", "globals", "locals", "getattr", "setattr", "delattr"}
@@ -324,6 +327,9 @@ class CodeGraphVisitor(ast.NodeVisitor):
                     )
                 )
 
+        # Extract type annotation edges
+        self._extract_type_annotations(node, node_id)
+
         # Extract calls from function body
         self._extract_calls(node, node_id)
 
@@ -375,6 +381,70 @@ class CodeGraphVisitor(ast.NodeVisitor):
                     source=EdgeSource.STATIC,
                 )
             )
+
+    def _extract_type_annotations(
+        self, func_node: ast.FunctionDef | ast.AsyncFunctionDef, node_id: str
+    ) -> None:
+        """Extract USES edges from type annotations in function signatures."""
+        annotations: list[ast.expr] = []
+
+        # Parameter annotations
+        for arg in func_node.args.args + func_node.args.posonlyargs + func_node.args.kwonlyargs:
+            if arg.annotation:
+                annotations.append(arg.annotation)
+        if func_node.args.vararg and func_node.args.vararg.annotation:
+            annotations.append(func_node.args.vararg.annotation)
+        if func_node.args.kwarg and func_node.args.kwarg.annotation:
+            annotations.append(func_node.args.kwarg.annotation)
+
+        # Return annotation
+        if func_node.returns:
+            annotations.append(func_node.returns)
+
+        # Extract type names from annotations
+        for ann in annotations:
+            for name in self._extract_names_from_annotation(ann):
+                resolved = self.import_table.resolve(name)
+                target = resolved[0] if resolved else name
+                confidence = resolved[1] if resolved else EdgeConfidence.INFERRED
+                self.edges.append(
+                    Edge(
+                        id=_edge_id(),
+                        from_node=node_id,
+                        to_node=target,
+                        type=EdgeType.USES,
+                        line_number=ann.lineno,
+                        confidence=confidence,
+                        source=EdgeSource.STATIC,
+                    )
+                )
+
+    def _extract_names_from_annotation(self, node: ast.expr) -> list[str]:
+        """Recursively extract type names from an annotation AST node."""
+        names: list[str] = []
+        if isinstance(node, ast.Name):
+            # Skip builtins
+            if node.id not in {"int", "str", "float", "bool", "bytes", "None", "type", "object"}:
+                names.append(node.id)
+        elif isinstance(node, ast.Attribute):
+            name = self._resolve_name_from_ast(node)
+            if name:
+                names.append(name)
+        elif isinstance(node, ast.Subscript):
+            # e.g. list[User], dict[str, User], Optional[User]
+            names.extend(self._extract_names_from_annotation(node.value))
+            names.extend(self._extract_names_from_annotation(node.slice))
+        elif isinstance(node, ast.Tuple):
+            # e.g. tuple[User, Admin]
+            for elt in node.elts:
+                names.extend(self._extract_names_from_annotation(elt))
+        elif isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+            # e.g. User | None (PEP 604)
+            names.extend(self._extract_names_from_annotation(node.left))
+            names.extend(self._extract_names_from_annotation(node.right))
+        elif isinstance(node, ast.Constant):
+            pass  # string annotations, None, etc.
+        return names
 
     def _resolve_name_from_ast(self, node: ast.AST) -> str | None:
         """Extract a dotted name string from an AST node."""
@@ -509,13 +579,16 @@ class PythonParser(BaseParser):
 
     def parse_file(self, file_path: Path, root_path: Path) -> tuple[list[Node], list[Edge]]:
         """Parse a single Python file into nodes and edges."""
-        source = file_path.read_text(encoding="utf-8")
+        try:
+            source = file_path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            source = file_path.read_text(encoding="utf-8", errors="replace")
         source_lines = source.splitlines()
 
         try:
             tree = ast.parse(source, filename=str(file_path))
         except SyntaxError as e:
-            print(f"Warning: Syntax error in {file_path}: {e}")
+            logger.warning("Syntax error in %s: %s", file_path, e)
             return [], []
 
         module_id = _module_id_from_path(file_path, root_path)
@@ -546,7 +619,42 @@ class PythonParser(BaseParser):
         all_nodes = [module_node] + visitor.nodes
         all_edges = visitor.edges
 
+        # Jedi resolution pass: upgrade INFERRED edges to RESOLVED
+        if self._jedi_project is not None:
+            self._resolve_edges_with_jedi(all_edges, str(file_path))
+
         return all_nodes, all_edges
+
+    def _resolve_edges_with_jedi(self, edges: list[Edge], file_path: str) -> None:
+        """Use jedi to upgrade INFERRED call edges to RESOLVED."""
+        try:
+            script = jedi.Script(path=file_path, project=self._jedi_project)
+        except Exception:
+            return
+
+        for edge in edges:
+            if edge.confidence != EdgeConfidence.INFERRED:
+                continue
+            if edge.type not in (EdgeType.CALLS, EdgeType.USES):
+                continue
+            if edge.line_number is None:
+                continue
+
+            try:
+                names = script.goto(edge.line_number, 0)
+                if not names:
+                    # Try with column offset from the call name
+                    names = script.goto(edge.line_number, 4)
+                if names:
+                    d = names[0]
+                    module = d.module_name or ""
+                    name = d.name or ""
+                    resolved_id = f"{module}.{name}" if module else name
+                    if resolved_id and resolved_id != ".":
+                        edge.to_node = resolved_id
+                        edge.confidence = EdgeConfidence.RESOLVED
+            except Exception:
+                continue
 
     def resolve_name(
         self, file_path: str, line: int, column: int, project_root: str

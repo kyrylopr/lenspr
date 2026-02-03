@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
 
 from lenspr.models import Edge, Node, Resolution
+
+logger = logging.getLogger(__name__)
 
 
 class BaseParser(ABC):
@@ -100,6 +103,6 @@ class BaseParser(ABC):
                 all_edges.extend(edges)
             except Exception as e:
                 # Log but don't fail on individual file parse errors
-                print(f"Warning: Failed to parse {file_path}: {e}")
+                logger.warning("Failed to parse %s: %s", file_path, e)
 
         return all_nodes, all_edges

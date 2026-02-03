@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
+import logging
+import threading
 from datetime import UTC
 from pathlib import Path
 
@@ -13,6 +16,8 @@ from lenspr import graph as graph_ops
 from lenspr.models import SyncResult
 from lenspr.parsers.python_parser import PythonParser
 from lenspr.patcher import PatchBuffer
+
+logger = logging.getLogger(__name__)
 
 
 class LensContext:
@@ -37,6 +42,8 @@ class LensContext:
 
         self._graph: nx.DiGraph | None = None
         self._parser = PythonParser()
+        self._lock = threading.Lock()
+        self._lock_path = self.lens_dir / ".lock"
 
     @property
     def is_initialized(self) -> bool:
@@ -58,45 +65,182 @@ class LensContext:
         Reparse a single file and update the database.
 
         Removes old nodes/edges for this file, parses fresh, and saves.
+        Thread-safe and process-safe via locking.
         """
+        with self._lock:
+            self._reparse_file_locked(file_path)
+
+    def _reparse_file_locked(self, file_path: Path) -> None:
         rel_path = str(file_path.relative_to(self.project_root))
 
-        # Load current graph data
-        all_nodes, all_edges = database.load_graph(self.graph_db)
+        with open(self._lock_path, "w") as lock_file:
+            fcntl.flock(lock_file, fcntl.LOCK_EX)
+            try:
+                # Load current graph data
+                all_nodes, all_edges = database.load_graph(self.graph_db)
 
-        # Remove nodes from this file
-        old_node_ids = {n.id for n in all_nodes if n.file_path == rel_path}
-        all_nodes = [n for n in all_nodes if n.file_path != rel_path]
-        all_edges = [
-            e for e in all_edges
-            if e.from_node not in old_node_ids and e.to_node not in old_node_ids
-        ]
+                # Remove nodes from this file
+                old_node_ids = {n.id for n in all_nodes if n.file_path == rel_path}
+                all_nodes = [n for n in all_nodes if n.file_path != rel_path]
+                all_edges = [
+                    e for e in all_edges
+                    if e.from_node not in old_node_ids and e.to_node not in old_node_ids
+                ]
 
-        # Parse fresh
-        if file_path.exists():
-            new_nodes, new_edges = self._parser.parse_file(file_path, self.project_root)
-            all_nodes.extend(new_nodes)
-            all_edges.extend(new_edges)
+                # Parse fresh
+                if file_path.exists():
+                    new_nodes, new_edges = self._parser.parse_file(
+                        file_path, self.project_root
+                    )
+                    all_nodes.extend(new_nodes)
+                    all_edges.extend(new_edges)
 
-        # Save
-        database.save_graph(all_nodes, all_edges, self.graph_db)
-        self.invalidate_graph()
+                # Save
+                database.save_graph(all_nodes, all_edges, self.graph_db)
+                self.invalidate_graph()
+            finally:
+                fcntl.flock(lock_file, fcntl.LOCK_UN)
 
     def full_sync(self) -> SyncResult:
         """
         Full reparse of the project + hash-based diff.
 
         Returns SyncResult describing what changed.
+        Thread-safe and process-safe via locking.
         """
-        # Load old graph
-        old_nodes, _ = database.load_graph(self.graph_db)
-        old_index = {n.id: n for n in old_nodes}
+        with self._lock:
+            return self._full_sync_locked()
 
-        # Full reparse
-        new_nodes, new_edges = self._parser.parse_project(self.project_root)
-        new_index = {n.id: n for n in new_nodes}
+    def _full_sync_locked(self) -> SyncResult:
+        with open(self._lock_path, "w") as lock_file:
+            fcntl.flock(lock_file, fcntl.LOCK_EX)
+            try:
+                # Load old graph
+                old_nodes, _ = database.load_graph(self.graph_db)
+                old_index = {n.id: n for n in old_nodes}
+
+                # Full reparse
+                new_nodes, new_edges = self._parser.parse_project(self.project_root)
+                new_index = {n.id: n for n in new_nodes}
+
+                # Compute diff
+                added = [n for nid, n in new_index.items() if nid not in old_index]
+                deleted = [n for nid, n in old_index.items() if nid not in new_index]
+                modified = [
+                    n for nid, n in new_index.items()
+                    if nid in old_index and n.hash != old_index[nid].hash
+                ]
+
+                # Save new graph
+                database.save_graph(new_nodes, new_edges, self.graph_db)
+                self.invalidate_graph()
+
+                # Update config
+                self._update_config()
+
+                return SyncResult(added=added, modified=modified, deleted=deleted)
+            finally:
+                fcntl.flock(lock_file, fcntl.LOCK_UN)
+
+    def incremental_sync(self) -> SyncResult:
+        """
+        Sync only files that changed since last sync (by mtime + size).
+
+        Falls back to full_sync if no previous fingerprints exist.
+        """
+        with self._lock:
+            return self._incremental_sync_locked()
+
+    def _incremental_sync_locked(self) -> SyncResult:
+        # Load previous fingerprints
+        old_fingerprints = self._load_fingerprints()
+        if not old_fingerprints:
+            logger.info("No previous fingerprints, falling back to full sync")
+            return self._full_sync_locked()
+
+        # Scan current files
+        extensions = set(self._parser.get_file_extensions())
+        current_files: dict[str, dict[str, float | int]] = {}
+        skip_dirs = {
+            "__pycache__", ".git", ".lens", ".venv", "venv", "env",
+            "node_modules", ".mypy_cache", ".pytest_cache", ".ruff_cache",
+            "dist", "build", ".eggs", ".tox",
+        }
+
+        for file_path in sorted(self.project_root.rglob("*")):
+            if not file_path.is_file():
+                continue
+            if any(part in skip_dirs for part in file_path.parts):
+                continue
+            if file_path.suffix not in extensions:
+                continue
+            rel = str(file_path.relative_to(self.project_root))
+            stat = file_path.stat()
+            current_files[rel] = {"mtime": stat.st_mtime, "size": stat.st_size}
+
+        # Find changed, added, deleted files
+        changed_files: list[str] = []
+        added_files: list[str] = []
+        deleted_files: list[str] = []
+
+        for rel, fp in current_files.items():
+            if rel not in old_fingerprints:
+                added_files.append(rel)
+            elif (
+                fp["mtime"] != old_fingerprints[rel].get("mtime")
+                or fp["size"] != old_fingerprints[rel].get("size")
+            ):
+                changed_files.append(rel)
+
+        for rel in old_fingerprints:
+            if rel not in current_files:
+                deleted_files.append(rel)
+
+        files_to_reparse = changed_files + added_files
+        if not files_to_reparse and not deleted_files:
+            logger.info("No files changed, nothing to sync")
+            return SyncResult(added=[], modified=[], deleted=[])
+
+        logger.info(
+            "Incremental sync: %d changed, %d added, %d deleted",
+            len(changed_files), len(added_files), len(deleted_files),
+        )
+
+        with open(self._lock_path, "w") as lock_file:
+            fcntl.flock(lock_file, fcntl.LOCK_EX)
+            try:
+                all_nodes, all_edges = database.load_graph(self.graph_db)
+                old_index = {n.id: n for n in all_nodes}
+
+                # Remove nodes from changed/deleted files
+                files_to_remove = set(changed_files + added_files + deleted_files)
+                removed_node_ids = {
+                    n.id for n in all_nodes if n.file_path in files_to_remove
+                }
+                all_nodes = [n for n in all_nodes if n.file_path not in files_to_remove]
+                all_edges = [
+                    e for e in all_edges
+                    if e.from_node not in removed_node_ids
+                    and e.to_node not in removed_node_ids
+                ]
+
+                # Reparse changed/added files
+                for rel in files_to_reparse:
+                    file_path = self.project_root / rel
+                    if file_path.exists():
+                        new_nodes, new_edges = self._parser.parse_file(
+                            file_path, self.project_root
+                        )
+                        all_nodes.extend(new_nodes)
+                        all_edges.extend(new_edges)
+
+                database.save_graph(all_nodes, all_edges, self.graph_db)
+                self.invalidate_graph()
+            finally:
+                fcntl.flock(lock_file, fcntl.LOCK_UN)
 
         # Compute diff
+        new_index = {n.id: n for n in all_nodes}
         added = [n for nid, n in new_index.items() if nid not in old_index]
         deleted = [n for nid, n in old_index.items() if nid not in new_index]
         modified = [
@@ -104,23 +248,57 @@ class LensContext:
             if nid in old_index and n.hash != old_index[nid].hash
         ]
 
-        # Save new graph
-        database.save_graph(new_nodes, new_edges, self.graph_db)
-        self.invalidate_graph()
-
-        # Update config
-        self._update_config()
-
+        self._update_config(current_files)
         return SyncResult(added=added, modified=modified, deleted=deleted)
 
-    def _update_config(self) -> None:
-        """Update config.json with current state."""
+    def _load_fingerprints(self) -> dict[str, dict[str, float | int]]:
+        """Load file fingerprints from config."""
+        if not self.config_path.exists():
+            return {}
+        try:
+            config = json.loads(self.config_path.read_text())
+            result: dict[str, dict[str, float | int]] = config.get(
+                "file_fingerprints", {}
+            )
+            return result
+        except (json.JSONDecodeError, KeyError):
+            return {}
+
+    def _update_config(
+        self, fingerprints: dict[str, dict[str, float | int]] | None = None
+    ) -> None:
+        """Update config.json with current state and file fingerprints."""
         from datetime import datetime
 
-        config = {}
+        config: dict[str, object] = {}
         if self.config_path.exists():
-            config = json.loads(self.config_path.read_text())
+            try:
+                config = json.loads(self.config_path.read_text())
+            except json.JSONDecodeError:
+                config = {}
 
         config["last_sync"] = datetime.now(UTC).isoformat()
+
+        if fingerprints is not None:
+            config["file_fingerprints"] = fingerprints
+        elif "file_fingerprints" not in config:
+            # Build fingerprints from current files
+            extensions = set(self._parser.get_file_extensions())
+            fp: dict[str, dict[str, float | int]] = {}
+            skip_dirs = {
+                "__pycache__", ".git", ".lens", ".venv", "venv", "env",
+                "node_modules",
+            }
+            for file_path in self.project_root.rglob("*"):
+                if not file_path.is_file():
+                    continue
+                if any(part in skip_dirs for part in file_path.parts):
+                    continue
+                if file_path.suffix not in extensions:
+                    continue
+                rel = str(file_path.relative_to(self.project_root))
+                stat = file_path.stat()
+                fp[rel] = {"mtime": stat.st_mtime, "size": stat.st_size}
+            config["file_fingerprints"] = fp
 
         self.config_path.write_text(json.dumps(config, indent=2))

@@ -103,14 +103,17 @@ def init(project_path: str, force: bool = False) -> LensContext:
     return _ctx
 
 
-def sync() -> SyncResult:
+def sync(full: bool = False) -> SyncResult:
     """
     Resync graph with current file state.
 
-    Full reparse + hash-based diff to detect changes.
+    Uses incremental sync by default (only reparses changed files).
+    Pass full=True to force a complete reparse.
     """
     ctx = _require_ctx()
-    return ctx.full_sync()
+    if full:
+        return ctx.full_sync()
+    return ctx.incremental_sync()
 
 
 def get_system_prompt() -> str:

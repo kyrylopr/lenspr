@@ -11,7 +11,7 @@ from lenspr.models import (
     ToolResponse,
 )
 from lenspr.patcher import insert_code, remove_lines
-from lenspr.validator import validate_full
+from lenspr.validator import validate_full, validate_syntax
 
 if TYPE_CHECKING:
     from lenspr.context import LensContext
@@ -319,15 +319,14 @@ def _handle_update_node(params: dict, ctx: LensContext) -> ToolResponse:
         ctx.patch_buffer.discard()
         return ToolResponse(success=False, error=str(e))
 
-    # Update database
-    new_hash = hashlib.sha256(new_source.encode()).hexdigest()
-    database.update_node_source(node_id, new_source, new_hash, ctx.graph_db)
+    # Compute impact BEFORE reparse (graph still has old edges)
+    G = ctx.get_graph()
+    impact = graph.get_impact_zone(G, node_id, depth=1)
 
     # Record history
     from lenspr.tracker import record_change
 
-    G = ctx.get_graph()
-    impact = graph.get_impact_zone(G, node_id, depth=1)
+    new_hash = hashlib.sha256(new_source.encode()).hexdigest()
     record_change(
         node_id=node_id,
         action="modified",
@@ -340,8 +339,8 @@ def _handle_update_node(params: dict, ctx: LensContext) -> ToolResponse:
         db_path=ctx.history_db,
     )
 
-    # Invalidate graph cache
-    ctx.invalidate_graph()
+    # Reparse file to rebuild nodes AND edges from the patched source
+    ctx.reparse_file(file_path)
 
     return ToolResponse(
         success=True,
@@ -354,6 +353,15 @@ def _handle_update_node(params: dict, ctx: LensContext) -> ToolResponse:
 def _handle_add_node(params: dict, ctx: LensContext) -> ToolResponse:
     file_path = ctx.project_root / params["file_path"]
     source_code = params["source_code"]
+
+    # Validate syntax before inserting
+    syntax_check = validate_syntax(source_code)
+    if not syntax_check.valid:
+        return ToolResponse(
+            success=False,
+            error=syntax_check.errors[0] if syntax_check.errors else "Syntax error.",
+            hint="Fix the syntax and try again.",
+        )
 
     if not file_path.exists():
         return ToolResponse(
@@ -374,7 +382,7 @@ def _handle_add_node(params: dict, ctx: LensContext) -> ToolResponse:
             )
     else:
         # Append to end of file
-        content = file_path.read_text()
+        content = file_path.read_text(encoding="utf-8")
         after_line = len(content.splitlines())
 
     new_content = insert_code(file_path, source_code, after_line)
@@ -466,7 +474,7 @@ def _handle_rename(params: dict, ctx: LensContext) -> ToolResponse:
 
     # Update definition
     file_path = ctx.project_root / node.file_path
-    content = file_path.read_text()
+    content = file_path.read_text(encoding="utf-8")
     # Replace in definition only (within the node's line range)
     lines = content.splitlines()
     for i in range(node.start_line - 1, min(node.end_line, len(lines))):
@@ -485,7 +493,7 @@ def _handle_rename(params: dict, ctx: LensContext) -> ToolResponse:
             continue
 
         caller_file = ctx.project_root / caller.file_path
-        caller_content = caller_file.read_text()
+        caller_content = caller_file.read_text(encoding="utf-8")
 
         if old_name in caller_content:
             caller_content = caller_content.replace(old_name, new_name)
@@ -500,7 +508,7 @@ def _handle_rename(params: dict, ctx: LensContext) -> ToolResponse:
         if rel in files_modified:
             continue
         try:
-            text = py_file.read_text()
+            text = py_file.read_text(encoding="utf-8")
         except Exception:
             continue
         for i, line in enumerate(text.splitlines(), 1):
