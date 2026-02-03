@@ -89,12 +89,21 @@ class TestUpdateNode:
 
     def test_update_rejects_structure_change(self, project: LensContext) -> None:
         """Can't turn a function into a class."""
+        # Debug: check what node type was assigned
+        from lenspr import database
+
+        node = database.get_node("app.greet", project.graph_db)
+        assert node is not None, "Node app.greet not found in database"
+
         result = _handle_update_node(
             {"node_id": "app.greet", "new_source": "class greet:\n    pass"},
             project,
         )
         # Debug: print result details if test fails
-        assert not result.success, f"Expected failure but got: {result}"
+        assert not result.success, (
+            f"Expected failure but got: {result}. "
+            f"Node type was: {node.type}, node name: {node.name}"
+        )
 
     def test_update_nonexistent_node(self, project: LensContext) -> None:
         result = _handle_update_node(
