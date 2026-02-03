@@ -281,8 +281,8 @@ class LensContext:
 
         if fingerprints is not None:
             config["file_fingerprints"] = fingerprints
-        elif "file_fingerprints" not in config:
-            # Build fingerprints from current files
+        else:
+            # Always rebuild fingerprints from current files (full_sync)
             extensions = set(self._parser.get_file_extensions())
             fp: dict[str, dict[str, float | int]] = {}
             skip_dirs = {
