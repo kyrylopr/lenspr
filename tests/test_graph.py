@@ -9,7 +9,6 @@ from lenspr.graph import (
     find_path,
     get_dependency_tree,
     get_impact_zone,
-    get_structure,
 )
 from lenspr.models import Edge, EdgeType, Node, NodeType
 

@@ -2,7 +2,7 @@
 
 **Code-as-graph for safe LLM-assisted development.**
 
-LensPR parses your Python codebase into a graph (nodes = functions, classes, modules; edges = calls, imports, inheritance) and gives LLMs structured tools to navigate, analyze impact, and safely modify code.
+LensPR parses your Python codebase into a directed graph (nodes = functions, classes, modules; edges = calls, imports, inheritance) and gives LLMs structured tools to navigate, analyze impact, and safely modify code.
 
 ## The Problem
 
@@ -11,7 +11,7 @@ LLMs see code as text. They don't know that the function on line 50 is called fr
 ## The Solution
 
 ```
-Source Files → AST Parser → Graph (SQLite + NetworkX) → Claude Tools
+Source Files → AST Parser → Graph (SQLite + NetworkX) → Tools (CLI / MCP / API)
 ```
 
 LensPR provides:
@@ -19,12 +19,46 @@ LensPR provides:
 - **Structured navigation** — LLMs explore code through graph queries, not file reads
 - **Safe patching** — validated changes applied to original files, no regeneration
 - **Confidence scoring** — explicit about what the graph can and cannot see
+- **Change history** — every modification tracked with rollback capability
+
+## Installation
+
+```bash
+# Basic install
+pip install lenspr
+
+# With MCP server support (for Claude Code / Claude Desktop)
+pip install lenspr[mcp]
+
+# Development install
+pip install lenspr[dev]
+```
 
 ## Quick Start
 
+### CLI
+
 ```bash
-pip install lenspr
+# Initialize LensPR on your project
+lenspr init ./my_project
+
+# Re-sync after code changes
+lenspr sync ./my_project
+
+# View project stats
+lenspr status ./my_project
+
+# Search for functions/classes
+lenspr search ./my_project "validate"
+
+# Check impact before changing a function
+lenspr impact ./my_project app.models.User
+
+# Start MCP server (requires lenspr[mcp])
+lenspr serve ./my_project
 ```
+
+### Python API
 
 ```python
 import lenspr
@@ -32,30 +66,37 @@ import lenspr
 # Initialize on your project
 lenspr.init("./my_project")
 
-# Get tools for Claude API
-tools = lenspr.get_claude_tools()
-prompt = lenspr.get_system_prompt()
-
-# Or use directly
+# List all functions
 nodes = lenspr.list_nodes(type="function")
+
+# Get source code of a specific node
+node = lenspr.get_node("app.models.User")
+
+# Check what would break if you change a node
 impact = lenspr.check_impact("app.models.User")
+
+# See connections (who calls this, what does it call)
+connections = lenspr.get_connections("app.utils.validate_email")
+
+# Search by name, code, or docstring
+results = lenspr.list_nodes()  # all nodes
 ```
 
-## With Claude API
+### With Claude API
 
 ```python
 import anthropic
 import lenspr
 
 # Initialize
-ctx = lenspr.init("./my_project")
+lenspr.init("./my_project")
 tools = lenspr.get_claude_tools()
 system_prompt = lenspr.get_system_prompt()
 
 # Create Claude client
 client = anthropic.Anthropic()
 
-# Claude can now use lens_* tools to navigate and modify your code
+# Claude can now use lens_* tools to navigate and modify code
 response = client.messages.create(
     model="claude-sonnet-4-20250514",
     system=system_prompt,
@@ -70,20 +111,52 @@ for block in response.content:
         print(result)
 ```
 
+### With Claude Code (MCP)
+
+Create `.mcp.json` in your project root:
+
+```json
+{
+  "mcpServers": {
+    "lenspr": {
+      "command": "lenspr",
+      "args": ["serve", "/absolute/path/to/your/project"]
+    }
+  }
+}
+```
+
+Restart Claude Code — the `lens_*` tools will be available automatically.
+
+### With Claude Desktop (MCP)
+
+Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "lenspr": {
+      "command": "lenspr",
+      "args": ["serve", "/absolute/path/to/your/project"]
+    }
+  }
+}
+```
+
 ## Available Tools
 
 | Tool | Description |
 |------|-------------|
-| `lens_list_nodes` | List all functions, classes, modules with filters |
+| `lens_list_nodes` | List all functions, classes, modules with optional type/file filters |
 | `lens_get_node` | Get full source code of a specific node |
-| `lens_get_connections` | See what calls a node and what it calls |
-| `lens_check_impact` | **Always call before modifying** — shows affected nodes |
+| `lens_get_connections` | See what calls a node and what it calls (incoming/outgoing/both) |
+| `lens_check_impact` | **Always call before modifying** — shows all affected nodes |
 | `lens_update_node` | Update node source with 3-level validation |
 | `lens_add_node` | Add new function/class to a file |
 | `lens_delete_node` | Remove a node from the codebase |
-| `lens_rename` | Rename across the entire project |
-| `lens_search` | Search nodes by name, code, or docstring |
-| `lens_get_structure` | Compact project overview |
+| `lens_rename` | Rename a function/class across the entire project |
+| `lens_search` | Search nodes by name, code content, or docstring |
+| `lens_get_structure` | Compact project overview (files, classes, functions) |
 
 ## Architecture
 
@@ -91,13 +164,13 @@ for block in response.content:
 Source Files (always source of truth)
      │
      ▼
-Parser (ast + jedi) ──→ SQLite (graph.db, history.db)
+Parser (ast + jedi) ──→ SQLite (graph.db, history.db, resolve_cache.db)
                               │
                               ▼
                         NetworkX (lazy cache for graph algorithms)
                               │
                               ▼
-                        Tools (Claude API / MCP / Python API)
+                        Tools (CLI / MCP Server / Python API / Claude API)
                               │
                               ▼
                         Patcher (line-based replace, bottom-to-top)
@@ -106,50 +179,86 @@ Parser (ast + jedi) ──→ SQLite (graph.db, history.db)
                         Validator (syntax → structure → signature)
 ```
 
-Key design decisions:
-- **Patcher, not generator** — files are patched in place, never regenerated
-- **SQLite is the single source of truth** — NetworkX is a read-only cache
-- **Pluggable parsers** — `BaseParser` interface ready for JS/TS/Go
-- **Confidence scoring** — edges marked as resolved, inferred, or unresolved
-- **Batch patching** — multiple changes to one file applied bottom-to-top
+### Key Design Decisions
 
-## Development
-
-```bash
-git clone https://github.com/kyrylopr/lenspr.git
-cd lenspr
-python3 -m venv .venv
-source .venv/bin/activate
-make dev
-make test
-```
+- **Patcher, not generator** — files are patched in place, never regenerated. Only the changed lines are touched.
+- **SQLite is the single source of truth** — NetworkX graph is a read-only cache rebuilt on demand.
+- **3-level validation** — every code change is checked for valid syntax, preserved structure (function stays function), and signature compatibility.
+- **Bottom-to-top patching** — multiple patches in one file are applied from the end upward to avoid line number corruption.
+- **Pluggable parsers** — `BaseParser` interface ready for JS/TS/Go/Rust parsers.
+- **Confidence scoring** — edges marked as `resolved` (jedi confirmed), `inferred` (AST-based), or `unresolved` (dynamic dispatch).
+- **Change tracking** — every modification recorded in `history.db` with old/new source and affected nodes list.
 
 ## Project Structure
 
 ```
 lenspr/
 ├── lenspr/
-│   ├── __init__.py          # Public API
-│   ├── models.py            # Data classes (Node, Edge, Change, etc.)
-│   ├── context.py           # LensContext — central state manager
-│   ├── database.py          # SQLite operations
-│   ├── graph.py             # NetworkX graph algorithms
-│   ├── patcher.py           # File patching (no regeneration)
-│   ├── validator.py         # 3-level validation
-│   ├── tracker.py           # Change history
-│   ├── claude_tools.py      # Tool definitions + handlers
+│   ├── __init__.py            # Public API (init, sync, list_nodes, check_impact, etc.)
+│   ├── models.py              # Data classes (Node, Edge, Change, Patch, etc.)
+│   ├── context.py             # LensContext — central state manager
+│   ├── database.py            # SQLite operations (3 databases)
+│   ├── graph.py               # NetworkX graph algorithms (impact, dead code, cycles)
+│   ├── patcher.py             # File patching (PatchBuffer, bottom-to-top apply)
+│   ├── validator.py           # 3-level validation (syntax → structure → signature)
+│   ├── tracker.py             # Change history and rollback
+│   ├── claude_tools.py        # Tool definitions + handlers for Claude API
+│   ├── cli.py                 # CLI entry point (init, sync, status, search, impact, serve)
+│   ├── mcp_server.py          # MCP server (FastMCP, stdio transport)
 │   ├── parsers/
-│   │   ├── base.py          # BaseParser interface
-│   │   └── python_parser.py # Python AST + jedi parser
-│   ├── plugins/
-│   │   └── (future: pytest tracer, runtime sampler)
+│   │   ├── base.py            # BaseParser interface (pluggable for other languages)
+│   │   └── python_parser.py   # Python AST + jedi parser
+│   ├── plugins/               # Future: pytest tracer, runtime sampler
 │   └── prompts/
-│       └── system.md        # Claude system prompt template
+│       └── system.md          # Claude system prompt template
 ├── tests/
-├── Makefile
-├── pyproject.toml
+│   ├── test_parser.py         # Parser tests (nodes, edges, cross-file resolution)
+│   ├── test_database.py       # SQLite CRUD tests
+│   ├── test_graph.py          # Graph algorithm tests (impact, dead code, cycles)
+│   ├── test_patcher.py        # Patching tests (single, multi, insert, remove)
+│   ├── test_validator.py      # Validation tests (syntax, structure, signature)
+│   └── fixtures/              # Sample project for testing
+│       └── sample_project/
+├── Makefile                   # Dev commands (test, lint, typecheck, serve, etc.)
+├── pyproject.toml             # Project config (hatchling, ruff, mypy, pytest)
+├── LICENSE                    # MIT
 └── README.md
 ```
+
+## Development
+
+```bash
+# Clone and setup
+git clone https://github.com/kyrylopr/lenspr.git
+cd lenspr
+python3 -m venv .venv
+source .venv/bin/activate
+make dev
+
+# Run all checks
+make check          # lint + typecheck + test
+
+# Individual commands
+make test           # pytest
+make test-cov       # pytest with coverage
+make lint           # ruff check
+make lint-fix       # ruff check --fix
+make typecheck      # mypy
+make format         # ruff format
+
+# Run MCP server locally
+make serve
+
+# Demo: parse lenspr itself
+make demo
+```
+
+## Requirements
+
+- Python 3.11+
+- Core: `networkx`, `jedi`
+- MCP server: `mcp` (optional, install with `pip install lenspr[mcp]`)
+- Dev: `pytest`, `pytest-cov`, `ruff`, `mypy`
 
 ## License
 

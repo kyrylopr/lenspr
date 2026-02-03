@@ -1,12 +1,12 @@
-.PHONY: install dev test lint format typecheck clean build publish
+.PHONY: install dev test test-cov lint lint-fix format typecheck check clean build serve demo
 
 # Install package in production mode
 install:
 	pip install -e .
 
-# Install with dev dependencies
+# Install with dev + mcp dependencies
 dev:
-	pip install -e ".[dev]"
+	pip install -e ".[dev,mcp]"
 
 # Run tests
 test:
@@ -20,9 +20,13 @@ test-cov:
 lint:
 	ruff check lenspr/ tests/
 
-# Format with black
+# Lint and auto-fix
+lint-fix:
+	ruff check --fix lenspr/ tests/
+
+# Format with ruff
 format:
-	black lenspr/ tests/
+	ruff format lenspr/ tests/
 
 # Type checking
 typecheck:
@@ -31,19 +35,29 @@ typecheck:
 # Run all checks (lint + typecheck + test)
 check: lint typecheck test
 
-# Clean build artifacts
+# Clean build artifacts and caches
 clean:
 	rm -rf dist/ build/ *.egg-info .pytest_cache .mypy_cache .ruff_cache
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+
+# Clean LensPR graph data
+clean-lens:
+	rm -rf .lens/
 
 # Build package
 build: clean
 	python -m build
 
+# Start MCP server on current directory
+serve:
+	lenspr serve .
+
+# Demo: parse lenspr itself
+demo:
+	lenspr init --force .
+	lenspr status .
+	lenspr search . "validate"
+
 # Show project structure
 tree:
-	@find lenspr -name '*.py' | sort | head -50
-
-# Quick demo: init lenspr on itself
-demo:
-	python -c "import lenspr; ctx = lenspr.init('.', force=True); print(f'Parsed {len(lenspr.list_nodes())} nodes')"
+	@find lenspr -name '*.py' | sort

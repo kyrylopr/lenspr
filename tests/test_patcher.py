@@ -1,7 +1,5 @@
 """Tests for the file patcher."""
 
-import tempfile
-from pathlib import Path
 
 import pytest
 

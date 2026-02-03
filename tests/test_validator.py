@@ -1,6 +1,5 @@
 """Tests for the three-level validator."""
 
-import pytest
 
 from lenspr.models import Node, NodeType
 from lenspr.validator import validate_full, validate_signature, validate_structure, validate_syntax

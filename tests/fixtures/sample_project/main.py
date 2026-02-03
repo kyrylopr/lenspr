@@ -1,8 +1,7 @@
 """Sample project entry point for testing."""
 
-from utils.helpers import format_name, validate_email
 from models import User
-
+from utils.helpers import format_name, validate_email
 
 MAX_USERS = 100
 APP_NAME = "SampleApp"

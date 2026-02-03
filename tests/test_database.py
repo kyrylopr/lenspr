@@ -16,7 +16,7 @@ from lenspr.database import (
     search_nodes,
     update_node_source,
 )
-from lenspr.models import Edge, EdgeConfidence, EdgeSource, EdgeType, Node, NodeType
+from lenspr.models import Edge, EdgeType, Node, NodeType
 
 
 @pytest.fixture
