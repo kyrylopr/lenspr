@@ -190,9 +190,23 @@ class _ImportTable:
         self.star_imports.append(module)
 
     def resolve(self, name: str) -> tuple[str, EdgeConfidence] | None:
-        """Try to resolve a local name to a qualified name."""
+        """Try to resolve a local name to a qualified name.
+
+        Handles both simple names (e.g., "database") and dotted names
+        (e.g., "database.save_annotation") by resolving the first part.
+        """
+        # Direct match (simple name)
         if name in self.names:
             return self.names[name], EdgeConfidence.RESOLVED
+
+        # Try to resolve dotted names (e.g., "database.save_annotation")
+        if "." in name:
+            parts = name.split(".", 1)
+            first, rest = parts[0], parts[1]
+            if first in self.names:
+                # Resolve first part and append the rest
+                resolved_first = self.names[first]
+                return f"{resolved_first}.{rest}", EdgeConfidence.RESOLVED
 
         # Check if name could come from a star import
         for module in self.star_imports:
@@ -277,6 +291,9 @@ class CodeGraphVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        # Capture parent scope BEFORE pushing new scope
+        parent_id = self._current_scope
+
         node_id = self._push_scope(node.name)
         end_line = node.end_lineno or node.lineno
         source = _get_source_segment(self.source_lines, node.lineno, end_line)
@@ -300,6 +317,20 @@ class CodeGraphVisitor(ast.NodeVisitor):
             )
         )
         self._claim_lines(node.lineno, end_line)
+
+        # Add CONTAINS edge if this class is nested inside a function
+        if len(self._scope_stack) > 2 and parent_id not in self._class_stack:
+            self.edges.append(
+                Edge(
+                    id=_edge_id(),
+                    from_node=parent_id,
+                    to_node=node_id,
+                    type=EdgeType.CONTAINS,
+                    line_number=node.lineno,
+                    confidence=EdgeConfidence.RESOLVED,
+                    source=EdgeSource.STATIC,
+                )
+            )
 
         # Inheritance edges
         for base in node.bases:
@@ -351,6 +382,10 @@ class CodeGraphVisitor(ast.NodeVisitor):
     def _visit_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
         is_method = len(self._class_stack) > 0
         node_type = NodeType.METHOD if is_method else NodeType.FUNCTION
+
+        # Capture parent scope BEFORE pushing new scope
+        parent_id = self._current_scope
+
         node_id = self._push_scope(node.name)
         end_line = node.end_lineno or node.lineno
         source = _get_source_segment(self.source_lines, node.lineno, end_line)
@@ -374,6 +409,21 @@ class CodeGraphVisitor(ast.NodeVisitor):
             )
         )
         self._claim_lines(node.lineno, end_line)
+
+        # Add CONTAINS edge if this is nested inside a function (not module/class)
+        # Check: scope stack >1 (not at module level) AND parent is not a class
+        if len(self._scope_stack) > 2 and parent_id not in self._class_stack:
+            self.edges.append(
+                Edge(
+                    id=_edge_id(),
+                    from_node=parent_id,
+                    to_node=node_id,
+                    type=EdgeType.CONTAINS,
+                    line_number=node.lineno,
+                    confidence=EdgeConfidence.RESOLVED,
+                    source=EdgeSource.STATIC,
+                )
+            )
 
         # Decorators
         for decorator in node.decorator_list:

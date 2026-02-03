@@ -2,53 +2,105 @@
 
 from __future__ import annotations
 
+import importlib
 import json
 import logging
+import sys
 import threading
 import time
+from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger("lenspr.mcp")
 
+# Modules to reload when hot-reload is triggered (in dependency order)
+_LENSPR_MODULES = [
+    "lenspr.models",
+    "lenspr.database",
+    "lenspr.graph",
+    "lenspr.patcher",
+    "lenspr.tools.helpers",
+    "lenspr.tools.schemas",
+    "lenspr.tools.navigation",
+    "lenspr.tools.modification",
+    "lenspr.tools.analysis",
+    "lenspr.tools.annotation",
+    "lenspr.tools",
+    "lenspr.claude_tools",
+    "lenspr.context",
+]
 
-def _start_watcher(project_path: str) -> None:
+
+def _reload_lenspr_modules() -> int:
+    """Reload all lenspr tool modules to pick up code changes.
+
+    Returns the number of modules successfully reloaded.
+    """
+    reloaded = 0
+    for module_name in _LENSPR_MODULES:
+        if module_name in sys.modules:
+            try:
+                importlib.reload(sys.modules[module_name])
+                reloaded += 1
+            except Exception as e:
+                logger.warning("Failed to reload %s: %s", module_name, e)
+    return reloaded
+
+
+def _is_lenspr_file(file_path: str) -> bool:
+    """Check if a file path belongs to lenspr package."""
+    path = Path(file_path)
+    return "lenspr" in path.parts and file_path.endswith(".py")
+
+
+def _start_watcher(project_path: str, hot_reload: bool = False) -> None:
     """Start a background file watcher that auto-syncs on changes.
 
     Uses watchdog if available, otherwise falls back to a simple
     polling watcher.
+
+    Args:
+        project_path: Path to watch for changes.
+        hot_reload: If True, reload lenspr modules when they change.
     """
     try:
         from watchdog.events import FileSystemEventHandler
         from watchdog.observers import Observer
 
-        _start_watchdog_watcher(project_path, FileSystemEventHandler, Observer)  # type: ignore[arg-type]
+        _start_watchdog_watcher(project_path, FileSystemEventHandler, Observer, hot_reload)  # type: ignore[arg-type]
     except ImportError:
         logger.info("watchdog not installed, using polling watcher")
-        _start_polling_watcher(project_path)
+        _start_polling_watcher(project_path, hot_reload)
 
 
 def _start_watchdog_watcher(
     project_path: str,
     handler_cls: type,
     observer_cls: type,
+    hot_reload: bool = False,
 ) -> None:
     """Watchdog-based file watcher running in a daemon thread."""
     import lenspr
 
     class _SyncHandler(handler_cls):  # type: ignore[misc]
         def __init__(self) -> None:
-            self._pending = False
+            self._pending_sync = False
+            self._pending_reload = False
+            self._changed_files: set[str] = set()
             self._lock = threading.Lock()
 
         def on_modified(self, event: object) -> None:
-            if (
-                hasattr(event, "src_path")
-                and event.src_path.endswith(".py")  # type: ignore[union-attr]
-            ):
-                with self._lock:
-                    self._pending = True
+            if hasattr(event, "src_path"):
+                src_path = event.src_path  # type: ignore[union-attr]
+                if src_path.endswith(".py"):
+                    with self._lock:
+                        self._pending_sync = True
+                        self._changed_files.add(src_path)
+                        # Track if lenspr code changed
+                        if hot_reload and _is_lenspr_file(src_path):
+                            self._pending_reload = True
 
         def on_created(self, event: object) -> None:
             self.on_modified(event)
@@ -64,12 +116,31 @@ def _start_watchdog_watcher(
 
     def _sync_loop() -> None:
         while True:
-            time.sleep(2)
+            time.sleep(1)  # Faster response (was 2s)
             should_sync = False
+            should_reload = False
+            changed: set[str] = set()
+
             with handler._lock:
-                if handler._pending:
-                    handler._pending = False
+                if handler._pending_sync:
+                    handler._pending_sync = False
                     should_sync = True
+                    changed = handler._changed_files.copy()
+                    handler._changed_files.clear()
+                if handler._pending_reload:
+                    handler._pending_reload = False
+                    should_reload = True
+
+            # Reload lenspr modules first if needed
+            if should_reload:
+                try:
+                    count = _reload_lenspr_modules()
+                    if count > 0:
+                        logger.info("Hot-reload: %d lenspr modules reloaded", count)
+                except Exception:
+                    logger.exception("Hot-reload failed")
+
+            # Then sync graph
             if should_sync:
                 try:
                     result = lenspr.sync()
@@ -80,27 +151,35 @@ def _start_watchdog_watcher(
                     )
                     if total > 0:
                         logger.info(
-                            "Auto-sync: +%d ~%d -%d",
+                            "Auto-sync: +%d ~%d -%d (%d files changed)",
                             len(result.added),
                             len(result.modified),
                             len(result.deleted),
+                            len(changed),
                         )
                 except Exception:
                     logger.exception("Auto-sync failed")
 
     t = threading.Thread(target=_sync_loop, daemon=True)
     t.start()
-    logger.info("Watchdog file watcher started for: %s", project_path)
+    mode = "hot-reload" if hot_reload else "standard"
+    logger.info("Watchdog file watcher started (%s mode) for: %s", mode, project_path)
 
 
-def _start_polling_watcher(project_path: str) -> None:
+def _start_polling_watcher(project_path: str, hot_reload: bool = False) -> None:
     """Simple polling watcher as fallback when watchdog is unavailable."""
     import lenspr
 
     def _poll_loop() -> None:
         while True:
-            time.sleep(5)
+            time.sleep(3)  # Faster polling (was 5s)
             try:
+                # Hot-reload lenspr modules if enabled
+                if hot_reload:
+                    count = _reload_lenspr_modules()
+                    if count > 0:
+                        logger.debug("Hot-reload: %d modules reloaded", count)
+
                 result = lenspr.sync()
                 total = (
                     len(result.added)
@@ -119,25 +198,57 @@ def _start_polling_watcher(project_path: str) -> None:
 
     t = threading.Thread(target=_poll_loop, daemon=True)
     t.start()
+    mode = "hot-reload" if hot_reload else "standard"
     logger.info(
-        "Polling file watcher started for: %s (every 5s)", project_path
+        "Polling file watcher started (%s mode) for: %s (every 3s)",
+        mode, project_path
     )
 
 
-def run_server(project_path: str) -> None:
-    """Initialize LensPR and start the MCP server on stdio."""
+def run_server(project_path: str, hot_reload: bool = False) -> None:
+    """Initialize LensPR and start the MCP server on stdio.
+
+    Args:
+        project_path: Path to the project to analyze.
+        hot_reload: Enable hot-reload of lenspr modules (for development).
+    """
     import lenspr
+    from lenspr.tools import enable_hot_reload
 
     lenspr.init(project_path)
     instructions = lenspr.get_system_prompt()
 
+    # Enable hot-reload in tool dispatch if requested
+    if hot_reload:
+        enable_hot_reload(True)
+        logger.info("Hot-reload mode enabled for tool handlers")
+
     # Start background file watcher for auto-sync
-    _start_watcher(project_path)
+    _start_watcher(project_path, hot_reload=hot_reload)
 
     mcp = FastMCP(
         name="lenspr",
         instructions=instructions,
     )
+
+    # --- MCP Resources ---
+    # These provide read-only access to graph data
+
+    @mcp.resource("lenspr://structure")
+    def get_structure_resource() -> str:
+        """Get current project structure as a resource."""
+        result = lenspr.handle_tool("lens_get_structure", {"mode": "summary"})
+        return json.dumps(result, indent=2)
+
+    @mcp.resource("lenspr://pagination")
+    def get_pagination_info() -> str:
+        """Get pagination info for large projects."""
+        g = lenspr.get_context().get_graph()
+        return json.dumps({
+            "total_nodes": g.number_of_nodes(),
+            "total_edges": g.number_of_edges(),
+            "hint": "Use lens_get_structure with limit/offset for pagination",
+        }, indent=2)
 
     @mcp.tool()
     def lens_list_nodes(
@@ -539,6 +650,64 @@ def run_server(project_path: str) -> None:
         breakdown by type and role.
         """
         result = lenspr.handle_tool("lens_annotation_stats", {})
+        return json.dumps(result, indent=2)
+
+    # -- Git Integration Tools --
+
+    @mcp.tool()
+    def lens_blame(node_id: str) -> str:
+        """Get git blame information for a node's source lines.
+
+        Shows who wrote each line and when.
+
+        Args:
+            node_id: The node to get blame info for.
+        """
+        result = lenspr.handle_tool("lens_blame", {"node_id": node_id})
+        return json.dumps(result, indent=2)
+
+    @mcp.tool()
+    def lens_node_history(node_id: str, limit: int = 10) -> str:
+        """Get commit history for a specific node.
+
+        Shows commits that modified the lines where this node is defined.
+
+        Args:
+            node_id: The node to get history for.
+            limit: Max commits to return. Default: 10.
+        """
+        result = lenspr.handle_tool("lens_node_history", {
+            "node_id": node_id,
+            "limit": limit,
+        })
+        return json.dumps(result, indent=2)
+
+    @mcp.tool()
+    def lens_commit_scope(commit: str) -> str:
+        """Analyze what nodes were affected by a specific commit.
+
+        Shows which functions/classes were modified.
+
+        Args:
+            commit: Commit hash (short or full).
+        """
+        result = lenspr.handle_tool("lens_commit_scope", {"commit": commit})
+        return json.dumps(result, indent=2)
+
+    @mcp.tool()
+    def lens_recent_changes(limit: int = 5, file_path: str | None = None) -> str:
+        """Get recently changed nodes based on git history.
+
+        Useful for understanding what's been modified recently.
+
+        Args:
+            limit: Max commits to analyze. Default: 5.
+            file_path: Filter to specific file path.
+        """
+        params: dict = {"limit": limit}
+        if file_path is not None:
+            params["file_path"] = file_path
+        result = lenspr.handle_tool("lens_recent_changes", params)
         return json.dumps(result, indent=2)
 
     logger.info("Starting LensPR MCP server for: %s", project_path)

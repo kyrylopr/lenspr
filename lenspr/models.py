@@ -26,6 +26,7 @@ class EdgeType(Enum):
     INHERITS = "inherits"
     USES = "uses"
     DECORATES = "decorates"
+    CONTAINS = "contains"  # Parent function/class contains nested definition
 
 
 class EdgeConfidence(Enum):

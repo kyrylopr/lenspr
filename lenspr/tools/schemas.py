@@ -496,4 +496,80 @@ LENS_TOOLS: list[dict[str, Any]] = [
             "properties": {},
         },
     },
+    # Git integration tools
+    {
+        "name": "lens_blame",
+        "description": (
+            "Get git blame information for a node's source lines. "
+            "Shows who wrote each line and when."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "node_id": {
+                    "type": "string",
+                    "description": "The node to get blame info for.",
+                },
+            },
+            "required": ["node_id"],
+        },
+    },
+    {
+        "name": "lens_node_history",
+        "description": (
+            "Get commit history for a specific node. "
+            "Shows commits that modified the lines where this node is defined."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "node_id": {
+                    "type": "string",
+                    "description": "The node to get history for.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max commits to return. Default: 10.",
+                },
+            },
+            "required": ["node_id"],
+        },
+    },
+    {
+        "name": "lens_commit_scope",
+        "description": (
+            "Analyze what nodes were affected by a specific commit. "
+            "Shows which functions/classes were modified."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "commit": {
+                    "type": "string",
+                    "description": "Commit hash (short or full).",
+                },
+            },
+            "required": ["commit"],
+        },
+    },
+    {
+        "name": "lens_recent_changes",
+        "description": (
+            "Get recently changed nodes based on git history. "
+            "Useful for understanding what's been modified recently."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer",
+                    "description": "Max commits to analyze. Default: 5.",
+                },
+                "file_path": {
+                    "type": "string",
+                    "description": "Filter to specific file path.",
+                },
+            },
+        },
+    },
 ]

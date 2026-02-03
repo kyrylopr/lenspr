@@ -78,7 +78,7 @@ class TestWatchdogHandler:
     """Test the watchdog event handler logic."""
 
     def test_py_file_sets_pending(self) -> None:
-        """Modifying a .py file sets the _pending flag."""
+        """Modifying a .py file sets the _pending_sync flag."""
         from watchdog.events import FileSystemEventHandler
 
         from lenspr.mcp_server import _start_watchdog_watcher
@@ -103,10 +103,10 @@ class TestWatchdogHandler:
         handler.on_modified(event)
 
         with handler._lock:
-            assert handler._pending is True
+            assert handler._pending_sync is True
 
     def test_non_py_file_ignored(self) -> None:
-        """Modifying a non-.py file does NOT set _pending."""
+        """Modifying a non-.py file does NOT set _pending_sync."""
         from watchdog.events import FileSystemEventHandler
 
         from lenspr.mcp_server import _start_watchdog_watcher
@@ -128,10 +128,10 @@ class TestWatchdogHandler:
         handler.on_modified(event)
 
         with handler._lock:
-            assert handler._pending is False
+            assert handler._pending_sync is False
 
     def test_created_event_sets_pending(self) -> None:
-        """Creating a .py file sets the _pending flag."""
+        """Creating a .py file sets the _pending_sync flag."""
         from watchdog.events import FileSystemEventHandler
 
         from lenspr.mcp_server import _start_watchdog_watcher
@@ -153,10 +153,10 @@ class TestWatchdogHandler:
         handler.on_created(event)
 
         with handler._lock:
-            assert handler._pending is True
+            assert handler._pending_sync is True
 
     def test_deleted_event_sets_pending(self) -> None:
-        """Deleting a .py file sets the _pending flag."""
+        """Deleting a .py file sets the _pending_sync flag."""
         from watchdog.events import FileSystemEventHandler
 
         from lenspr.mcp_server import _start_watchdog_watcher
@@ -178,7 +178,7 @@ class TestWatchdogHandler:
         handler.on_deleted(event)
 
         with handler._lock:
-            assert handler._pending is True
+            assert handler._pending_sync is True
 
 
 class TestAutoSync:
@@ -229,6 +229,67 @@ class TestAutoSync:
         project.invalidate_graph()
         g = project.get_graph()
         assert "helper.helper_fn" not in g
+
+
+class TestHotReload:
+    """Test hot-reload functionality."""
+
+    def test_lenspr_file_detection(self) -> None:
+        """Correctly identifies lenspr package files."""
+        from lenspr.mcp_server import _is_lenspr_file
+
+        assert _is_lenspr_file("/project/lenspr/tools/analysis.py") is True
+        assert _is_lenspr_file("/project/lenspr/mcp_server.py") is True
+        assert _is_lenspr_file("/project/app.py") is False
+        assert _is_lenspr_file("/project/lenspr/README.md") is False
+
+    def test_hot_reload_flag_triggers_pending_reload(self) -> None:
+        """When hot_reload=True, lenspr file changes set _pending_reload."""
+        from watchdog.events import FileSystemEventHandler
+
+        from lenspr.mcp_server import _start_watchdog_watcher
+
+        mock_observer_cls = MagicMock()
+        mock_observer = MagicMock()
+        mock_observer_cls.return_value = mock_observer
+
+        with patch("lenspr.sync"):
+            _start_watchdog_watcher(
+                "/project",
+                FileSystemEventHandler,
+                mock_observer_cls,
+                hot_reload=True,
+            )
+
+        handler = mock_observer.schedule.call_args[0][0]
+
+        # Simulate modifying a lenspr file
+        event = SimpleNamespace(
+            src_path="/project/lenspr/tools/analysis.py", is_directory=False
+        )
+        handler.on_modified(event)
+
+        with handler._lock:
+            assert handler._pending_sync is True
+            assert handler._pending_reload is True
+
+    def test_enable_hot_reload(self) -> None:
+        """Test hot-reload enable/disable function."""
+        from lenspr.tools import _hot_reload_enabled, enable_hot_reload
+
+        # Store initial state
+        initial = _hot_reload_enabled
+
+        try:
+            enable_hot_reload(True)
+            from lenspr import tools
+            assert tools._hot_reload_enabled is True
+
+            enable_hot_reload(False)
+            assert tools._hot_reload_enabled is False
+        finally:
+            # Restore initial state
+            enable_hot_reload(initial)
 
 
 class TestMCPToolWrappers:

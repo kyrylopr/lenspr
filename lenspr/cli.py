@@ -54,6 +54,10 @@ def main() -> None:
     # -- serve --
     p_serve = subparsers.add_parser("serve", help="Start MCP server (stdio transport)")
     p_serve.add_argument("path", nargs="?", default=".", help="Project root (default: cwd)")
+    p_serve.add_argument(
+        "--dev", action="store_true",
+        help="Enable hot-reload of lenspr modules (for development)"
+    )
 
     args = parser.parse_args()
 
@@ -235,7 +239,7 @@ def cmd_serve(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     path = str(Path(args.path).resolve())
-    run_server(path)
+    run_server(path, hot_reload=getattr(args, "dev", False))
 
 
 if __name__ == "__main__":
