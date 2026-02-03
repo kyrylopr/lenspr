@@ -294,6 +294,22 @@ def handle_context(params: dict, ctx: LensContext) -> ToolResponse:
         result["tests"] = tests
         result["test_count"] = len(tests)
 
+    # Add modification warning - always show impact of potential changes
+    caller_count = len(callers) if include_callers else 0
+    test_count = len(tests) if include_tests else 0
+    if caller_count > 10:
+        severity = "CRITICAL" if caller_count > 20 else "HIGH"
+        result["modification_warning"] = (
+            f"⚠️ {severity}: Modifying this node affects {caller_count} callers. "
+            f"Use lens_check_impact before changes."
+        )
+    elif caller_count > 0:
+        result["modification_warning"] = (
+            f"ℹ️ Modifying this node affects {caller_count} caller(s). "
+        )
+    if test_count == 0:
+        result["test_warning"] = "⚠️ NO TESTS: Consider adding tests before modifying."
+
     return ToolResponse(success=True, data=result)
 
 

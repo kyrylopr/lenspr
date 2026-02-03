@@ -1,5 +1,18 @@
 # LensPR Project Instructions
 
+## CRITICAL: MANDATORY RULES FOR CODE CHANGES
+
+**BLOCKING REQUIREMENTS — violations will cause bugs:**
+
+1. **BEFORE modifying ANY Python code**, you MUST call `lens_check_impact("node_id")`. No exceptions.
+2. **NEVER use Edit on .py files** without first calling `lens_check_impact`.
+3. If `lens_check_impact` returns severity CRITICAL or HIGH — warn the user and wait for confirmation.
+4. For reading Python code, use `lens_context` or `lens_get_node` instead of `Read`.
+
+**Why this matters:** You have a pattern of using lenspr once then bypassing it. This causes bugs that could be prevented by seeing impact before changes.
+
+---
+
 ## Code Navigation - USE LENSPR TOOLS
 
 This project has LensPR MCP tools available. **ALWAYS prefer lenspr tools over Read/Grep/Glob** for code exploration.

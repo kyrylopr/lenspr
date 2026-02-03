@@ -27,6 +27,23 @@ def handle_update_node(params: dict, ctx: LensContext) -> ToolResponse:
             error=f"Node not found: {node_id}",
         )
 
+    # Compute impact FIRST - BEFORE any changes
+    nx_graph = ctx.get_graph()
+    impact = graph.get_impact_zone(nx_graph, node_id, depth=2)
+
+    # Calculate severity for visibility
+    total = impact.get("total_affected", 0)
+    has_inheritors = len(impact.get("inheritors", [])) > 0
+    if has_inheritors or total > 20:
+        severity = "CRITICAL"
+    elif total > 10:
+        severity = "HIGH"
+    elif total > 5:
+        severity = "MEDIUM"
+    else:
+        severity = "LOW"
+    impact["severity"] = severity
+
     # Get proactive warnings BEFORE making changes
     proactive_warnings = get_proactive_warnings(node_id, new_source, ctx)
 
@@ -39,6 +56,7 @@ def handle_update_node(params: dict, ctx: LensContext) -> ToolResponse:
             error=validation.errors[0] if validation.errors else "Validation failed.",
             hint="Fix the issues and try again.",
             warnings=all_warnings,
+            data={"impact": impact},  # Always show impact even on failure
         )
 
     all_warnings = proactive_warnings + validation.warnings
@@ -52,11 +70,9 @@ def handle_update_node(params: dict, ctx: LensContext) -> ToolResponse:
         ctx.patch_buffer.flush()
     except PatchError as e:
         ctx.patch_buffer.discard()
-        return ToolResponse(success=False, error=str(e), warnings=all_warnings)
-
-    # Compute impact BEFORE reparse
-    nx_graph = ctx.get_graph()
-    impact = graph.get_impact_zone(nx_graph, node_id, depth=1)
+        return ToolResponse(
+            success=False, error=str(e), warnings=all_warnings, data={"impact": impact}
+        )
 
     # Record history
     from lenspr.tracker import record_change
@@ -79,7 +95,11 @@ def handle_update_node(params: dict, ctx: LensContext) -> ToolResponse:
 
     return ToolResponse(
         success=True,
-        data={"node_id": node_id, "new_hash": new_hash},
+        data={
+            "node_id": node_id,
+            "new_hash": new_hash,
+            "impact": impact,  # Always show what was affected
+        },
         warnings=all_warnings,
         affected_nodes=impact.get("direct_callers", []),
     )
