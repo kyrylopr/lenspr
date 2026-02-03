@@ -40,3 +40,4 @@ Thumbs.db
 eval/.env
 eval/results/
 eval/results_v2/
+!eval/results/*.png
