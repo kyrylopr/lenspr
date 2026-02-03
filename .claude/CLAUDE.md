@@ -127,5 +127,14 @@ make dev          # Install with dev dependencies
 make test         # Run tests
 make check        # Lint + typecheck + test
 make health       # Show graph stats
+make annotations  # Show annotation coverage
 make publish      # Build and publish to PyPI
 ```
+
+## Context & Roadmap
+
+See [CONTEXT.md](CONTEXT.md) for:
+- Current project stats
+- Architecture overview
+- Proposed improvements with priority
+- Known limitations
