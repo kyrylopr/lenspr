@@ -392,24 +392,171 @@ def handle_dead_code(params: dict, ctx: LensContext) -> ToolResponse:
     entry_points: list[str] = params.get("entry_points", [])
 
     if not entry_points:
+        # Collect all module-level __all__ exports
+        public_api: set[str] = set()
+        for nid, data in nx_graph.nodes(data=True):
+            if data.get("type") == "module":
+                # Check if module has __all__ in its source
+                source = data.get("source_code", "")
+                if "__all__" in source:
+                    # Mark all top-level functions/classes in this module as public
+                    module_prefix = nid + "."
+                    for other_nid in nx_graph.nodes():
+                        if other_nid.startswith(module_prefix):
+                            # Only direct children (no more dots after prefix)
+                            remainder = other_nid[len(module_prefix):]
+                            if "." not in remainder:
+                                public_api.add(other_nid)
+
+        # Use a set to avoid duplicates
+        entry_set: set[str] = set()
+
         for nid, data in nx_graph.nodes(data=True):
             name = data.get("name", "")
             node_type = data.get("type", "")
             file_path = data.get("file_path", "")
 
+            # === ALWAYS entry points (unconditional) ===
+
+            # 1. Main entry points
             if name in ("main", "__main__"):
-                entry_points.append(nid)
-            elif name.startswith("test_") or file_path.startswith("tests/"):
-                entry_points.append(nid)
-            elif name in ("cli", "app", "run", "main_cli"):
-                entry_points.append(nid)
-            elif node_type == "function" and any(
+                entry_set.add(nid)
+
+            # 2. Tests
+            if name.startswith("test_") or file_path.startswith("tests/"):
+                entry_set.add(nid)
+
+            # 3. Module-level blocks (if __name__ == "__main__", etc.)
+            if node_type == "block":
+                entry_set.add(nid)
+
+            # 4. All classes (their methods are reached through them)
+            if node_type == "class":
+                entry_set.add(nid)
+
+            # 5. Public API (in __all__)
+            if nid in public_api:
+                entry_set.add(nid)
+
+            # 6. Top-level functions in __init__.py (package public API)
+            if file_path.endswith("__init__.py") and node_type == "function":
+                # Check if it's a top-level function (only one dot after package name)
+                parts = nid.split(".")
+                # For "lenspr.init" -> parts = ["lenspr", "init"] -> top-level
+                # For "lenspr.subpkg.func" -> parts = ["lenspr", "subpkg", "func"]
+                if len(parts) == 2:  # package.function format
+                    entry_set.add(nid)
+
+            # === CLI entry points ===
+
+            # 6. CLI module and functions
+            if name in ("cli", "app", "run", "main_cli"):
+                entry_set.add(nid)
+
+            # 7. CLI commands (cmd_init, cmd_sync, etc.)
+            if name.startswith("cmd_"):
+                entry_set.add(nid)
+
+            # === MCP and tool handlers ===
+
+            # 8. MCP tool functions (lens_* inside mcp_server.py)
+            if "mcp_server" in file_path and name.startswith("lens_"):
+                entry_set.add(nid)
+
+            # 9. Tool handlers (handle_* functions) - dynamically dispatched
+            if name.startswith("handle_"):
+                entry_set.add(nid)
+
+            # 10. Tool call dispatcher
+            if name == "handle_tool_call":
+                entry_set.add(nid)
+
+            # === Web/API handlers ===
+
+            # 11. Web handler patterns
+            if node_type == "function" and any(
                 pattern in name
                 for pattern in ["_handler", "_endpoint", "_view", "_route"]
             ):
-                entry_points.append(nid)
-            elif node_type == "block":
-                entry_points.append(nid)
+                entry_set.add(nid)
+
+            # === Methods that are called via protocols/conventions ===
+
+            # 12. Dataclass/class special methods
+            if node_type == "method" and name in (
+                "__init__", "__post_init__", "__new__", "__del__",
+                "__repr__", "__str__", "__hash__", "__eq__", "__ne__",
+                "__lt__", "__le__", "__gt__", "__ge__",
+                "__len__", "__iter__", "__next__", "__getitem__", "__setitem__",
+                "__contains__", "__call__", "__enter__", "__exit__",
+                "__get__", "__set__", "__delete__",
+                "from_dict", "to_dict",  # Common serialization methods
+            ):
+                entry_set.add(nid)
+
+            # 13. Property methods (is_*, has_*, get_*, set_*)
+            if node_type == "method" and (
+                name.startswith("is_") or name.startswith("has_") or
+                name.startswith("get_") or name.startswith("set_")
+            ):
+                entry_set.add(nid)
+
+            # 14. Private methods starting with underscore (internal use)
+            if node_type == "method" and name.startswith("_") and not name.startswith("__"):
+                entry_set.add(nid)
+
+            # === Parser/visitor patterns ===
+
+            # 15. AST visitor methods (visit_*, generic_visit)
+            if name.startswith("visit_") or name == "generic_visit":
+                entry_set.add(nid)
+
+            # === Helper functions that are used internally ===
+
+            # 16. Detection/analysis helpers (often called via getattr or dict)
+            if name.startswith("_detect_") or name.startswith("_compute_"):
+                entry_set.add(nid)
+
+            # 17. Enum classes (their values are accessed)
+            if node_type == "class" and name.endswith(("Enum", "Role", "Type", "Confidence", "Source")):
+                entry_set.add(nid)
+
+        # Check for decorated functions
+        for nid, data in nx_graph.nodes(data=True):
+            if data.get("type") == "function":
+                for pred in nx_graph.predecessors(nid):
+                    edge_data = nx_graph.edges.get((pred, nid), {})
+                    if edge_data.get("type") == "decorates":
+                        entry_set.add(nid)
+                        break
+
+        # Include all methods of classes that are entry points
+        # (Classes don't have edges to their methods in the graph)
+        class_entry_points = {
+            nid for nid in entry_set
+            if nx_graph.nodes.get(nid, {}).get("type") == "class"
+        }
+        for nid, data in nx_graph.nodes(data=True):
+            if data.get("type") == "method":
+                # Method ID format: "module.Class.method" → class is "module.Class"
+                class_id = nid.rsplit(".", 1)[0]
+                if class_id in class_entry_points:
+                    entry_set.add(nid)
+
+        # Include nested functions of entry point functions
+        # (Nested functions don't have incoming edges from parents)
+        function_entry_points = {
+            nid for nid in entry_set
+            if nx_graph.nodes.get(nid, {}).get("type") == "function"
+        }
+        for nid, data in nx_graph.nodes(data=True):
+            if data.get("type") in ("function", "class"):
+                # Check if this is nested inside an entry point function
+                parent_id = nid.rsplit(".", 1)[0] if "." in nid else None
+                if parent_id and parent_id in function_entry_points:
+                    entry_set.add(nid)
+
+        entry_points = list(entry_set)
 
     dead_code = graph.find_dead_code(nx_graph, entry_points)
 
