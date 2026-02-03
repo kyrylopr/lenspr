@@ -1,0 +1,365 @@
+"""Navigation and discovery tool handlers."""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
+from lenspr import database, graph
+from lenspr.models import ToolResponse
+from lenspr.tools.helpers import find_containing_node
+
+if TYPE_CHECKING:
+    from lenspr.context import LensContext
+
+
+def handle_list_nodes(params: dict, ctx: LensContext) -> ToolResponse:
+    """List all nodes, optionally filtered by type, file, or name."""
+    nodes = database.get_nodes(
+        ctx.graph_db,
+        type_filter=params.get("type"),
+        file_filter=params.get("file_path"),
+        name_filter=params.get("name"),
+    )
+    return ToolResponse(
+        success=True,
+        data={
+            "nodes": [
+                {
+                    "id": n.id,
+                    "type": n.type.value,
+                    "name": n.name,
+                    "file_path": n.file_path,
+                    "signature": n.signature,
+                    "start_line": n.start_line,
+                }
+                for n in nodes
+            ],
+            "count": len(nodes),
+        },
+    )
+
+
+def handle_get_node(params: dict, ctx: LensContext) -> ToolResponse:
+    """Get full details of a specific node including its source code."""
+    node = database.get_node(params["node_id"], ctx.graph_db)
+    if not node:
+        return ToolResponse(
+            success=False,
+            error=f"Node not found: {params['node_id']}",
+            hint="Use lens_search or lens_list_nodes to find valid node IDs.",
+        )
+    return ToolResponse(
+        success=True,
+        data={
+            "id": node.id,
+            "type": node.type.value,
+            "name": node.name,
+            "qualified_name": node.qualified_name,
+            "file_path": node.file_path,
+            "start_line": node.start_line,
+            "end_line": node.end_line,
+            "source_code": node.source_code,
+            "docstring": node.docstring,
+            "signature": node.signature,
+        },
+    )
+
+
+def handle_get_connections(params: dict, ctx: LensContext) -> ToolResponse:
+    """Get all connections (edges) for a node."""
+    direction = params.get("direction", "both")
+    edges = database.get_edges(params["node_id"], ctx.graph_db, direction)
+    return ToolResponse(
+        success=True,
+        data={
+            "node_id": params["node_id"],
+            "direction": direction,
+            "edges": [
+                {
+                    "from": e.from_node,
+                    "to": e.to_node,
+                    "type": e.type.value,
+                    "confidence": e.confidence.value,
+                    "line": e.line_number,
+                }
+                for e in edges
+            ],
+            "count": len(edges),
+        },
+    )
+
+
+def handle_search(params: dict, ctx: LensContext) -> ToolResponse:
+    """Search nodes by name or content."""
+    search_in = params.get("search_in", "all")
+    nodes = database.search_nodes(params["query"], ctx.graph_db, search_in)
+    return ToolResponse(
+        success=True,
+        data={
+            "results": [
+                {
+                    "id": n.id,
+                    "type": n.type.value,
+                    "name": n.name,
+                    "file_path": n.file_path,
+                    "signature": n.signature,
+                }
+                for n in nodes
+            ],
+            "count": len(nodes),
+        },
+    )
+
+
+def handle_get_structure(params: dict, ctx: LensContext) -> ToolResponse:
+    """Get compact overview of project structure."""
+    nx_graph = ctx.get_graph()
+    result = graph.get_structure(
+        nx_graph,
+        max_depth=params.get("max_depth", 2),
+        mode=params.get("mode", "summary"),
+        limit=params.get("limit", 100),
+        offset=params.get("offset", 0),
+        path_prefix=params.get("path_prefix"),
+    )
+    return ToolResponse(success=True, data=result)
+
+
+def handle_context(params: dict, ctx: LensContext) -> ToolResponse:
+    """Get full context for a node in one call."""
+    node_id = params["node_id"]
+    include_callers = params.get("include_callers", True)
+    include_callees = params.get("include_callees", True)
+    include_tests = params.get("include_tests", True)
+    include_source = params.get("include_source", True)
+    depth = params.get("depth", 1)
+
+    node = database.get_node(node_id, ctx.graph_db)
+    if not node:
+        return ToolResponse(
+            success=False,
+            error=f"Node not found: {node_id}",
+            hint="Use lens_search or lens_list_nodes to find valid node IDs.",
+        )
+
+    nx_graph = ctx.get_graph()
+
+    # Target node info
+    target: dict[str, Any] = {
+        "id": node.id,
+        "type": node.type.value,
+        "name": node.name,
+        "qualified_name": node.qualified_name,
+        "file_path": node.file_path,
+        "start_line": node.start_line,
+        "end_line": node.end_line,
+        "source_code": node.source_code,
+        "docstring": node.docstring,
+        "signature": node.signature,
+    }
+
+    # Include annotations if present
+    if node.is_annotated:
+        target["annotation"] = {
+            "summary": node.summary,
+            "role": node.role.value if node.role else None,
+            "side_effects": node.side_effects,
+            "semantic_inputs": node.semantic_inputs,
+            "semantic_outputs": node.semantic_outputs,
+            "is_stale": node.is_annotation_stale,
+        }
+
+    # Callers (who depends on this node)
+    callers: list[dict] = []
+    if include_callers and node_id in nx_graph:
+        visited: set[str] = set()
+        frontier: list[tuple[str, str]] = [
+            (p, node_id) for p in nx_graph.predecessors(node_id)
+        ]
+        for _level in range(depth):
+            next_frontier: list[tuple[str, str]] = []
+            for pred_id, via in frontier:
+                if pred_id in visited:
+                    continue
+                visited.add(pred_id)
+                pred_node = database.get_node(pred_id, ctx.graph_db)
+                if not pred_node:
+                    continue
+                edge_data = nx_graph.edges.get((pred_id, via), {})
+                caller_info: dict[str, Any] = {
+                    "id": pred_node.id,
+                    "type": pred_node.type.value,
+                    "name": pred_node.name,
+                    "file_path": pred_node.file_path,
+                    "signature": pred_node.signature,
+                    "edge_type": edge_data.get("type", "unknown"),
+                    "depth": _level + 1,
+                }
+                if include_source:
+                    caller_info["source_code"] = pred_node.source_code
+                else:
+                    caller_info["start_line"] = pred_node.start_line
+                    caller_info["end_line"] = pred_node.end_line
+                callers.append(caller_info)
+                if _level + 1 < depth:
+                    next_frontier.extend(
+                        (p, pred_id) for p in nx_graph.predecessors(pred_id)
+                    )
+            frontier = next_frontier
+
+    # Callees (what this node depends on)
+    callees: list[dict] = []
+    if include_callees and node_id in nx_graph:
+        visited_out: set[str] = set()
+        frontier_out: list[tuple[str, str]] = [
+            (s, node_id) for s in nx_graph.successors(node_id)
+        ]
+        for _level in range(depth):
+            next_frontier_out: list[tuple[str, str]] = []
+            for succ_id, via in frontier_out:
+                if succ_id in visited_out:
+                    continue
+                visited_out.add(succ_id)
+                succ_node = database.get_node(succ_id, ctx.graph_db)
+                if not succ_node:
+                    continue
+                edge_data = nx_graph.edges.get((via, succ_id), {})
+                callee_info: dict[str, Any] = {
+                    "id": succ_node.id,
+                    "type": succ_node.type.value,
+                    "name": succ_node.name,
+                    "file_path": succ_node.file_path,
+                    "signature": succ_node.signature,
+                    "edge_type": edge_data.get("type", "unknown"),
+                    "depth": _level + 1,
+                }
+                if include_source:
+                    callee_info["source_code"] = succ_node.source_code
+                else:
+                    callee_info["start_line"] = succ_node.start_line
+                    callee_info["end_line"] = succ_node.end_line
+                callees.append(callee_info)
+                if _level + 1 < depth:
+                    next_frontier_out.extend(
+                        (s, succ_id) for s in nx_graph.successors(succ_id)
+                    )
+            frontier_out = next_frontier_out
+
+    # Related tests
+    tests: list[dict] = []
+    if include_tests:
+        node_name = node.name
+        # Strategy 1: Find test functions that call this node
+        if node_id in nx_graph:
+            for pred_id in nx_graph.predecessors(node_id):
+                pred_data = nx_graph.nodes.get(pred_id, {})
+                pred_name = pred_data.get("name", "")
+                pred_file = pred_data.get("file_path", "")
+                if pred_name.startswith("test_") or pred_file.startswith("test_"):
+                    pred_node = database.get_node(pred_id, ctx.graph_db)
+                    if pred_node:
+                        test_info: dict[str, Any] = {
+                            "id": pred_node.id,
+                            "name": pred_node.name,
+                            "file_path": pred_node.file_path,
+                        }
+                        if include_source:
+                            test_info["source_code"] = pred_node.source_code
+                        tests.append(test_info)
+
+        # Strategy 2: Find test functions by naming convention
+        test_nodes = database.search_nodes(
+            f"test_{node_name}", ctx.graph_db, search_in="name"
+        )
+        seen_ids = {t["id"] for t in tests}
+        for tn in test_nodes:
+            if tn.id not in seen_ids and tn.type.value in ("function", "method"):
+                tn_info: dict[str, Any] = {
+                    "id": tn.id,
+                    "name": tn.name,
+                    "file_path": tn.file_path,
+                }
+                if include_source:
+                    tn_info["source_code"] = tn.source_code
+                tests.append(tn_info)
+
+    result: dict[str, Any] = {"target": target}
+    if include_callers:
+        result["callers"] = callers
+        result["caller_count"] = len(callers)
+    if include_callees:
+        result["callees"] = callees
+        result["callee_count"] = len(callees)
+    if include_tests:
+        result["tests"] = tests
+        result["test_count"] = len(tests)
+
+    return ToolResponse(success=True, data=result)
+
+
+def handle_grep(params: dict, ctx: LensContext) -> ToolResponse:
+    """Search for a text pattern across all project files."""
+    import fnmatch
+    import re
+
+    pattern_str = params["pattern"]
+    file_glob = params.get("file_glob", "*.py")
+    max_results = params.get("max_results", 50)
+
+    try:
+        regex = re.compile(pattern_str)
+    except re.error:
+        regex = re.compile(re.escape(pattern_str))
+
+    nx_graph = ctx.get_graph()
+    results: list[dict] = []
+
+    skip_dirs = {
+        "__pycache__", ".git", ".lens", ".venv", "venv", "env",
+        "node_modules", ".mypy_cache", ".pytest_cache", ".ruff_cache",
+        "dist", "build", ".eggs", ".tox",
+    }
+
+    for file_path in sorted(ctx.project_root.rglob("*")):
+        if len(results) >= max_results:
+            break
+        if not file_path.is_file():
+            continue
+        if any(part in skip_dirs for part in file_path.parts):
+            continue
+        rel = str(file_path.relative_to(ctx.project_root))
+        if not fnmatch.fnmatch(rel, file_glob) and not fnmatch.fnmatch(
+            file_path.name, file_glob
+        ):
+            continue
+
+        try:
+            content = file_path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+
+        for line_num, line_text in enumerate(content.splitlines(), 1):
+            if len(results) >= max_results:
+                break
+            if regex.search(line_text):
+                containing_node = find_containing_node(nx_graph, rel, line_num)
+                match_info: dict[str, Any] = {
+                    "file": rel,
+                    "line": line_num,
+                    "text": line_text.strip(),
+                }
+                if containing_node:
+                    match_info["node_id"] = containing_node["id"]
+                    match_info["node_name"] = containing_node["name"]
+                    match_info["node_type"] = containing_node["type"]
+                results.append(match_info)
+
+    return ToolResponse(
+        success=True,
+        data={
+            "pattern": pattern_str,
+            "results": results,
+            "count": len(results),
+            "truncated": len(results) >= max_results,
+        },
+    )

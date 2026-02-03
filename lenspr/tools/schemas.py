@@ -1,0 +1,499 @@
+"""Tool schema definitions for Claude API integration."""
+
+from typing import Any
+
+LENS_TOOLS: list[dict[str, Any]] = [
+    {
+        "name": "lens_list_nodes",
+        "description": "List all nodes, optionally filtered by type, file, or name.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "type": {
+                    "type": "string",
+                    "enum": ["function", "class", "module", "method", "block"],
+                    "description": "Filter by node type.",
+                },
+                "file_path": {
+                    "type": "string",
+                    "description": "Filter by file path.",
+                },
+                "name": {
+                    "type": "string",
+                    "description": (
+                        "Filter by name (substring match, "
+                        "e.g. 'parse' finds 'parse_file')."
+                    ),
+                },
+            },
+        },
+    },
+    {
+        "name": "lens_get_node",
+        "description": "Get full details of a specific node including its source code.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "node_id": {
+                    "type": "string",
+                    "description": "Node identifier (e.g. 'app.models.User').",
+                },
+            },
+            "required": ["node_id"],
+        },
+    },
+    {
+        "name": "lens_get_connections",
+        "description": (
+            "Get all connections (edges) for a node — "
+            "what it calls and what calls it."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "node_id": {"type": "string"},
+                "direction": {
+                    "type": "string",
+                    "enum": ["incoming", "outgoing", "both"],
+                    "description": "Direction of edges. Default: both.",
+                },
+            },
+            "required": ["node_id"],
+        },
+    },
+    {
+        "name": "lens_check_impact",
+        "description": (
+            "Analyze what would be affected by changing a node. "
+            "ALWAYS call this before modifying any code."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "node_id": {"type": "string"},
+                "depth": {
+                    "type": "integer",
+                    "description": (
+                        "How many levels of dependencies to check. Default: 2."
+                    ),
+                },
+            },
+            "required": ["node_id"],
+        },
+    },
+    {
+        "name": "lens_update_node",
+        "description": "Update the source code of a node. Validates before applying.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "node_id": {"type": "string"},
+                "new_source": {
+                    "type": "string",
+                    "description": "New source code for the node.",
+                },
+            },
+            "required": ["node_id", "new_source"],
+        },
+    },
+    {
+        "name": "lens_validate_change",
+        "description": (
+            "Dry-run validation: check what would happen if you update a node. "
+            "Returns validation result, proactive warnings, and impact analysis "
+            "WITHOUT actually applying changes. Use before lens_update_node."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "node_id": {"type": "string", "description": "The node to validate."},
+                "new_source": {
+                    "type": "string",
+                    "description": "Proposed new source code.",
+                },
+            },
+            "required": ["node_id", "new_source"],
+        },
+    },
+    {
+        "name": "lens_add_node",
+        "description": "Add a new function or class to a file.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "Relative file path to add the node to.",
+                },
+                "source_code": {
+                    "type": "string",
+                    "description": "Source code of the new function/class.",
+                },
+                "after_node": {
+                    "type": "string",
+                    "description": (
+                        "Node ID to insert after. If omitted, appends to end of file."
+                    ),
+                },
+            },
+            "required": ["file_path", "source_code"],
+        },
+    },
+    {
+        "name": "lens_delete_node",
+        "description": "Delete a node from the codebase. Check impact first!",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "node_id": {"type": "string"},
+            },
+            "required": ["node_id"],
+        },
+    },
+    {
+        "name": "lens_search",
+        "description": "Search nodes by name or content.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "search_in": {
+                    "type": "string",
+                    "enum": ["name", "code", "docstring", "all"],
+                    "description": "Where to search. Default: all.",
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "lens_get_structure",
+        "description": (
+            "Get compact overview of project structure. "
+            "Use mode='summary' for large projects (returns counts instead of details)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "max_depth": {
+                    "type": "integer",
+                    "description": (
+                        "0=files only, 1=with classes/functions, "
+                        "2=with methods. Default: 2."
+                    ),
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": ["full", "summary"],
+                    "description": (
+                        "full=all details, summary=counts only. Default: summary."
+                    ),
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max files to return. Default: 100.",
+                },
+                "offset": {
+                    "type": "integer",
+                    "description": "Skip first N files (for pagination). Default: 0.",
+                },
+                "path_prefix": {
+                    "type": "string",
+                    "description": "Filter to files starting with this path.",
+                },
+            },
+        },
+    },
+    {
+        "name": "lens_rename",
+        "description": "Rename a function/class/method across the entire project.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "node_id": {"type": "string"},
+                "new_name": {"type": "string"},
+            },
+            "required": ["node_id", "new_name"],
+        },
+    },
+    {
+        "name": "lens_context",
+        "description": (
+            "Get full context for a node in one call: source code, callers, callees, "
+            "related tests, and imports. Replaces multiple get_node + get_connections."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "node_id": {
+                    "type": "string",
+                    "description": "The node identifier (e.g. app.models.User).",
+                },
+                "include_callers": {
+                    "type": "boolean",
+                    "description": (
+                        "Include nodes that call/use this node. Default: true."
+                    ),
+                },
+                "include_callees": {
+                    "type": "boolean",
+                    "description": (
+                        "Include nodes this node calls/uses. Default: true."
+                    ),
+                },
+                "include_tests": {
+                    "type": "boolean",
+                    "description": "Include related test functions. Default: true.",
+                },
+                "depth": {
+                    "type": "integer",
+                    "description": (
+                        "How many levels of callers/callees to include. Default: 1."
+                    ),
+                },
+                "include_source": {
+                    "type": "boolean",
+                    "description": (
+                        "Include full source code for callers/callees/tests. "
+                        "When false, returns only signature, file, line. Default: true."
+                    ),
+                },
+            },
+            "required": ["node_id"],
+        },
+    },
+    {
+        "name": "lens_grep",
+        "description": (
+            "Search for a text pattern across all project files. Returns matches "
+            "with graph context: which function/class contains each match."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "pattern": {
+                    "type": "string",
+                    "description": "Text or regex pattern to search for.",
+                },
+                "file_glob": {
+                    "type": "string",
+                    "description": (
+                        "Glob pattern to filter files "
+                        "(e.g. '*.py', 'tests/**'). Default: '*.py'."
+                    ),
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Maximum number of results to return. Default: 50.",
+                },
+            },
+            "required": ["pattern"],
+        },
+    },
+    {
+        "name": "lens_diff",
+        "description": (
+            "Show what changed since last sync without syncing. "
+            "Returns lists of added, modified, and deleted files/nodes."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+    {
+        "name": "lens_batch",
+        "description": (
+            "Apply multiple node updates atomically. All changes are validated first, "
+            "then applied together with a single reparse. Rolls back on error."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "updates": {
+                    "type": "array",
+                    "description": "List of {node_id, new_source} pairs to apply.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "node_id": {"type": "string"},
+                            "new_source": {"type": "string"},
+                        },
+                        "required": ["node_id", "new_source"],
+                    },
+                },
+            },
+            "required": ["updates"],
+        },
+    },
+    {
+        "name": "lens_health",
+        "description": (
+            "Get health report for the code graph: total nodes/edges, "
+            "edge confidence breakdown, nodes without docstrings, circular imports."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+    {
+        "name": "lens_dependencies",
+        "description": (
+            "List all external dependencies (stdlib and third-party packages) "
+            "used by the project."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "group_by": {
+                    "type": "string",
+                    "enum": ["package", "file"],
+                    "description": "Group by package name or by file. Default: package.",
+                },
+            },
+        },
+    },
+    {
+        "name": "lens_dead_code",
+        "description": (
+            "Find potentially dead code: functions/classes not reachable from "
+            "entry points. Entry points are auto-detected."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "entry_points": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Additional entry point node IDs. If empty, auto-detects "
+                        "main(), test_*, and CLI/API handlers."
+                    ),
+                },
+            },
+        },
+    },
+    {
+        "name": "lens_find_usages",
+        "description": (
+            "Find all usages of a node across the codebase. "
+            "Returns callers, importers, and string references."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "node_id": {
+                    "type": "string",
+                    "description": "The node to find usages of.",
+                },
+                "include_tests": {
+                    "type": "boolean",
+                    "description": "Include usages from test files. Default: true.",
+                },
+            },
+            "required": ["node_id"],
+        },
+    },
+    # -- Semantic Annotation Tools --
+    {
+        "name": "lens_annotate",
+        "description": (
+            "Generate semantic annotations for a node. Returns suggested summary, "
+            "role, and detected side effects based on code analysis and context."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "node_id": {"type": "string", "description": "The node to annotate."},
+            },
+            "required": ["node_id"],
+        },
+    },
+    {
+        "name": "lens_save_annotation",
+        "description": "Save semantic annotations to a node.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "node_id": {"type": "string", "description": "The node to annotate."},
+                "summary": {
+                    "type": "string",
+                    "description": "Short description of what this node does.",
+                },
+                "role": {
+                    "type": "string",
+                    "enum": [
+                        "validator", "transformer", "io", "orchestrator",
+                        "pure", "handler", "test", "utility", "factory", "accessor"
+                    ],
+                    "description": "Semantic role of the node.",
+                },
+                "side_effects": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Side effects like 'writes_file', 'network_io'."
+                    ),
+                },
+                "semantic_inputs": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Semantic types of inputs like 'user_input'.",
+                },
+                "semantic_outputs": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Semantic types of outputs like 'validated_data'.",
+                },
+            },
+            "required": ["node_id"],
+        },
+    },
+    {
+        "name": "lens_annotate_batch",
+        "description": (
+            "Get nodes that need annotation. Returns nodes without annotations "
+            "or with stale annotations."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "type_filter": {
+                    "type": "string",
+                    "enum": ["function", "method", "class"],
+                    "description": "Filter by node type.",
+                },
+                "file_path": {
+                    "type": "string",
+                    "description": "Filter by file path prefix.",
+                },
+                "unannotated_only": {
+                    "type": "boolean",
+                    "description": "Only return unannotated nodes. Default: true.",
+                },
+                "stale_only": {
+                    "type": "boolean",
+                    "description": (
+                        "Only return nodes with stale annotations. Default: false."
+                    ),
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max nodes to return. Default: 10.",
+                },
+            },
+        },
+    },
+    {
+        "name": "lens_annotation_stats",
+        "description": (
+            "Get annotation coverage statistics: total annotatable, annotated count, "
+            "stale annotations, breakdown by type and role."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+]
