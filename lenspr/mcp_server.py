@@ -27,6 +27,7 @@ _LENSPR_MODULES = [
     "lenspr.tools.modification",
     "lenspr.tools.analysis",
     "lenspr.tools.annotation",
+    "lenspr.tools.explain",
     "lenspr.tools.git",
     "lenspr.tools",
     "lenspr.claude_tools",
@@ -709,6 +710,25 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
         if file_path is not None:
             params["file_path"] = file_path
         result = lenspr.handle_tool("lens_recent_changes", params)
+        return json.dumps(result, indent=2)
+
+    # -- Explanation Tool --
+
+    @mcp.tool()
+    def lens_explain(node_id: str, include_examples: bool = True) -> str:
+        """Generate a human-readable explanation of what a function/class does.
+
+        Provides rich context (callers, callees, usage examples) plus rule-based
+        analysis. Use this to understand unfamiliar code.
+
+        Args:
+            node_id: The node to explain (e.g. 'app.utils.validate_email').
+            include_examples: Include usage examples from callers. Default: true.
+        """
+        result = lenspr.handle_tool("lens_explain", {
+            "node_id": node_id,
+            "include_examples": include_examples,
+        })
         return json.dumps(result, indent=2)
 
     logger.info("Starting LensPR MCP server for: %s", project_path)

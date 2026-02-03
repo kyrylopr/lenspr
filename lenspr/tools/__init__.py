@@ -21,6 +21,9 @@ from lenspr.tools.annotation import (
     handle_annotation_stats,
     handle_save_annotation,
 )
+from lenspr.tools.explain import (
+    handle_explain,
+)
 from lenspr.tools.git import (
     handle_blame,
     handle_commit_scope,
@@ -79,6 +82,8 @@ __all__ = [
     "handle_save_annotation",
     "handle_annotate_batch",
     "handle_annotation_stats",
+    # Explain
+    "handle_explain",
     # Git
     "handle_blame",
     "handle_node_history",
@@ -118,6 +123,8 @@ _HANDLER_MAP: dict[str, tuple[str, str]] = {
     "lens_node_history": ("lenspr.tools.git", "handle_node_history"),
     "lens_commit_scope": ("lenspr.tools.git", "handle_commit_scope"),
     "lens_recent_changes": ("lenspr.tools.git", "handle_recent_changes"),
+    # Explain
+    "lens_explain": ("lenspr.tools.explain", "handle_explain"),
 }
 
 # Hot-reload mode: when True, handlers are resolved dynamically each call

@@ -1,15 +1,88 @@
 # LensPR Project Instructions
 
+## ⛔ ABSOLUTE REQUIREMENTS — NO EXCEPTIONS
+
+**STOP. Before ANY action on Python files (.py), you MUST use lenspr tools FIRST.**
+
+This includes:
+- Editing `.py` files → `lens_check_impact` FIRST
+- Deleting `.py` files → `lens_search` + `lens_find_usages` FIRST
+- Moving/renaming `.py` files → `lens_find_usages` FIRST
+- Reading `.py` files → `lens_get_node` or `lens_context` instead of `Read`
+- Searching in `.py` files → `lens_grep` or `lens_search` instead of `Grep`
+
+**VIOLATION = IMMEDIATE STOP.** If you catch yourself using Bash `rm`, `mv` on .py files, or using `Grep`/`Read` on Python code — STOP and use lenspr instead.
+
+### Mandatory Checklist Before Python File Operations:
+
+```
+□ Is this a .py file? → USE LENSPR
+□ Am I deleting? → lens_search (is it in graph?) + lens_find_usages (who uses it?)
+□ Am I editing? → lens_check_impact (what breaks?)
+□ Am I reading? → lens_get_node or lens_context (not Read)
+□ Am I searching? → lens_grep or lens_search (not Grep)
+```
+
+### Why This Is Non-Negotiable:
+
+You have a **proven pattern** of:
+1. Using lenspr once, then forgetting it exists
+2. Falling back to Bash/Grep/Read out of habit
+3. Deleting files without checking dependencies
+4. Making changes without impact analysis
+
+**This causes bugs that lenspr was built to prevent.**
+
+### Specific Violations To Avoid:
+
+❌ **WRONG:** `Read("/Users/.../lenspr/cli.py")` to read Python code
+✅ **RIGHT:** `lens_get_node("lenspr.cli.cmd_init")` or `lens_context("lenspr.cli")`
+
+❌ **WRONG:** `Grep(pattern="results_v2", path="lenspr/")` to search Python
+✅ **RIGHT:** `lens_grep("results_v2")` or `lens_search("results_v2", search_in="code")`
+
+❌ **WRONG:** Reading full .py file with `Read` then manually finding a function
+✅ **RIGHT:** `lens_get_node("module.function")` returns exact code
+
+❌ **WRONG:** "Let me verify the file imports correctly" using `python -c "import ..."`
+✅ **RIGHT:** Trust lenspr — if you edited via `lens_update_node`, it validated syntax
+
+❌ **WRONG:** `Bash("rm -f some_file.py")` without checking graph
+✅ **RIGHT:** `lens_search` + `lens_find_usages` FIRST, then delete
+
+---
+
+## TRUST THE GRAPH
+
+The MCP server has a **file watcher that auto-syncs** the graph before every tool call.
+
+**DO:**
+- Call `lens_search` and trust the result
+- Call `lens_check_impact` and trust the result
+- Assume the graph is up-to-date
+
+**DON'T:**
+- Call `lens_diff` "just to check" if graph is synced — it's automatic
+- Double-check lenspr results with Grep/Read — trust the graph
+- Say "the graph might not be synced" — it is synced
+- Use `Read` on .py files "to see the full file" — use `lens_get_node` for specific code
+
+If lenspr says a function doesn't exist, it doesn't exist. Trust it.
+
+**Exception:** Use `Read` on .py files ONLY when you need to rewrite the ENTIRE file with `Write`. Otherwise, always use lenspr.
+
+---
+
 ## CRITICAL: MANDATORY RULES FOR CODE CHANGES
 
 **BLOCKING REQUIREMENTS — violations will cause bugs:**
 
 1. **BEFORE modifying ANY Python code**, you MUST call `lens_check_impact("node_id")`. No exceptions.
 2. **NEVER use Edit on .py files** without first calling `lens_check_impact`.
-3. If `lens_check_impact` returns severity CRITICAL or HIGH — warn the user and wait for confirmation.
-4. For reading Python code, use `lens_context` or `lens_get_node` instead of `Read`.
-
-**Why this matters:** You have a pattern of using lenspr once then bypassing it. This causes bugs that could be prevented by seeing impact before changes.
+3. **NEVER delete .py files** without first calling `lens_search` + `lens_find_usages`.
+4. **NEVER use Grep on Python code** — use `lens_grep` instead.
+5. **NEVER use Read on Python code** — use `lens_get_node` or `lens_context` instead.
+6. If `lens_check_impact` returns severity CRITICAL or HIGH — warn the user and wait for confirmation.
 
 ---
 

@@ -70,6 +70,13 @@ def main() -> None:
         help="Also update global Claude Desktop config"
     )
 
+    # -- annotate --
+    p_annotate = subparsers.add_parser(
+        "annotate",
+        help="Show annotation coverage and instructions for Claude Code"
+    )
+    p_annotate.add_argument("path", nargs="?", default=".", help="Project root (default: cwd)")
+
     args = parser.parse_args()
 
     if args.command is None:
@@ -85,6 +92,7 @@ def main() -> None:
         "watch": cmd_watch,
         "serve": cmd_serve,
         "setup": cmd_setup,
+        "annotate": cmd_annotate,
     }
     handlers[args.command](args)
 
@@ -119,6 +127,9 @@ def cmd_init(args: argparse.Namespace) -> None:
     print("Done!")
     print(f"  Nodes: {g.number_of_nodes()}")
     print(f"  Edges: {g.number_of_edges()}")
+    print()
+    print("Next: Generate semantic annotations for better code understanding.")
+    print("      In Claude Code, ask: \"Annotate my codebase\"")
 
 
 def cmd_sync(args: argparse.Namespace) -> None:
@@ -338,6 +349,45 @@ def cmd_setup(args: argparse.Namespace) -> None:
         print("  2. Restart Claude Code (or Claude Desktop)")
     print()
     print("The lens_* tools will be available after restart.")
+
+
+def cmd_annotate(args: argparse.Namespace) -> None:
+    """Show instructions for generating semantic annotations via Claude Code."""
+    import lenspr
+
+    path = str(Path(args.path).resolve())
+    try:
+        lenspr.init(path)
+        stats = lenspr.handle_tool("lens_annotation_stats", {})
+    except lenspr.LensError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    data = stats.get("data", {})
+    total = data.get("total_annotatable", 0)
+    annotated = data.get("annotated", 0)
+    coverage = data.get("coverage_pct", 0)
+
+    print("=" * 60)
+    print("SEMANTIC ANNOTATIONS")
+    print("=" * 60)
+    print()
+    print(f"Coverage: {annotated}/{total} nodes ({coverage:.1f}%)")
+    print()
+    print("To generate annotations, use Claude Code:")
+    print()
+    print('  1. Open Claude Code in this project')
+    print('  2. Ask: "Annotate my codebase" or "Generate semantic annotations"')
+    print('  3. Claude will use lens_annotate + lens_save_annotation tools')
+    print()
+    print("Benefits of semantic annotations:")
+    print("  • Better code understanding for LLMs")
+    print("  • Role detection (validator, handler, io, etc.)")
+    print("  • Side effect awareness (writes_file, network_io, etc.)")
+    print("  • Safer code modifications")
+    print()
+    print("Check coverage: lenspr annotate")
+    print("=" * 60)
 
 
 def _update_global_claude_config(project_path: str, lenspr_bin: str) -> None:

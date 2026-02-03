@@ -243,6 +243,11 @@ class LensContext:
                     and e.to_node not in removed_node_ids
                 ]
 
+                # Refresh jedi project to pick up new/changed files
+                # This ensures full name resolution even for incremental syncs
+                if hasattr(self._parser, "set_project_root"):
+                    self._parser.set_project_root(self.project_root)
+
                 # Reparse changed/added files
                 for rel in files_to_reparse:
                     file_path = self.project_root / rel

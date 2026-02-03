@@ -40,6 +40,9 @@ from lenspr.tools.annotation import (
 from lenspr.tools.annotation import (
     handle_save_annotation as _handle_save_annotation,
 )
+from lenspr.tools.explain import (
+    handle_explain as _handle_explain,
+)
 from lenspr.tools.modification import (
     handle_add_node as _handle_add_node,
 )
@@ -104,4 +107,5 @@ __all__ = [
     "_handle_save_annotation",
     "_handle_annotate_batch",
     "_handle_annotation_stats",
+    "_handle_explain",
 ]

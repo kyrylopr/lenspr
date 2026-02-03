@@ -230,6 +230,42 @@ class TestAutoSync:
         g = project.get_graph()
         assert "helper.helper_fn" not in g
 
+    def test_incremental_sync_resolves_local_calls(self, project: LensContext) -> None:
+        """New file with local function calls gets resolved edges via incremental sync."""
+        from lenspr import database
+
+        lenspr._ctx = project
+
+        # Create a new file with local function calls
+        new_file = project.project_root / "module_with_helpers.py"
+        new_file.write_text(
+            "def _helper():\n"
+            "    return 42\n"
+            "\n"
+            "\n"
+            "def main_func():\n"
+            "    return _helper() + 1\n"
+        )
+
+        # Incremental sync (not full)
+        lenspr.sync(full=False)
+        project.invalidate_graph()
+
+        # Check that the local call edge is RESOLVED, not INFERRED
+        edges = database.get_edges(
+            "module_with_helpers.main_func", project.graph_db, direction="outgoing"
+        )
+
+        # Find the edge to _helper
+        helper_edges = [e for e in edges if "_helper" in e.to_node]
+        assert len(helper_edges) >= 1, "Expected edge from main_func to _helper"
+
+        # The edge should be RESOLVED (jedi confirmed) not INFERRED
+        helper_edge = helper_edges[0]
+        assert helper_edge.confidence.value == "resolved", (
+            f"Expected 'resolved' confidence for local call, got '{helper_edge.confidence.value}'"
+        )
+
 
 class TestHotReload:
     """Test hot-reload functionality."""

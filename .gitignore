@@ -36,3 +36,7 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
+.env
+eval/.env
+eval/results/
+eval/results_v2/

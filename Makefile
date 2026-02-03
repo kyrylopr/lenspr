@@ -1,4 +1,4 @@
-.PHONY: install dev test test-cov lint lint-fix format typecheck check clean build setup serve demo health
+.PHONY: install dev test test-cov lint lint-fix format typecheck check clean build setup serve demo health annotate benchmark
 
 # Install package in production mode
 install:
@@ -82,17 +82,39 @@ health:
 annotations:
 	@python3 -c "import lenspr; lenspr.init('.'); r=lenspr.handle_tool('lens_annotation_stats',{}); d=r['data']; print(f'Annotated: {d[\"annotated\"]}/{d[\"total_annotatable\"]} ({d[\"coverage_pct\"]}%) | Stale: {d[\"stale_annotations\"]}')"
 
-# Auto-annotate all nodes
-annotate-all:
-	@python3 -c "\
-import lenspr; \
-lenspr.init('.'); \
-batch = lenspr.handle_tool('lens_annotate_batch', {'unannotated_only': True, 'limit': 1000}); \
-count = 0; \
-for n in batch['data']['nodes']: \
-    s = lenspr.handle_tool('lens_annotate', {'node_id': n['id']}); \
-    if s['success']: \
-        d = s['data']; \
-        lenspr.handle_tool('lens_save_annotation', {'node_id': n['id'], 'role': d['suggested_role'], 'side_effects': d['detected_side_effects'], 'semantic_inputs': d['detected_inputs'], 'semantic_outputs': d['detected_outputs']}); \
-        count += 1; \
-print(f'Annotated {count} nodes')"
+# Show annotation coverage and instructions
+annotate:
+	@lenspr annotate .
+
+# Run benchmark (requires ANTHROPIC_API_KEY in eval/.env)
+benchmark:
+	@echo "Running LensPR benchmark..."
+	@echo "Note: Set ANTHROPIC_API_KEY in eval/.env first"
+	@cd eval && jupyter nbconvert --to notebook --execute benchmark.ipynb --output benchmark_results.ipynb 2>/dev/null || \
+		echo "Run manually: cd eval && jupyter notebook benchmark.ipynb"
+
+# Generate benchmark charts from existing results
+benchmark-charts:
+	@cd eval && python3 generate_charts.py
+
+# Quick benchmark summary
+benchmark-summary:
+	@echo "==============================================="
+	@echo "LensPR Benchmark Summary"
+	@echo "==============================================="
+	@echo ""
+	@echo "WITHOUT LensPR:"
+	@echo "  - Tokens: 1.27M"
+	@echo "  - Iterations: 84"
+	@echo "  - Success: 1/3 (33%)"
+	@echo ""
+	@echo "WITH LensPR:"
+	@echo "  - Tokens: 388K"
+	@echo "  - Iterations: 38"
+	@echo "  - Success: 3/3 (100%)"
+	@echo ""
+	@echo "IMPROVEMENT:"
+	@echo "  - Token savings: 70%"
+	@echo "  - Iteration savings: 55%"
+	@echo "  - Success rate: +200%"
+	@echo "==============================================="

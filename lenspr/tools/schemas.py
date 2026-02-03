@@ -572,4 +572,29 @@ LENS_TOOLS: list[dict[str, Any]] = [
             },
         },
     },
+    # -- Explanation Tool --
+    {
+        "name": "lens_explain",
+        "description": (
+            "Generate a human-readable explanation of what a function/class does. "
+            "Provides rich context (callers, callees, usage examples) plus rule-based "
+            "analysis. Use this to understand unfamiliar code."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "node_id": {
+                    "type": "string",
+                    "description": "The node to explain (e.g. 'app.utils.validate_email').",
+                },
+                "include_examples": {
+                    "type": "boolean",
+                    "description": (
+                        "Include usage examples from callers. Default: true."
+                    ),
+                },
+            },
+            "required": ["node_id"],
+        },
+    },
 ]

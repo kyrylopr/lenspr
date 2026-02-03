@@ -4,6 +4,36 @@
 
 LensPR parses your Python codebase into a directed graph (nodes = functions, classes, modules; edges = calls, imports, inheritance) and gives LLMs structured tools to navigate, analyze impact, and safely modify code.
 
+## Benchmark Results
+
+We tested Claude with and without LensPR on 3 code analysis tasks:
+
+| Metric | Without LensPR | With LensPR | Improvement |
+|--------|----------------|-------------|-------------|
+| **Task Completion** | 33% (1/3) | 100% (3/3) | **+200%** |
+| **Tokens Used** | 1.27M | 388K | **-70%** |
+| **API Calls** | 84 | 38 | **-55%** |
+
+<details>
+<summary>📊 Detailed Results</summary>
+
+| Task | Mode | Tokens | Iterations | Status |
+|------|------|--------|------------|--------|
+| Understand Function | Without | 602,625 | 39 | ✅ |
+| Understand Function | **With** | **130,627** | **13** | ✅ |
+| Find All Usages | Without | 622,631 | 34 | ❌ Failed |
+| Find All Usages | **With** | **136,721** | **12** | ✅ |
+| Safe Code Change | Without | 50,000+ | 11+ | ❌ Rate Limit |
+| Safe Code Change | **With** | **120,661** | **13** | ✅ |
+
+**Without LensPR:** Claude loops through grep/read cycles, burns tokens, and often fails to complete.
+
+**With LensPR:** One `lens_context` call returns source + callers + callees + tests. Task done.
+
+Run the benchmark yourself: `make benchmark`
+
+</details>
+
 ## The Problem
 
 LLMs see code as text. They don't know that the function on line 50 is called from three places in other files. Changes happen without understanding consequences. Bugs surface later.

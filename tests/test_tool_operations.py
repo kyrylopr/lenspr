@@ -17,6 +17,7 @@ from lenspr.claude_tools import (
     _handle_context,
     _handle_delete_node,
     _handle_diff,
+    _handle_explain,
     _handle_grep,
     _handle_health,
     _handle_update_node,
@@ -518,3 +519,65 @@ class TestHealth:
         types = result.data["nodes_by_type"]
         assert "function" in types
         assert types["function"] > 0
+
+
+class TestExplain:
+    def test_returns_explanation(self, project_with_tests: LensContext) -> None:
+        result = _handle_explain({"node_id": "app.greet"}, project_with_tests)
+        assert result.success
+        assert result.data is not None
+        assert result.data["node_id"] == "app.greet"
+        assert "explanation" in result.data
+        assert "source_code" in result.data
+
+    def test_returns_analysis(self, project_with_tests: LensContext) -> None:
+        result = _handle_explain({"node_id": "app.greet"}, project_with_tests)
+        assert result.success
+        assert result.data is not None
+        analysis = result.data["analysis"]
+        assert "purpose" in analysis
+        assert "inputs" in analysis
+        assert "outputs" in analysis
+        assert "side_effects" in analysis
+        assert "complexity" in analysis
+
+    def test_returns_context(self, project_with_tests: LensContext) -> None:
+        result = _handle_explain({"node_id": "app.greet"}, project_with_tests)
+        assert result.success
+        assert result.data is not None
+        context = result.data["context"]
+        assert "callers" in context
+        assert "callees" in context
+        assert "caller_count" in context
+        # greet is called by welcome
+        assert context["caller_count"] >= 1
+
+    def test_includes_usage_examples(self, project_with_tests: LensContext) -> None:
+        result = _handle_explain(
+            {"node_id": "app.greet", "include_examples": True},
+            project_with_tests,
+        )
+        assert result.success
+        assert result.data is not None
+        # Should have usage examples since greet is called
+        assert "usage_examples" in result.data
+
+    def test_excludes_usage_examples(self, project_with_tests: LensContext) -> None:
+        result = _handle_explain(
+            {"node_id": "app.greet", "include_examples": False},
+            project_with_tests,
+        )
+        assert result.success
+        assert result.data is not None
+        # Examples should be empty when disabled
+        assert result.data["usage_examples"] == []
+
+    def test_nonexistent_node(self, project_with_tests: LensContext) -> None:
+        result = _handle_explain({"node_id": "app.nope"}, project_with_tests)
+        assert not result.success
+
+    def test_includes_llm_hint(self, project_with_tests: LensContext) -> None:
+        result = _handle_explain({"node_id": "app.greet"}, project_with_tests)
+        assert result.success
+        assert result.data is not None
+        assert "llm_hint" in result.data
