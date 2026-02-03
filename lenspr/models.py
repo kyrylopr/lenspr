@@ -31,8 +31,9 @@ class EdgeType(Enum):
 class EdgeConfidence(Enum):
     """Confidence level for edge resolution."""
 
-    RESOLVED = "resolved"  # Direct import + call, high certainty
-    INFERRED = "inferred"  # Type hint or star import, medium certainty
+    RESOLVED = "resolved"  # Jedi confirmed, target in project
+    INFERRED = "inferred"  # AST-based, not confirmed by jedi
+    EXTERNAL = "external"  # Stdlib/third-party (known, outside project)
     UNRESOLVED = "unresolved"  # Cannot determine target statically
 
 
@@ -118,6 +119,7 @@ class Edge:
     to_node: str  # Target node ID
     type: EdgeType
     line_number: int | None = None  # Where the relationship occurs in source
+    column: int | None = None  # Column offset for precise jedi resolution
     confidence: EdgeConfidence = EdgeConfidence.RESOLVED
     source: EdgeSource = EdgeSource.STATIC
     untracked_reason: str = ""  # Why confidence is UNRESOLVED (e.g. "dynamic_call")
@@ -131,6 +133,7 @@ class Edge:
             "to_node": self.to_node,
             "type": self.type.value,
             "line_number": self.line_number,
+            "column": self.column,
             "confidence": self.confidence.value,
             "source": self.source.value,
             "untracked_reason": self.untracked_reason,
@@ -146,6 +149,7 @@ class Edge:
             to_node=data["to_node"],
             type=EdgeType(data["type"]),
             line_number=data.get("line_number"),
+            column=data.get("column"),
             confidence=EdgeConfidence(data.get("confidence", "resolved")),
             source=EdgeSource(data.get("source", "static")),
             untracked_reason=data.get("untracked_reason", ""),

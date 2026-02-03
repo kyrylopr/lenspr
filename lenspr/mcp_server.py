@@ -270,13 +270,26 @@ def run_server(project_path: str) -> None:
         return json.dumps(result, indent=2)
 
     @mcp.tool()
-    def lens_get_structure(max_depth: int = 2) -> str:
+    def lens_get_structure(
+        max_depth: int = 2,
+        mode: str = "summary",
+        limit: int = 100,
+        offset: int = 0,
+        path_prefix: str | None = None,
+    ) -> str:
         """Get compact overview of project structure (files, classes, functions).
 
         Args:
-            max_depth: Maximum nesting depth to display.
+            max_depth: 0=files only, 1=with classes/functions, 2=with methods.
+            mode: "full" for all details, "summary" for counts only (default).
+            limit: Max files to return (for pagination).
+            offset: Skip first N files.
+            path_prefix: Filter to files starting with this path.
         """
-        result = lenspr.handle_tool("lens_get_structure", {"max_depth": max_depth})
+        params: dict = {"max_depth": max_depth, "mode": mode, "limit": limit, "offset": offset}
+        if path_prefix is not None:
+            params["path_prefix"] = path_prefix
+        result = lenspr.handle_tool("lens_get_structure", params)
         return json.dumps(result, indent=2)
 
     @mcp.tool()
@@ -382,6 +395,16 @@ def run_server(project_path: str) -> None:
         percentage of resolved edges, nodes without docstrings, circular imports.
         """
         result = lenspr.handle_tool("lens_health", {})
+        return json.dumps(result, indent=2)
+
+    @mcp.tool()
+    def lens_dependencies(group_by: str = "package") -> str:
+        """List all external dependencies (stdlib and third-party packages).
+
+        Args:
+            group_by: "package" to group by package name, "file" to group by source file.
+        """
+        result = lenspr.handle_tool("lens_dependencies", {"group_by": group_by})
         return json.dumps(result, indent=2)
 
     logger.info("Starting LensPR MCP server for: %s", project_path)

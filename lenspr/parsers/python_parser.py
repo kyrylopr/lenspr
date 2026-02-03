@@ -25,6 +25,71 @@ logger = logging.getLogger(__name__)
 # AST node types that indicate dynamic/untrackable patterns
 _DYNAMIC_CALL_NAMES = {"exec", "eval", "globals", "locals", "getattr", "setattr", "delattr"}
 
+# Python stdlib modules (common subset for fast detection)
+_STDLIB_MODULES = {
+    "abc", "aifc", "argparse", "array", "ast", "asynchat", "asyncio", "asyncore",
+    "atexit", "audioop", "base64", "bdb", "binascii", "binhex", "bisect",
+    "builtins", "bz2", "calendar", "cgi", "cgitb", "chunk", "cmath", "cmd",
+    "code", "codecs", "codeop", "collections", "colorsys", "compileall",
+    "concurrent", "configparser", "contextlib", "contextvars", "copy", "copyreg",
+    "cProfile", "crypt", "csv", "ctypes", "curses", "dataclasses", "datetime",
+    "dbm", "decimal", "difflib", "dis", "distutils", "doctest", "email",
+    "encodings", "enum", "errno", "faulthandler", "fcntl", "filecmp", "fileinput",
+    "fnmatch", "fractions", "ftplib", "functools", "gc", "getopt", "getpass",
+    "gettext", "glob", "graphlib", "grp", "gzip", "hashlib", "heapq", "hmac",
+    "html", "http", "idlelib", "imaplib", "imghdr", "imp", "importlib", "inspect",
+    "io", "ipaddress", "itertools", "json", "keyword", "lib2to3", "linecache",
+    "locale", "logging", "lzma", "mailbox", "mailcap", "marshal", "math",
+    "mimetypes", "mmap", "modulefinder", "multiprocessing", "netrc", "nis",
+    "nntplib", "numbers", "operator", "optparse", "os", "ossaudiodev", "pathlib",
+    "pdb", "pickle", "pickletools", "pipes", "pkgutil", "platform", "plistlib",
+    "poplib", "posix", "posixpath", "pprint", "profile", "pstats", "pty", "pwd",
+    "py_compile", "pyclbr", "pydoc", "queue", "quopri", "random", "re",
+    "readline", "reprlib", "resource", "rlcompleter", "runpy", "sched", "secrets",
+    "select", "selectors", "shelve", "shlex", "shutil", "signal", "site",
+    "smtpd", "smtplib", "sndhdr", "socket", "socketserver", "spwd", "sqlite3",
+    "ssl", "stat", "statistics", "string", "stringprep", "struct", "subprocess",
+    "sunau", "symtable", "sys", "sysconfig", "syslog", "tabnanny", "tarfile",
+    "telnetlib", "tempfile", "termios", "test", "textwrap", "threading", "time",
+    "timeit", "tkinter", "token", "tokenize", "tomllib", "trace", "traceback",
+    "tracemalloc", "tty", "turtle", "turtledemo", "types", "typing", "unicodedata",
+    "unittest", "urllib", "uu", "uuid", "venv", "warnings", "wave", "weakref",
+    "webbrowser", "winreg", "winsound", "wsgiref", "xdrlib", "xml", "xmlrpc",
+    "zipapp", "zipfile", "zipimport", "zlib", "zoneinfo",
+    # Also include typing-related modules
+    "typing_extensions",
+}
+
+# Python builtins (functions, types, exceptions)
+_BUILTINS = {
+    "abs", "aiter", "all", "anext", "any", "ascii", "bin", "bool", "breakpoint",
+    "bytearray", "bytes", "callable", "chr", "classmethod", "compile", "complex",
+    "delattr", "dict", "dir", "divmod", "enumerate", "eval", "exec", "filter",
+    "float", "format", "frozenset", "getattr", "globals", "hasattr", "hash",
+    "help", "hex", "id", "input", "int", "isinstance", "issubclass", "iter",
+    "len", "list", "locals", "map", "max", "memoryview", "min", "next", "object",
+    "oct", "open", "ord", "pow", "print", "property", "range", "repr", "reversed",
+    "round", "set", "setattr", "slice", "sorted", "staticmethod", "str", "sum",
+    "super", "tuple", "type", "vars", "zip",
+    # Common exceptions
+    "Exception", "BaseException", "ValueError", "TypeError", "KeyError",
+    "IndexError", "AttributeError", "RuntimeError", "StopIteration",
+    "ImportError", "ModuleNotFoundError", "FileNotFoundError", "IOError",
+    "OSError", "PermissionError", "NotImplementedError", "AssertionError",
+}
+
+
+def _is_external(name: str) -> bool:
+    """Check if a name refers to stdlib or builtin (external to project)."""
+    if not name:
+        return False
+    # Check if it's a builtin
+    if name in _BUILTINS:
+        return True
+    # Check if the module part is stdlib
+    root_module = name.split(".")[0]
+    return root_module in _STDLIB_MODULES
+
 
 def _make_id(parts: list[str]) -> str:
     """Build a dotted node ID from path components."""
@@ -346,6 +411,9 @@ class CodeGraphVisitor(ast.NodeVisitor):
             if not call_name:
                 continue
 
+            # Get column offset from the call's func node for precise jedi resolution
+            col_offset = getattr(node.func, "col_offset", None)
+
             # Detect dynamic/untrackable calls
             if call_name in _DYNAMIC_CALL_NAMES:
                 self.edges.append(
@@ -355,6 +423,7 @@ class CodeGraphVisitor(ast.NodeVisitor):
                         to_node=call_name,
                         type=EdgeType.CALLS,
                         line_number=node.lineno,
+                        column=col_offset,
                         confidence=EdgeConfidence.UNRESOLVED,
                         source=EdgeSource.STATIC,
                         untracked_reason=f"dynamic_{call_name}",
@@ -377,6 +446,7 @@ class CodeGraphVisitor(ast.NodeVisitor):
                     to_node=target,
                     type=EdgeType.CALLS,
                     line_number=node.lineno,
+                    column=col_offset,
                     confidence=confidence,
                     source=EdgeSource.STATIC,
                 )
@@ -403,6 +473,7 @@ class CodeGraphVisitor(ast.NodeVisitor):
 
         # Extract type names from annotations
         for ann in annotations:
+            col_offset = getattr(ann, "col_offset", None)
             for name in self._extract_names_from_annotation(ann):
                 resolved = self.import_table.resolve(name)
                 target = resolved[0] if resolved else name
@@ -414,6 +485,7 @@ class CodeGraphVisitor(ast.NodeVisitor):
                         to_node=target,
                         type=EdgeType.USES,
                         line_number=ann.lineno,
+                        column=col_offset,
                         confidence=confidence,
                         source=EdgeSource.STATIC,
                     )
@@ -626,7 +698,7 @@ class PythonParser(BaseParser):
         return all_nodes, all_edges
 
     def _resolve_edges_with_jedi(self, edges: list[Edge], file_path: str) -> None:
-        """Use jedi to upgrade INFERRED call edges to RESOLVED."""
+        """Use jedi to upgrade INFERRED edges to RESOLVED or EXTERNAL."""
         try:
             script = jedi.Script(path=file_path, project=self._jedi_project)
         except Exception:
@@ -640,10 +712,16 @@ class PythonParser(BaseParser):
             if edge.line_number is None:
                 continue
 
+            # Check if target is stdlib/builtin first
+            if _is_external(edge.to_node):
+                edge.confidence = EdgeConfidence.EXTERNAL
+                continue
+
             try:
-                names = script.goto(edge.line_number, 0)
-                if not names:
-                    # Try with column offset from the call name
+                # Use actual column if available, otherwise try 0 then 4
+                col = edge.column if edge.column is not None else 0
+                names = script.goto(edge.line_number, col)
+                if not names and edge.column is None:
                     names = script.goto(edge.line_number, 4)
                 if names:
                     d = names[0]
@@ -652,7 +730,11 @@ class PythonParser(BaseParser):
                     resolved_id = f"{module}.{name}" if module else name
                     if resolved_id and resolved_id != ".":
                         edge.to_node = resolved_id
-                        edge.confidence = EdgeConfidence.RESOLVED
+                        # Check if resolved target is external
+                        if _is_external(resolved_id):
+                            edge.confidence = EdgeConfidence.EXTERNAL
+                        else:
+                            edge.confidence = EdgeConfidence.RESOLVED
             except Exception:
                 continue
 

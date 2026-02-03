@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS edges (
     to_node TEXT NOT NULL,
     type TEXT NOT NULL,
     line_number INTEGER,
+    column INTEGER,
     confidence TEXT NOT NULL DEFAULT 'resolved',
     source TEXT NOT NULL DEFAULT 'static',
     untracked_reason TEXT NOT NULL DEFAULT '',
@@ -123,10 +124,10 @@ def save_graph(nodes: list[Node], edges: list[Edge], db_path: Path) -> None:
 
         conn.executemany(
             """INSERT INTO edges
-            (id, from_node, to_node, type, line_number, confidence, source,
+            (id, from_node, to_node, type, line_number, column, confidence, source,
              untracked_reason, metadata)
-            VALUES (:id, :from_node, :to_node, :type, :line_number, :confidence,
-                    :source, :untracked_reason, :metadata)""",
+            VALUES (:id, :from_node, :to_node, :type, :line_number, :column,
+                    :confidence, :source, :untracked_reason, :metadata)""",
             [e.to_dict() for e in edges],
         )
 

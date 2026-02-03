@@ -158,13 +158,36 @@ LENS_TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "lens_get_structure",
-        "description": "Get compact overview of project structure (files, classes, functions).",
+        "description": (
+            "Get compact overview of project structure. "
+            "Use mode='summary' for large projects (returns counts instead of details)."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "max_depth": {
                     "type": "integer",
-                    "description": "Depth of detail. Default: 2.",
+                    "description": (
+                        "0=files only, 1=with classes/functions, "
+                        "2=with methods. Default: 2."
+                    ),
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": ["full", "summary"],
+                    "description": "full=all details, summary=counts only. Default: summary.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max files to return. Default: 100.",
+                },
+                "offset": {
+                    "type": "integer",
+                    "description": "Skip first N files (for pagination). Default: 0.",
+                },
+                "path_prefix": {
+                    "type": "string",
+                    "description": "Filter to files starting with this path.",
                 },
             },
         },
@@ -296,6 +319,23 @@ LENS_TOOLS: list[dict[str, Any]] = [
             "properties": {},
         },
     },
+    {
+        "name": "lens_dependencies",
+        "description": (
+            "List all external dependencies (stdlib and third-party packages) "
+            "used by the project."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "group_by": {
+                    "type": "string",
+                    "enum": ["package", "file"],
+                    "description": "Group by package name or by file. Default: package.",
+                },
+            },
+        },
+    },
 ]
 
 
@@ -322,6 +362,7 @@ def handle_tool_call(
         "lens_diff": _handle_diff,
         "lens_batch": _handle_batch,
         "lens_health": _handle_health,
+        "lens_dependencies": _handle_dependencies,
     }
 
     handler = handlers.get(tool_name)
@@ -581,9 +622,15 @@ def _handle_search(params: dict, ctx: LensContext) -> ToolResponse:
 
 def _handle_get_structure(params: dict, ctx: LensContext) -> ToolResponse:
     G = ctx.get_graph()
-    max_depth = params.get("max_depth", 2)
-    structure = graph.get_structure(G, max_depth)
-    return ToolResponse(success=True, data={"structure": structure})
+    result = graph.get_structure(
+        G,
+        max_depth=params.get("max_depth", 2),
+        mode=params.get("mode", "summary"),  # Default to summary for scalability
+        limit=params.get("limit", 100),
+        offset=params.get("offset", 0),
+        path_prefix=params.get("path_prefix"),
+    )
+    return ToolResponse(success=True, data=result)
 
 
 def _handle_rename(params: dict, ctx: LensContext) -> ToolResponse:
@@ -1078,8 +1125,6 @@ def _handle_health(params: dict, ctx: LensContext) -> ToolResponse:
     G = ctx.get_graph()
 
     # Node stats — separate project nodes from phantom/external references
-    # Phantom nodes are auto-created by NetworkX when edges reference
-    # external targets (stdlib, third-party). They have no "type" attribute.
     project_nodes = 0
     external_refs = 0
     nodes_by_type: dict[str, int] = {}
@@ -1094,16 +1139,29 @@ def _handle_health(params: dict, ctx: LensContext) -> ToolResponse:
         if ntype in ("function", "method", "class") and not data.get("docstring"):
             nodes_without_docstring += 1
 
-    # Edge stats
+    # Edge stats — separate internal (project) vs external (stdlib/third-party)
     total_edges = G.number_of_edges()
     edges_by_type: dict[str, int] = {}
     edges_by_confidence: dict[str, int] = {}
     unresolved_edges: list[dict[str, str]] = []
+    internal_resolved = 0
+    internal_total = 0
+    external_count = 0
+
     for u, v, data in G.edges(data=True):
         etype = data.get("type", "unknown")
         edges_by_type[etype] = edges_by_type.get(etype, 0) + 1
         conf = data.get("confidence", "unknown")
         edges_by_confidence[conf] = edges_by_confidence.get(conf, 0) + 1
+
+        # Track internal vs external for confidence calculation
+        if conf == "external":
+            external_count += 1
+        else:
+            internal_total += 1
+            if conf == "resolved":
+                internal_resolved += 1
+
         if conf == "unresolved":
             reason = data.get("untracked_reason", "")
             unresolved_edges.append({
@@ -1114,8 +1172,10 @@ def _handle_health(params: dict, ctx: LensContext) -> ToolResponse:
     from lenspr.graph import detect_circular_imports
     cycles = detect_circular_imports(G)
 
-    resolved = edges_by_confidence.get("resolved", 0)
-    confidence_pct = (resolved / total_edges * 100) if total_edges > 0 else 100.0
+    # Confidence % is now calculated only for internal edges
+    internal_confidence_pct = (
+        (internal_resolved / internal_total * 100) if internal_total > 0 else 100.0
+    )
 
     documentable = (
         nodes_by_type.get("function", 0)
@@ -1137,7 +1197,14 @@ def _handle_health(params: dict, ctx: LensContext) -> ToolResponse:
             "total_edges": total_edges,
             "edges_by_type": edges_by_type,
             "edges_by_confidence": edges_by_confidence,
-            "confidence_pct": round(confidence_pct, 1),
+            # New: separate internal/external metrics
+            "internal_edges": {
+                "total": internal_total,
+                "resolved": internal_resolved,
+                "confidence_pct": round(internal_confidence_pct, 1),
+            },
+            "external_edges": external_count,
+            "confidence_pct": round(internal_confidence_pct, 1),  # Keep for backwards compat
             "nodes_without_docstring": nodes_without_docstring,
             "docstring_pct": round(docstring_pct, 1),
             "circular_imports": cycles,
@@ -1145,3 +1212,95 @@ def _handle_health(params: dict, ctx: LensContext) -> ToolResponse:
             "unresolved_count": len(unresolved_edges),
         },
     )
+
+
+def _handle_dependencies(params: dict, ctx: LensContext) -> ToolResponse:
+    """List all external dependencies (stdlib and third-party)."""
+    import sys
+    from collections import defaultdict
+
+    G = ctx.get_graph()
+    group_by = params.get("group_by", "package")
+
+    # Get stdlib modules (Python 3.10+)
+    stdlib_names: set[str]
+    try:
+        stdlib_names = set(sys.stdlib_module_names)
+    except AttributeError:
+        # Fallback for older Python
+        from lenspr.parsers.python_parser import _STDLIB_MODULES
+        stdlib_names = _STDLIB_MODULES
+
+    # Collect external edges
+    deps_by_package: dict[str, dict] = defaultdict(lambda: {"usages": 0, "files": set()})
+    deps_by_file: dict[str, list] = defaultdict(list)
+
+    for u, v, data in G.edges(data=True):
+        conf = data.get("confidence", "")
+        if conf != "external":
+            continue
+
+        # Get package name (first part of target)
+        target = v
+        package = target.split(".")[0] if target else ""
+        if not package:
+            continue
+
+        # Determine if stdlib or third-party
+        is_stdlib = package in stdlib_names
+
+        # Get source file
+        source_node = G.nodes.get(u, {})
+        source_file = source_node.get("file_path", "unknown")
+
+        deps_by_package[package]["usages"] += 1
+        deps_by_package[package]["files"].add(source_file)
+        deps_by_package[package]["type"] = "stdlib" if is_stdlib else "third-party"
+
+        deps_by_file[source_file].append({
+            "package": package,
+            "target": target,
+            "type": "stdlib" if is_stdlib else "third-party",
+        })
+
+    if group_by == "file":
+        result = [
+            {
+                "file": fp,
+                "dependencies": sorted(deps, key=lambda x: x["package"]),
+                "count": len(deps),
+            }
+            for fp, deps in sorted(deps_by_file.items())
+        ]
+        return ToolResponse(
+            success=True,
+            data={
+                "by_file": result,
+                "total_files": len(result),
+            },
+        )
+    else:
+        # group_by == "package"
+        stdlib_deps = []
+        third_party_deps = []
+        for pkg, info in sorted(deps_by_package.items()):
+            entry = {
+                "package": pkg,
+                "type": info["type"],
+                "usages": info["usages"],
+                "used_in_files": len(info["files"]),
+            }
+            if info["type"] == "stdlib":
+                stdlib_deps.append(entry)
+            else:
+                third_party_deps.append(entry)
+
+        return ToolResponse(
+            success=True,
+            data={
+                "dependencies": stdlib_deps + third_party_deps,
+                "total_packages": len(deps_by_package),
+                "stdlib_count": len(stdlib_deps),
+                "third_party_count": len(third_party_deps),
+            },
+        )

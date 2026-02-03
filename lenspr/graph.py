@@ -181,58 +181,138 @@ def detect_circular_imports(G: nx.DiGraph) -> list[list[str]]:
     return cycles
 
 
-def get_structure(G: nx.DiGraph, max_depth: int = 2) -> dict:
+def get_structure(
+    G: nx.DiGraph,
+    max_depth: int = 2,
+    mode: str = "full",
+    limit: int = 100,
+    offset: int = 0,
+    path_prefix: str | None = None,
+) -> dict:
     """
     Get compact project structure overview.
 
+    Args:
+        max_depth: 0=file names only, 1=with classes/functions, 2=with methods
+        mode: "full" (names+signatures) or "summary" (counts only)
+        limit: Max files to return (default 100)
+        offset: Skip first N files (default 0)
+        path_prefix: Filter to files starting with this path
+
     Returns a tree-like dict organized by file → class → functions.
     """
-    structure: dict = {}
+    from collections import defaultdict
+
+    # Single pass: group all nodes by file and type (O(n))
+    files: dict[str, dict] = {}
+    methods_by_class: dict[str, list] = defaultdict(list)
 
     for nid, data in G.nodes(data=True):
         node_type = data.get("type", "")
         file_path = data.get("file_path", "")
 
-        if node_type == "module":
-            if file_path not in structure:
-                structure[file_path] = {
-                    "module": nid,
-                    "classes": [],
-                    "functions": [],
-                    "blocks": [],
-                }
-        elif node_type == "class":
-            if file_path in structure:
-                methods = [
-                    {
-                        "id": mid,
-                        "name": mdata.get("name", ""),
-                        "signature": mdata.get("signature", ""),
-                    }
-                    for mid, mdata in G.nodes(data=True)
-                    if mdata.get("type") == "method" and mid.startswith(nid + ".")
-                ]
-                default = {"module": "", "classes": [], "functions": [], "blocks": []}
-                structure.setdefault(file_path, default)
-                structure[file_path]["classes"].append({
-                    "id": nid,
-                    "name": data.get("name", ""),
-                    "methods": methods if max_depth > 1 else [],
-                })
-        elif node_type == "function":
-            default = {"module": "", "classes": [], "functions": [], "blocks": []}
-            structure.setdefault(file_path, default)
-            structure[file_path]["functions"].append({
+        if not file_path:
+            continue
+
+        # Apply path prefix filter
+        if path_prefix and not file_path.startswith(path_prefix):
+            continue
+
+        # Pre-group methods by their parent class (O(1) lookup later)
+        if node_type == "method":
+            # Method ID format: "module.Class.method" → parent is "module.Class"
+            class_id = nid.rsplit(".", 1)[0]
+            methods_by_class[class_id].append({
                 "id": nid,
                 "name": data.get("name", ""),
                 "signature": data.get("signature", ""),
             })
+            continue
+
+        # Initialize file structure if needed
+        if file_path not in files:
+            files[file_path] = {
+                "module": "",
+                "classes": [],
+                "functions": [],
+                "blocks": [],
+                "_class_count": 0,
+                "_function_count": 0,
+                "_method_count": 0,
+                "_block_count": 0,
+            }
+
+        if node_type == "module":
+            files[file_path]["module"] = nid
+        elif node_type == "class":
+            files[file_path]["classes"].append({
+                "id": nid,
+                "name": data.get("name", ""),
+                "methods": [],  # Will be populated below
+            })
+            files[file_path]["_class_count"] += 1
+        elif node_type == "function":
+            files[file_path]["functions"].append({
+                "id": nid,
+                "name": data.get("name", ""),
+                "signature": data.get("signature", ""),
+            })
+            files[file_path]["_function_count"] += 1
         elif node_type == "block":
-            default = {"module": "", "classes": [], "functions": [], "blocks": []}
-            structure.setdefault(file_path, default)
-            structure[file_path]["blocks"].append({
+            files[file_path]["blocks"].append({
                 "id": nid,
                 "name": data.get("name", ""),
             })
+            files[file_path]["_block_count"] += 1
 
-    return structure
+    # Attach methods to their classes (O(1) per class)
+    for file_path, file_data in files.items():
+        for cls in file_data["classes"]:
+            cls_methods = methods_by_class.get(cls["id"], [])
+            if max_depth > 1:
+                cls["methods"] = cls_methods
+            file_data["_method_count"] += len(cls_methods)
+
+    # Sort files and apply pagination
+    sorted_files = sorted(files.keys())
+    total_files = len(sorted_files)
+    paginated_files = sorted_files[offset : offset + limit]
+
+    # Build result based on mode
+    structure: list | dict
+    if mode == "summary":
+        # Summary mode: counts only, no details
+        structure = [
+            {
+                "file": fp,
+                "module": files[fp]["module"],
+                "classes": files[fp]["_class_count"],
+                "functions": files[fp]["_function_count"],
+                "methods": files[fp]["_method_count"],
+                "blocks": files[fp]["_block_count"],
+            }
+            for fp in paginated_files
+        ]
+    else:
+        # Full mode: all details
+        full_structure: dict = {}
+        for fp in paginated_files:
+            file_data = files[fp]
+            # Remove internal count fields
+            full_structure[fp] = {
+                "module": file_data["module"],
+                "classes": file_data["classes"],
+                "functions": file_data["functions"],
+                "blocks": file_data["blocks"],
+            }
+        structure = full_structure
+
+    return {
+        "structure": structure,
+        "pagination": {
+            "limit": limit,
+            "offset": offset,
+            "total_files": total_files,
+            "has_more": offset + limit < total_files,
+        },
+    }
