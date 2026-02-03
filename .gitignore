@@ -30,6 +30,9 @@ htmlcov/
 # LensPR generated
 .lens/
 
+# MCP config (contains absolute paths)
+.mcp.json
+
 # OS
 .DS_Store
 Thumbs.db
