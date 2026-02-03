@@ -299,11 +299,18 @@ def handle_dependencies(params: dict, ctx: LensContext) -> ToolResponse:
     )
     deps_by_file: dict[str, list] = defaultdict(list)
 
-    project_modules = {
-        data.get("qualified_name", "").split(".")[0]
-        for _, data in nx_graph.nodes(data=True)
-        if data.get("type") == "module"
-    }
+    # Collect all project module names (both root packages and submodules)
+    project_modules: set[str] = set()
+    for _, data in nx_graph.nodes(data=True):
+        if data.get("type") == "module":
+            qname = data.get("qualified_name", "")
+            if qname:
+                # Add the root package
+                project_modules.add(qname.split(".")[0])
+                # Also add all parts of the qualified name as potential imports
+                # e.g., "backend.config" -> add "backend", "config"
+                for part in qname.split("."):
+                    project_modules.add(part)
 
     for u, v, data in nx_graph.edges(data=True):
         edge_type = data.get("type", "")
@@ -480,9 +487,41 @@ def handle_dead_code(params: dict, ctx: LensContext) -> ToolResponse:
             ):
                 entry_set.add(nid)
 
+            # 12. Web framework routes (FastAPI, Flask, etc.)
+            # Functions in router/routes/views/api files are likely endpoints
+            if node_type == "function" and any(
+                pattern in file_path
+                for pattern in [
+                    "/router", "/routes", "/views", "/api/",
+                    "router.py", "routes.py", "views.py", "endpoints.py",
+                ]
+            ):
+                entry_set.add(nid)
+
+            # 13. Functions with web framework decorators in source
+            if node_type == "function":
+                source = data.get("source_code", "")
+                # Look for common web framework decorator patterns
+                if any(
+                    pattern in source
+                    for pattern in [
+                        "@app.", "@router.", "@bp.", "@api.",  # FastAPI, Flask, Quart
+                        "@route", "@get", "@post", "@put", "@delete", "@patch",
+                        "@websocket",
+                        "Depends(",  # FastAPI dependency injection
+                        "@st.cache", "@st.experimental",  # Streamlit
+                        "st.button(", "st.form(",  # Streamlit callbacks
+                    ]
+                ):
+                    entry_set.add(nid)
+
+            # 13b. Streamlit app files (frontend/*.py)
+            if node_type == "function" and "frontend" in file_path:
+                entry_set.add(nid)
+
             # === Methods that are called via protocols/conventions ===
 
-            # 12. Dataclass/class special methods
+            # 14. Dataclass/class special methods
             if node_type == "method" and name in (
                 "__init__", "__post_init__", "__new__", "__del__",
                 "__repr__", "__str__", "__hash__", "__eq__", "__ne__",
@@ -494,30 +533,30 @@ def handle_dead_code(params: dict, ctx: LensContext) -> ToolResponse:
             ):
                 entry_set.add(nid)
 
-            # 13. Property methods (is_*, has_*, get_*, set_*)
+            # 15. Property methods (is_*, has_*, get_*, set_*)
             if node_type == "method" and (
                 name.startswith("is_") or name.startswith("has_") or
                 name.startswith("get_") or name.startswith("set_")
             ):
                 entry_set.add(nid)
 
-            # 14. Private methods starting with underscore (internal use)
+            # 16. Private methods starting with underscore (internal use)
             if node_type == "method" and name.startswith("_") and not name.startswith("__"):
                 entry_set.add(nid)
 
             # === Parser/visitor patterns ===
 
-            # 15. AST visitor methods (visit_*, generic_visit)
+            # 17. AST visitor methods (visit_*, generic_visit)
             if name.startswith("visit_") or name == "generic_visit":
                 entry_set.add(nid)
 
             # === Helper functions that are used internally ===
 
-            # 16. Detection/analysis helpers (often called via getattr or dict)
+            # 18. Detection/analysis helpers (often called via getattr or dict)
             if name.startswith("_detect_") or name.startswith("_compute_"):
                 entry_set.add(nid)
 
-            # 17. Enum classes (their values are accessed)
+            # 19. Enum classes (their values are accessed)
             enum_suffixes = ("Enum", "Role", "Type", "Confidence", "Source")
             if node_type == "class" and name.endswith(enum_suffixes):
                 entry_set.add(nid)
