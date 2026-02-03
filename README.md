@@ -28,10 +28,10 @@ LensPR provides:
 pip install lenspr
 
 # With MCP server support (for Claude Code / Claude Desktop)
-pip install lenspr[mcp]
+pip install 'lenspr[mcp]'
 
 # Development install
-pip install lenspr[dev]
+pip install 'lenspr[dev]'
 ```
 
 ## Quick Start
@@ -128,7 +128,7 @@ for block in response.content:
 
 ```bash
 # One-time setup (run in your project directory)
-pip install lenspr[mcp]
+pip install 'lenspr[mcp]'
 lenspr setup
 lenspr init
 ```
@@ -330,7 +330,7 @@ make demo
 
 - Python 3.11+
 - Core: `networkx`, `jedi`
-- MCP server: `mcp`, `watchdog` (optional, install with `pip install lenspr[mcp]`)
+- MCP server: `mcp`, `watchdog` (optional, install with `pip install 'lenspr[mcp]'`)
 - Dev: `pytest`, `pytest-cov`, `ruff`, `mypy`
 
 ## License
