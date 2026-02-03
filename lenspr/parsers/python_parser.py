@@ -809,11 +809,14 @@ class PythonParser(BaseParser):
                     d = names[0]
                     # If jedi resolved to a module import (not a function), and we have
                     # a dotted target, try resolving at the attribute position
-                    if d.type == "module" and "." in edge.to_node and edge.line_number <= len(source_lines):
+                    is_module_with_attr = (
+                        d.type == "module"
+                        and "." in edge.to_node
+                        and edge.line_number <= len(source_lines)
+                    )
+                    if is_module_with_attr:
                         line = source_lines[edge.line_number - 1]
-                        # Find the position after the first part (e.g., after "storage.")
-                        # Look for the pattern in the line
-                        first_part = edge.to_node.split(".")[-2] if edge.to_node.count(".") > 0 else ""
+                        # Find the method/attribute name in the line
                         last_part = edge.to_node.split(".")[-1]
                         # Try to find the method name in the line
                         method_pos = line.find(f".{last_part}")
