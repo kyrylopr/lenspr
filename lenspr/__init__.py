@@ -26,7 +26,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from lenspr.context import LensContext
-from lenspr.parsers.base import ProgressCallback
 from lenspr.models import (
     Change,
     Edge,
@@ -39,6 +38,7 @@ from lenspr.models import (
 from lenspr.models import (
     ToolResponse as ToolResponse,
 )
+from lenspr.parsers.base import ProgressCallback
 
 __version__ = "0.1.0"
 

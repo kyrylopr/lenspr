@@ -54,6 +54,9 @@ lenspr search ./my_project "validate"
 # Check impact before changing a function
 lenspr impact ./my_project app.models.User
 
+# Configure MCP for Claude Code (creates .mcp.json)
+lenspr setup ./my_project
+
 # Start MCP server (requires lenspr[mcp])
 lenspr serve ./my_project
 
@@ -123,6 +126,17 @@ for block in response.content:
 
 ### With Claude Code (MCP)
 
+```bash
+# One-time setup (run in your project directory)
+pip install lenspr[mcp]
+lenspr setup
+lenspr init
+```
+
+This creates `.mcp.json` automatically. Restart Claude Code — the `lens_*` tools will be available.
+
+**Manual configuration** (if you prefer):
+
 Create `.mcp.json` in your project root:
 
 ```json
@@ -136,9 +150,7 @@ Create `.mcp.json` in your project root:
 }
 ```
 
-Restart Claude Code — the `lens_*` tools will be available automatically.
-
-The MCP server automatically watches for file changes and re-syncs the graph (using watchdog or polling fallback).
+The MCP server automatically watches for file changes and re-syncs the graph.
 
 ### With Claude Desktop (MCP)
 

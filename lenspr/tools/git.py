@@ -281,8 +281,8 @@ def handle_commit_scope(params: dict, ctx: LensContext) -> ToolResponse:
                 if new_range.startswith("+"):
                     new_range = new_range[1:]
                     if "," in new_range:
-                        start, count = new_range.split(",")
-                        start, count = int(start), int(count)
+                        start_str, count_str = new_range.split(",")
+                        start, count = int(start_str), int(count_str)
                     else:
                         start, count = int(new_range), 1
                     end = start + count - 1 if count > 0 else start

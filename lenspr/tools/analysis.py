@@ -518,7 +518,8 @@ def handle_dead_code(params: dict, ctx: LensContext) -> ToolResponse:
                 entry_set.add(nid)
 
             # 17. Enum classes (their values are accessed)
-            if node_type == "class" and name.endswith(("Enum", "Role", "Type", "Confidence", "Source")):
+            enum_suffixes = ("Enum", "Role", "Type", "Confidence", "Source")
+            if node_type == "class" and name.endswith(enum_suffixes):
                 entry_set.add(nid)
 
         # Check for decorated functions

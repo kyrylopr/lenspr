@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from lenspr.models import ToolResponse
@@ -133,7 +134,9 @@ def enable_hot_reload(enabled: bool = True) -> None:
     _hot_reload_enabled = enabled
 
 
-def _get_handler(tool_name: str):
+def _get_handler(
+    tool_name: str,
+) -> Callable[[dict, LensContext], ToolResponse] | None:
     """Get the handler function for a tool, with hot-reload support."""
     if tool_name not in _HANDLER_MAP:
         return None
@@ -149,10 +152,12 @@ def _get_handler(tool_name: str):
             module = importlib.reload(sys.modules[module_name])
         else:
             module = importlib.import_module(module_name)
-        return getattr(module, func_name)
+        handler: Callable[[dict, LensContext], ToolResponse] = getattr(module, func_name)
+        return handler
     else:
         # Use pre-imported handlers (faster)
-        return globals().get(func_name)
+        handler_maybe = globals().get(func_name)
+        return handler_maybe  # type: ignore[return-value]
 
 
 def handle_tool_call(

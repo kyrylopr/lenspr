@@ -70,21 +70,40 @@ class TestStatus:
 class TestSearch:
     def test_search_finds_function(self, sample_project: Path) -> None:
         run_cli("init", str(sample_project))
-        result = run_cli("search", "hello", str(sample_project))
+        result = run_cli("search", str(sample_project), "hello")
         assert result.returncode == 0
         assert "hello" in result.stdout
 
     def test_search_no_results(self, sample_project: Path) -> None:
         run_cli("init", str(sample_project))
-        result = run_cli("search", "nonexistent_xyz", str(sample_project))
+        result = run_cli("search", str(sample_project), "nonexistent_xyz")
         assert result.returncode == 0
 
 
 class TestImpact:
     def test_impact_on_node(self, sample_project: Path) -> None:
         run_cli("init", str(sample_project))
-        result = run_cli("impact", "main.hello", str(sample_project))
+        result = run_cli("impact", str(sample_project), "main.hello")
         assert result.returncode == 0
+
+
+class TestSetup:
+    def test_setup_creates_mcp_json(self, sample_project: Path) -> None:
+        result = run_cli("setup", str(sample_project))
+        assert result.returncode == 0
+        mcp_config = sample_project / ".mcp.json"
+        assert mcp_config.exists()
+        import json
+        config = json.loads(mcp_config.read_text())
+        assert "mcpServers" in config
+        assert "lenspr" in config["mcpServers"]
+        assert "serve" in config["mcpServers"]["lenspr"]["args"]
+
+    def test_setup_idempotent(self, sample_project: Path) -> None:
+        run_cli("setup", str(sample_project))
+        result = run_cli("setup", str(sample_project))
+        assert result.returncode == 0
+        assert "already configured" in result.stdout
 
 
 class TestNoArgs:

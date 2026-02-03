@@ -1,4 +1,4 @@
-.PHONY: install dev test test-cov lint lint-fix format typecheck check clean build serve demo health
+.PHONY: install dev test test-cov lint lint-fix format typecheck check clean build setup serve demo health
 
 # Install package in production mode
 install:
@@ -47,6 +47,10 @@ clean-lens:
 # Build package
 build: clean
 	python -m build
+
+# Configure MCP for Claude Code (creates .mcp.json)
+setup:
+	lenspr setup .
 
 # Start MCP server on current directory
 serve:

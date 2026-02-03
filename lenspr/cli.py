@@ -59,6 +59,17 @@ def main() -> None:
         help="Enable hot-reload of lenspr modules (for development)"
     )
 
+    # -- setup --
+    p_setup = subparsers.add_parser(
+        "setup",
+        help="Configure MCP server for Claude Code / Claude Desktop"
+    )
+    p_setup.add_argument("path", nargs="?", default=".", help="Project root (default: cwd)")
+    p_setup.add_argument(
+        "--global", dest="global_config", action="store_true",
+        help="Also update global Claude Desktop config"
+    )
+
     args = parser.parse_args()
 
     if args.command is None:
@@ -73,6 +84,7 @@ def main() -> None:
         "impact": cmd_impact,
         "watch": cmd_watch,
         "serve": cmd_serve,
+        "setup": cmd_setup,
     }
     handlers[args.command](args)
 
@@ -104,7 +116,7 @@ def cmd_init(args: argparse.Namespace) -> None:
 
     ctx = lenspr.get_context()
     g = ctx.get_graph()
-    print(f"Done!")
+    print("Done!")
     print(f"  Nodes: {g.number_of_nodes()}")
     print(f"  Edges: {g.number_of_edges()}")
 
@@ -255,6 +267,102 @@ def cmd_serve(args: argparse.Namespace) -> None:
 
     path = str(Path(args.path).resolve())
     run_server(path, hot_reload=getattr(args, "dev", False))
+
+
+def cmd_setup(args: argparse.Namespace) -> None:
+    """Configure MCP server for Claude Code / Claude Desktop."""
+    import shutil
+
+    path = Path(args.path).resolve()
+    mcp_config_path = path / ".mcp.json"
+
+    # Find lenspr executable
+    lenspr_bin = shutil.which("lenspr")
+    if not lenspr_bin:
+        # Fallback: assume it's in the same location as python
+        lenspr_bin = "lenspr"
+
+    # Build MCP server configuration
+    server_config = {
+        "command": lenspr_bin,
+        "args": ["serve", str(path)],
+    }
+
+    # Update or create .mcp.json
+    if mcp_config_path.exists():
+        try:
+            config = json.loads(mcp_config_path.read_text())
+        except json.JSONDecodeError:
+            config = {}
+    else:
+        config = {}
+
+    if "mcpServers" not in config:
+        config["mcpServers"] = {}
+
+    if "lenspr" in config["mcpServers"]:
+        print(f"✓ LensPR already configured in {mcp_config_path}")
+    else:
+        config["mcpServers"]["lenspr"] = server_config
+        mcp_config_path.write_text(json.dumps(config, indent=2) + "\n")
+        print(f"✓ Created {mcp_config_path}")
+
+    # Optionally update global Claude Desktop config
+    if args.global_config:
+        _update_global_claude_config(str(path), lenspr_bin)
+
+    print()
+    print("Next steps:")
+    print("  1. Run: lenspr init")
+    print("  2. Restart Claude Code (or Claude Desktop)")
+    print("  3. The lens_* tools will be available automatically")
+
+
+def _update_global_claude_config(project_path: str, lenspr_bin: str) -> None:
+    """Update global Claude Desktop configuration."""
+    import platform
+
+    # Claude Desktop config location varies by platform
+    system = platform.system()
+    if system == "Darwin":  # macOS
+        config_path = Path.home() / "Library/Application Support/Claude/claude_desktop_config.json"
+    elif system == "Windows":
+        config_path = Path.home() / "AppData/Roaming/Claude/claude_desktop_config.json"
+    else:  # Linux
+        config_path = Path.home() / ".config/claude/claude_desktop_config.json"
+
+    if not config_path.parent.exists():
+        print(f"  ⚠ Claude Desktop config directory not found: {config_path.parent}")
+        print("    Claude Desktop may not be installed.")
+        return
+
+    # Load existing config
+    if config_path.exists():
+        try:
+            config = json.loads(config_path.read_text())
+        except json.JSONDecodeError:
+            config = {}
+    else:
+        config = {}
+
+    if "mcpServers" not in config:
+        config["mcpServers"] = {}
+
+    # Use project name as server key to allow multiple projects
+    project_name = Path(project_path).name
+    server_key = f"lenspr-{project_name}"
+
+    server_config = {
+        "command": lenspr_bin,
+        "args": ["serve", project_path],
+    }
+
+    if server_key in config["mcpServers"]:
+        print(f"  ✓ {server_key} already in global Claude Desktop config")
+    else:
+        config["mcpServers"][server_key] = server_config
+        config_path.write_text(json.dumps(config, indent=2) + "\n")
+        print(f"  ✓ Added {server_key} to {config_path}")
 
 
 if __name__ == "__main__":
