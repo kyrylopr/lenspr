@@ -73,9 +73,29 @@ def main() -> None:
     # -- annotate --
     p_annotate = subparsers.add_parser(
         "annotate",
-        help="Show annotation coverage and instructions for Claude Code"
+        help="Show annotation coverage or auto-annotate nodes"
     )
     p_annotate.add_argument("path", nargs="?", default=".", help="Project root (default: cwd)")
+    p_annotate.add_argument(
+        "--auto", action="store_true",
+        help="Auto-annotate all unannotated nodes (role/side_effects only, no summary)"
+    )
+    p_annotate.add_argument(
+        "--node", metavar="NODE_ID",
+        help="Annotate specific node by ID (e.g. app.models.User)"
+    )
+    p_annotate.add_argument(
+        "--nodes", nargs="+", metavar="NODE_ID",
+        help="Annotate multiple nodes by ID"
+    )
+    p_annotate.add_argument(
+        "--file", metavar="FILE_PATH",
+        help="Annotate all nodes in a specific file"
+    )
+    p_annotate.add_argument(
+        "--force", action="store_true",
+        help="Overwrite existing annotations"
+    )
 
     args = parser.parse_args()
 
@@ -363,17 +383,90 @@ def cmd_setup(args: argparse.Namespace) -> None:
 
 
 def cmd_annotate(args: argparse.Namespace) -> None:
-    """Show instructions for generating semantic annotations via Claude Code."""
+    """Show annotation coverage or auto-annotate nodes."""
     import lenspr
+    from lenspr import database
+    from lenspr.tools.patterns import auto_annotate
 
     path = str(Path(args.path).resolve())
     try:
-        lenspr.init(path)
-        stats = lenspr.handle_tool("lens_annotation_stats", {})
+        ctx = lenspr.init(path)
     except lenspr.LensError as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
+    # Collect nodes to annotate
+    nodes_to_annotate = []
+
+    if args.node:
+        # Single node
+        node = database.get_node(args.node, ctx.graph_db)
+        if not node:
+            print(f"Error: Node not found: {args.node}", file=sys.stderr)
+            sys.exit(1)
+        nodes_to_annotate = [node]
+
+    elif args.nodes:
+        # Multiple nodes
+        for node_id in args.nodes:
+            node = database.get_node(node_id, ctx.graph_db)
+            if not node:
+                print(f"Warning: Node not found: {node_id}", file=sys.stderr)
+                continue
+            nodes_to_annotate.append(node)
+
+    elif args.file:
+        # All nodes in a file
+        all_nodes = database.get_nodes(ctx.graph_db, file_filter=args.file)
+        nodes_to_annotate = [n for n in all_nodes if n.type.value in ("function", "method", "class")]
+
+    elif args.auto:
+        # All unannotated nodes
+        all_nodes = database.get_nodes(ctx.graph_db)
+        nodes_to_annotate = [
+            n for n in all_nodes
+            if n.type.value in ("function", "method", "class")
+            and (not n.is_annotated or args.force)
+        ]
+
+    # If we have nodes to annotate, do it
+    if nodes_to_annotate:
+        print(f"Annotating {len(nodes_to_annotate)} nodes...")
+        print()
+        success_count = 0
+        for node in nodes_to_annotate:
+            # Auto-detect role and side_effects
+            auto = auto_annotate(
+                name=node.name,
+                node_type=node.type.value,
+                source_code=node.source_code or "",
+            )
+
+            # Save annotation (without summary - Claude provides that)
+            result = database.save_annotation(
+                node_id=node.id,
+                db_path=ctx.graph_db,
+                summary=None,  # Summary should be provided by Claude
+                role=auto["role"],
+                side_effects=auto["side_effects"],
+            )
+
+            if result:
+                success_count += 1
+                short_id = node.id[:50] + "..." if len(node.id) > 50 else node.id
+                print(f"  ✓ {short_id:<53} role={auto['role']}")
+            else:
+                print(f"  ✗ {node.id} - failed to save")
+
+        print()
+        print(f"Annotated {success_count}/{len(nodes_to_annotate)} nodes")
+        print()
+        print("Note: Only role and side_effects were auto-detected.")
+        print("      For summaries, use Claude Code: 'Annotate my codebase'")
+        return
+
+    # Default: show stats and instructions
+    stats = lenspr.handle_tool("lens_annotation_stats", {})
     data = stats.get("data", {})
     total = data.get("total_annotatable", 0)
     annotated = data.get("annotated", 0)
@@ -385,19 +478,17 @@ def cmd_annotate(args: argparse.Namespace) -> None:
     print()
     print(f"Coverage: {annotated}/{total} nodes ({coverage:.1f}%)")
     print()
-    print("To generate annotations, use Claude Code:")
+    print("CLI Commands:")
+    print("  lenspr annotate .              # Show this help")
+    print("  lenspr annotate . --auto       # Auto-annotate all (role/side_effects only)")
+    print("  lenspr annotate . --node X     # Annotate specific node")
+    print("  lenspr annotate . --nodes X Y  # Annotate multiple nodes")
+    print("  lenspr annotate . --file F     # Annotate all nodes in file")
+    print("  lenspr annotate . --force      # Overwrite existing annotations")
     print()
-    print('  1. Open Claude Code in this project')
-    print('  2. Ask: "Annotate my codebase" or "Generate semantic annotations"')
-    print('  3. Claude will use lens_annotate + lens_save_annotation tools')
+    print("For full annotations with summaries, use Claude Code:")
+    print('  Ask: "Annotate my codebase" or "Аннотируй все функции"')
     print()
-    print("Benefits of semantic annotations:")
-    print("  • Better code understanding for LLMs")
-    print("  • Role detection (validator, handler, io, etc.)")
-    print("  • Side effect awareness (writes_file, network_io, etc.)")
-    print("  • Safer code modifications")
-    print()
-    print("Check coverage: lenspr annotate")
     print("=" * 60)
 
 

@@ -79,6 +79,7 @@ class TestWatchdogHandler:
 
     def test_py_file_sets_pending(self) -> None:
         """Modifying a .py file sets the _pending_sync flag."""
+        pytest.importorskip("watchdog")
         from watchdog.events import FileSystemEventHandler
 
         from lenspr.mcp_server import _start_watchdog_watcher
@@ -107,6 +108,7 @@ class TestWatchdogHandler:
 
     def test_non_py_file_ignored(self) -> None:
         """Modifying a non-.py file does NOT set _pending_sync."""
+        pytest.importorskip("watchdog")
         from watchdog.events import FileSystemEventHandler
 
         from lenspr.mcp_server import _start_watchdog_watcher
@@ -132,6 +134,7 @@ class TestWatchdogHandler:
 
     def test_created_event_sets_pending(self) -> None:
         """Creating a .py file sets the _pending_sync flag."""
+        pytest.importorskip("watchdog")
         from watchdog.events import FileSystemEventHandler
 
         from lenspr.mcp_server import _start_watchdog_watcher
@@ -157,6 +160,7 @@ class TestWatchdogHandler:
 
     def test_deleted_event_sets_pending(self) -> None:
         """Deleting a .py file sets the _pending_sync flag."""
+        pytest.importorskip("watchdog")
         from watchdog.events import FileSystemEventHandler
 
         from lenspr.mcp_server import _start_watchdog_watcher
@@ -281,6 +285,7 @@ class TestHotReload:
 
     def test_hot_reload_flag_triggers_pending_reload(self) -> None:
         """When hot_reload=True, lenspr file changes set _pending_reload."""
+        pytest.importorskip("watchdog")
         from watchdog.events import FileSystemEventHandler
 
         from lenspr.mcp_server import _start_watchdog_watcher

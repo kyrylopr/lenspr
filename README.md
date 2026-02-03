@@ -25,6 +25,7 @@ Instead of grep/read loops, Claude gets structured tools: one `lens_context` cal
 ## Quick Start
 
 ### Step 1: Install
+
 ```bash
 # Recommended: using pipx (isolated, available globally)
 pipx install 'lenspr[mcp]'
@@ -34,15 +35,17 @@ pip install 'lenspr[mcp]'
 ```
 
 ### Step 2: Initialize on your project
+
 ```bash
 cd ./my_project
 lenspr init .                   # Parses all Python files, builds the graph
 lenspr setup .                  # Creates .mcp.json config for Claude Code
 ```
 
-> ⚠️ **Re-initializing?** Use `lenspr init . --force` or delete the `.lens/` folder first.
+> **Re-initializing?** Use `lenspr init . --force` or delete the `.lens/` folder first.
 
 ### Step 3: Restart VSCode
+
 Close VSCode completely (Cmd+Q / Alt+F4) and reopen your project.
 Claude Code will now have access to `lens_*` tools.
 
@@ -60,12 +63,43 @@ lenspr search . "validate"      # Find functions by name
 lenspr impact . my.function     # Check what breaks if you change it
 ```
 
+## How It Works
+
+```
+Source Files (.py)
+       ↓
+   AST Parser (Python ast + jedi)
+       ↓
+   SQLite Graph (nodes + edges)
+       ↓
+   Tools (29 MCP tools for Claude)
+       ↓
+   Safe Modifications (3-level validation)
+```
+
+LensPR parses Python into a directed graph:
+- **Nodes** = functions, classes, methods, modules
+- **Edges** = calls, imports, inheritance, uses
+
+Claude gets structured tools to navigate and modify code safely.
+
+## Key Features
+
+| Feature | Description |
+|---------|-------------|
+| **Impact Analysis** | Know what breaks before you change anything |
+| **29 MCP Tools** | Navigation, search, analysis, modification, git integration |
+| **3-Level Validation** | Syntax → Structure → Signature checks |
+| **Auto-Sync** | Graph updates automatically when files change |
+| **Semantic Annotations** | Hybrid approach: Claude writes summaries, patterns detect roles |
+| **Git Integration** | Blame, history, commit scope analysis |
+
 ## All CLI Commands
 
 ```bash
-lenspr init <path>              # Build the code graph (run once)
+lenspr init <path>              # Build the code graph
 lenspr setup <path>             # Create .mcp.json for Claude Code
-lenspr status <path>            # Show graph stats (nodes, edges)
+lenspr status <path>            # Show graph stats (nodes, edges, confidence)
 lenspr search <path> "query"    # Search functions/classes by name
 lenspr impact <path> <node_id>  # Check what breaks if you change a node
 lenspr sync <path>              # Resync after file changes
@@ -74,65 +108,181 @@ lenspr watch <path>             # Auto-sync on file changes
 lenspr annotate <path>          # Show annotation coverage
 ```
 
-### Python API
+## Python API
 
 ```python
 import lenspr
 
+# Initialize
 lenspr.init("./my_project")
 
 # Get full context in one call
-context = lenspr.handle_tool("lens_context", {"node_id": "app.utils.validate"})
+context = lenspr.handle_tool("lens_context", {
+    "node_id": "app.utils.validate_email"
+})
+# Returns: source + callers + callees + tests
 
 # Check what breaks before changing
 impact = lenspr.check_impact("app.models.User")
+# Returns: severity, affected nodes, test coverage
+
+# Search by name or code content
+results = lenspr.handle_tool("lens_search", {
+    "query": "validate",
+    "search_in": "name"
+})
 ```
 
-## How It Works
+## MCP Tools Overview
 
-```
-Source Files -> AST Parser -> Graph (SQLite) -> Tools (CLI / MCP / API)
-```
+### Navigation & Search
+| Tool | Description |
+|------|-------------|
+| `lens_context` | **Best tool** — source + callers + callees + tests in one call |
+| `lens_get_node` | Get full source code of a node |
+| `lens_search` | Search by name, code content, or docstring |
+| `lens_grep` | Regex search with graph context |
+| `lens_find_usages` | All callers, importers, inheritors |
+| `lens_get_structure` | Project overview with pagination |
 
-LensPR parses Python into a directed graph (nodes = functions/classes, edges = calls/imports) and gives Claude structured tools to navigate and modify code safely.
+### Analysis & Safety
+| Tool | Description |
+|------|-------------|
+| `lens_check_impact` | **Always call before modifying** — shows severity |
+| `lens_validate_change` | Dry-run validation without applying |
+| `lens_health` | Graph quality: nodes, edges, confidence % |
+| `lens_dead_code` | Find unreachable code |
+| `lens_dependencies` | External packages used |
 
-**Key features:**
-- **Impact analysis** before changes - know what breaks
-- **27 tools** for navigation, analysis, modification
-- **3-level validation** - syntax, structure, signature checks
-- **Change history** with rollback capability
+### Modification
+| Tool | Description |
+|------|-------------|
+| `lens_update_node` | Update with validation + warnings |
+| `lens_add_node` | Add new function/class |
+| `lens_delete_node` | Remove a node |
+| `lens_rename` | Rename across entire project |
+| `lens_batch` | Multiple updates atomically |
 
-## Auto-Sync: How The Graph Stays Fresh
+### Git Integration
+| Tool | Description |
+|------|-------------|
+| `lens_blame` | Who wrote each line |
+| `lens_node_history` | Commits that modified this function |
+| `lens_commit_scope` | What a commit affected |
+| `lens_recent_changes` | Recently modified nodes |
 
-⚠️ **Important:** The graph syncs automatically **only when MCP server is running**.
+### Semantic Annotations
+| Tool | Description |
+|------|-------------|
+| `lens_annotate` | Get context for annotation |
+| `lens_save_annotation` | Save summary (role auto-detected) |
+| `lens_batch_save_annotations` | Annotate multiple nodes at once |
+| `lens_annotation_stats` | Coverage statistics |
+
+Full reference: [docs/TOOLS.md](docs/TOOLS.md)
+
+## Auto-Sync
+
+The graph syncs automatically **when MCP server is running**.
 
 | Mode | Auto-Sync | How |
 |------|-----------|-----|
-| **Claude Code** | ✅ Yes | File watcher runs in background, syncs on every .py change |
-| **CLI commands** | ❌ No | Run `lenspr sync .` manually after editing files |
-| **`lenspr watch`** | ✅ Yes | Standalone watcher, auto-syncs without Claude |
+| **Claude Code** | ✅ Yes | File watcher syncs on every .py change |
+| **CLI commands** | ❌ No | Run `lenspr sync .` manually |
+| **`lenspr watch`** | ✅ Yes | Standalone watcher |
 
-**In Claude Code:** Just edit your code — the graph updates automatically within 1 second.
+## Semantic Annotations
 
-**Using CLI only:** After editing files manually, run:
-```bash
-lenspr sync .    # Incremental sync (fast, only changed files)
-lenspr sync . --full   # Full reparse (if something seems wrong)
+LensPR supports semantic annotations with a **hybrid approach**:
+- **Claude** writes `summary` (requires semantic understanding)
+- **Patterns** auto-detect `role` and `side_effects` (no hallucination)
+
+### Example Node
+
+```python
+# Source code
+def validate_email(email: str) -> bool:
+    """Check if email is valid."""
+    return "@" in email
 ```
+
+```json
+// Stored in graph
+{
+  "id": "app.utils.validate_email",
+  "name": "validate_email",
+  "type": "function",
+  "file_path": "app/utils.py",
+  "source_code": "def validate_email(...)",
+  "signature": "def validate_email(email: str) -> bool",
+
+  // Annotation fields
+  "summary": "Validates email format by checking for @ symbol",
+  "role": "validator",      // Auto-detected from "validate_" prefix
+  "side_effects": []        // Auto-detected (none for this function)
+}
+```
+
+### Available Roles
+
+`validator` | `transformer` | `io` | `orchestrator` | `pure` | `handler` | `test` | `utility` | `factory` | `accessor`
+
+### CLI Commands
+
+```bash
+lenspr annotate .                    # Show coverage
+lenspr annotate . --auto             # Auto-annotate (role/side_effects only)
+lenspr annotate . --auto --force     # Rewrite all annotations
+lenspr annotate . --node <node_id>   # Annotate specific node
+lenspr annotate . --file <path>      # Annotate all nodes in file
+```
+
+### Using Claude Code
+
+For full annotations with summaries:
+
+```
+"Annotate my codebase"
+```
+
+Claude will call `lens_annotate_batch` → analyze code → call `lens_batch_save_annotations`.
+
+## Architecture
+
+```
+lenspr/
+├── __init__.py          # Public API
+├── models.py            # Data classes (Node, Edge, etc.)
+├── context.py           # LensContext — central state
+├── database.py          # SQLite operations
+├── graph.py             # NetworkX algorithms
+├── patcher.py           # File patching
+├── validator.py         # 3-level validation
+├── mcp_server.py        # MCP server (29 tools)
+├── cli.py               # CLI entry point
+├── parsers/
+│   ├── base.py          # BaseParser interface
+│   └── python_parser.py # Python AST + jedi
+└── tools/
+    ├── navigation.py    # Search, list, context
+    ├── analysis.py      # Impact, health, dead code
+    ├── modification.py  # Update, add, delete, rename
+    ├── annotation.py    # Semantic annotations
+    ├── git.py           # Blame, history
+    └── patterns.py      # Role/side_effects detection
+```
+
+Full architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
 ## Project Status
 
 | Metric | Value |
 |--------|-------|
-| Tests | 154 passed |
-| Graph Confidence | 87.6% |
-| Python Support | Yes |
-| JS/TS Support | Not yet (help wanted!) |
-
-## Documentation
-
-- [Tools Reference](docs/TOOLS.md) - all 27 tools explained
-- [Architecture](docs/ARCHITECTURE.md) - how it works internally
+| Tests | 188 passed |
+| Graph Confidence | 96% |
+| MCP Tools | 29 |
+| Python Support | ✅ Yes |
+| JS/TS Support | ❌ Not yet (help wanted!) |
 
 <details>
 <summary>Detailed benchmark results</summary>
@@ -152,17 +302,17 @@ Run yourself: `make benchmark`
 
 ## Known Limitations
 
-- **Python only** - JS/TS/Go/Rust parsers not implemented yet
-- **Dynamic code** - `getattr`, `eval()` can't be fully tracked
-- **Large projects** - not tested on >10k files
-- **Alpha stage** - some features incomplete
+- **Python only** — JS/TS/Go/Rust parsers not implemented yet
+- **Dynamic code** — `getattr`, `eval()` can't be fully tracked
+- **Large projects** — not tested on >10k files
+- **Alpha stage** — expect rough edges
 
 ## Contributing
 
 I especially welcome:
-- **JS/TS parser** - `BaseParser` interface is ready
-- **Bug reports** - even "this doesn't work" is helpful
-- **Ideas** - what would make this useful for you?
+- **JS/TS parser** — `BaseParser` interface is ready
+- **Bug reports** — even "this doesn't work" is helpful
+- **Ideas** — what would make this useful for you?
 
 ## Installation Options
 

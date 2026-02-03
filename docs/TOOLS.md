@@ -1,6 +1,6 @@
 # LensPR Tools Reference
 
-LensPR provides 27 tools for code navigation, analysis, and modification.
+LensPR provides 29 tools for code navigation, analysis, and modification.
 
 ## Navigation & Discovery
 
@@ -14,6 +14,7 @@ LensPR provides 27 tools for code navigation, analysis, and modification.
 | `lens_grep` | Text/regex search with graph context (which function contains each match) |
 | `lens_get_structure` | Compact project overview with pagination (summary mode for large projects) |
 | `lens_find_usages` | Find all callers, importers, and inheritors of a node |
+| `lens_explain` | Human-readable explanation of what a function/class does |
 
 ## Analysis & Safety
 
@@ -45,10 +46,15 @@ LensPR provides 27 tools for code navigation, analysis, and modification.
 
 | Tool | Description |
 |------|-------------|
-| `lens_annotate` | Generate suggested role, side_effects from code analysis |
-| `lens_save_annotation` | Save semantic annotations (summary, role, side_effects, inputs, outputs) |
+| `lens_annotate` | Get node context for annotation |
+| `lens_save_annotation` | Save annotation for a single node (role auto-detected) |
+| `lens_batch_save_annotations` | Save annotations for multiple nodes at once |
 | `lens_annotate_batch` | Get nodes needing annotation (unannotated or stale) |
 | `lens_annotation_stats` | Coverage stats: annotated %, breakdown by type and role |
+
+**Hybrid Approach (no hallucinations):**
+- Claude provides `summary` (requires semantic understanding)
+- `role` and `side_effects` are auto-detected from patterns
 
 **Node Roles:** `validator`, `transformer`, `io`, `orchestrator`, `pure`, `handler`, `test`, `utility`, `factory`, `accessor`
 
@@ -112,4 +118,19 @@ if validation["success"]:
         "node_id": "my.function",
         "new_source": "def my_function(x, y):\n    return x + y"
     })
+```
+
+### Annotate codebase
+
+```python
+# Get unannotated nodes
+batch = lenspr.handle_tool("lens_annotate_batch", {"limit": 50})
+
+# Save annotations (role/side_effects auto-detected)
+result = lenspr.handle_tool("lens_batch_save_annotations", {
+    "annotations": [
+        {"node_id": "app.utils.validate", "summary": "Validates email format"},
+        {"node_id": "app.db.save", "summary": "Persists user data"}
+    ]
+})
 ```

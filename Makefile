@@ -1,4 +1,4 @@
-.PHONY: install dev test test-cov lint lint-fix format typecheck check clean build setup serve demo health annotate benchmark
+.PHONY: install dev test test-cov lint lint-fix format typecheck check clean build setup serve demo health annotate annotate-all annotate-node annotate-file benchmark
 
 # Install package in production mode
 install:
@@ -85,6 +85,26 @@ annotations:
 # Show annotation coverage and instructions
 annotate:
 	@lenspr annotate .
+
+# Auto-annotate all unannotated nodes (role/side_effects only, no summary)
+annotate-all:
+	@lenspr annotate . --auto
+
+# Auto-annotate all nodes including already annotated (rewrite)
+annotate-all-force:
+	@lenspr annotate . --auto --force
+
+# Annotate specific node: make annotate-node NODE=app.models.User
+annotate-node:
+	@lenspr annotate . --node $(NODE)
+
+# Annotate multiple nodes: make annotate-nodes NODES="app.foo app.bar"
+annotate-nodes:
+	@lenspr annotate . --nodes $(NODES)
+
+# Annotate all nodes in a file: make annotate-file FILE=lenspr/cli.py
+annotate-file:
+	@lenspr annotate . --file $(FILE)
 
 # Run benchmark (requires ANTHROPIC_API_KEY in eval/.env)
 benchmark:

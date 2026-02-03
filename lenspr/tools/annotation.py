@@ -1,4 +1,9 @@
-"""Semantic annotation tool handlers."""
+"""Semantic annotation tool handlers.
+
+Hybrid approach:
+- Claude generates only `summary` (requires semantic understanding)
+- `role` and `side_effects` are auto-detected by patterns (deterministic, no hallucination)
+"""
 
 from __future__ import annotations
 
@@ -6,24 +11,14 @@ from typing import TYPE_CHECKING
 
 from lenspr import database
 from lenspr.models import ToolResponse
+from lenspr.tools.patterns import VALID_ROLES, auto_annotate
 
 if TYPE_CHECKING:
     from lenspr.context import LensContext
 
 
-# Valid roles for annotations
-VALID_ROLES = [
-    "validator",
-    "transformer",
-    "io",
-    "orchestrator",
-    "pure",
-    "handler",
-    "test",
-    "utility",
-    "factory",
-    "accessor",
-]
+# Re-export for backwards compatibility
+__all__ = ["VALID_ROLES"]
 
 
 def handle_annotate(params: dict, ctx: LensContext) -> ToolResponse:
@@ -80,19 +75,20 @@ def handle_annotate(params: dict, ctx: LensContext) -> ToolResponse:
             "callers": callers,
             "callees": callees,
             "annotation_status": annotation_status,
-            "valid_roles": VALID_ROLES,
         },
         hint=(
-            "Analyze this code and call lens_save_annotation with: "
-            "summary (1-2 sentences about what it does), "
-            f"role (one of: {', '.join(VALID_ROLES)}), "
-            "side_effects (list), semantic_inputs (list), semantic_outputs (list)."
+            "Analyze this code and call lens_save_annotation with only: "
+            "summary (1-2 sentences describing what it does). "
+            "Role and side_effects are auto-detected from patterns - you don't need to provide them."
         ),
     )
 
 
 def handle_save_annotation(params: dict, ctx: LensContext) -> ToolResponse:
-    """Save semantic annotations to a node."""
+    """Save semantic annotations to a node.
+
+    Claude provides summary; role and side_effects are auto-detected if not provided.
+    """
     node_id = params["node_id"]
 
     node = database.get_node(node_id, ctx.graph_db)
@@ -103,19 +99,28 @@ def handle_save_annotation(params: dict, ctx: LensContext) -> ToolResponse:
         )
 
     # Validate role if provided
-    role = params.get("role")
-    if role and role not in VALID_ROLES:
+    provided_role = params.get("role")
+    if provided_role and provided_role not in VALID_ROLES:
         return ToolResponse(
             success=False,
-            error=f"Invalid role '{role}'. Must be one of: {', '.join(VALID_ROLES)}",
+            error=f"Invalid role '{provided_role}'. Must be one of: {', '.join(VALID_ROLES)}",
         )
+
+    # Auto-fill role and side_effects if not provided
+    auto = auto_annotate(
+        name=node.name,
+        node_type=node.type.value,
+        source_code=node.source_code or "",
+        provided_role=provided_role,
+        provided_side_effects=params.get("side_effects"),
+    )
 
     success = database.save_annotation(
         node_id=node_id,
         db_path=ctx.graph_db,
         summary=params.get("summary"),
-        role=role,
-        side_effects=params.get("side_effects"),
+        role=auto["role"],
+        side_effects=auto["side_effects"],
         semantic_inputs=params.get("semantic_inputs"),
         semantic_outputs=params.get("semantic_outputs"),
     )
@@ -132,7 +137,9 @@ def handle_save_annotation(params: dict, ctx: LensContext) -> ToolResponse:
             "node_id": node_id,
             "saved": True,
             "summary": params.get("summary"),
-            "role": role,
+            "role": auto["role"],
+            "side_effects": auto["side_effects"],
+            "auto_detected": provided_role is None,
         },
     )
 
@@ -186,9 +193,100 @@ def handle_annotate_batch(params: dict, ctx: LensContext) -> ToolResponse:
             },
         },
         hint=(
-            "For each node, call lens_annotate to get context, then lens_save_annotation "
-            "with your analysis: summary, role, side_effects, semantic_inputs, semantic_outputs."
+            "For each node, analyze the code and call lens_batch_save_annotations with an array of "
+            "{node_id, summary} objects. You only need to provide summary (1-2 sentences). "
+            "Role and side_effects are auto-detected from patterns."
         ) if nodes else None,
+    )
+
+
+def handle_batch_save_annotations(params: dict, ctx: LensContext) -> ToolResponse:
+    """Save multiple annotations at once. Accepts array of annotation objects.
+
+    Claude provides only summary for each node. Role and side_effects are auto-detected.
+
+    Each annotation should have:
+    - node_id (required)
+    - summary (required) - Claude's description of what the code does
+    - role (optional) - auto-detected if not provided
+    - side_effects (optional) - auto-detected if not provided
+    """
+    annotations = params.get("annotations", [])
+
+    if not annotations:
+        return ToolResponse(
+            success=False,
+            error="No annotations provided. Pass 'annotations' array.",
+        )
+
+    saved = []
+    errors = []
+
+    for ann in annotations:
+        node_id = ann.get("node_id")
+        if not node_id:
+            errors.append({"error": "Missing node_id", "annotation": ann})
+            continue
+
+        # Validate role if provided
+        provided_role = ann.get("role")
+        if provided_role and provided_role not in VALID_ROLES:
+            errors.append({
+                "node_id": node_id,
+                "error": f"Invalid role '{provided_role}'",
+            })
+            continue
+
+        # Check node exists
+        node = database.get_node(node_id, ctx.graph_db)
+        if not node:
+            errors.append({
+                "node_id": node_id,
+                "error": "Node not found",
+            })
+            continue
+
+        # Auto-fill role and side_effects if not provided
+        auto = auto_annotate(
+            name=node.name,
+            node_type=node.type.value,
+            source_code=node.source_code or "",
+            provided_role=provided_role,
+            provided_side_effects=ann.get("side_effects"),
+        )
+
+        # Save annotation
+        success = database.save_annotation(
+            node_id=node_id,
+            db_path=ctx.graph_db,
+            summary=ann.get("summary"),
+            role=auto["role"],
+            side_effects=auto["side_effects"],
+            semantic_inputs=ann.get("semantic_inputs"),
+            semantic_outputs=ann.get("semantic_outputs"),
+        )
+
+        if success:
+            saved.append({
+                "node_id": node_id,
+                "summary": ann.get("summary"),
+                "role": auto["role"],
+                "side_effects": auto["side_effects"],
+            })
+        else:
+            errors.append({
+                "node_id": node_id,
+                "error": "Failed to save",
+            })
+
+    return ToolResponse(
+        success=len(errors) == 0,
+        data={
+            "saved_count": len(saved),
+            "error_count": len(errors),
+            "saved": saved,
+            "errors": errors if errors else None,
+        },
     )
 
 

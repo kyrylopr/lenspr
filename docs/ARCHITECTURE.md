@@ -90,7 +90,7 @@ Jedi resolution cache: speeds up repeated parsing.
 
 ## MCP Server
 
-The MCP server (`lenspr serve`) provides all 27 tools to Claude Code/Desktop via stdio transport.
+The MCP server (`lenspr serve`) provides all 29 tools to Claude Code/Desktop via stdio transport.
 
 Features:
 - Auto-sync on file changes (via watchdog)

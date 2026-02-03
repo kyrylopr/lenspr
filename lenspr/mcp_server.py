@@ -15,6 +15,70 @@ from mcp.server.fastmcp import FastMCP
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger("lenspr.mcp")
 
+# Global queue of nodes needing annotation (populated by auto-sync)
+_pending_annotation_nodes: list[dict] = []
+_pending_lock = threading.Lock()
+
+
+def _add_pending_annotations(nodes: list) -> None:
+    """Add nodes to the pending annotation queue."""
+    global _pending_annotation_nodes
+    with _pending_lock:
+        for node in nodes:
+            if hasattr(node, "type") and node.type.value in ("function", "method", "class"):
+                _pending_annotation_nodes.append({
+                    "id": node.id,
+                    "name": node.name,
+                    "type": node.type.value,
+                    "file_path": node.file_path,
+                })
+
+
+def _get_and_clear_pending() -> list[dict]:
+    """Get pending annotations and clear the queue."""
+    global _pending_annotation_nodes
+    with _pending_lock:
+        pending = _pending_annotation_nodes.copy()
+        _pending_annotation_nodes = []
+        return pending
+
+
+def _wrap_result_with_pending(result: str) -> str:
+    """Wrap tool result with pending annotation hint if any."""
+    pending = _get_and_clear_pending()
+    if not pending:
+        return result
+
+    try:
+        data = json.loads(result)
+    except json.JSONDecodeError:
+        return result
+
+    # Add pending annotations to response
+    node_ids = [n["id"] for n in pending[:10]]  # Limit to 10
+    remaining = len(pending) - 10 if len(pending) > 10 else 0
+
+    data["_pending_annotations"] = {
+        "count": len(pending),
+        "nodes": pending[:10],
+        "hint": (
+            f"ACTION REQUIRED: {len(pending)} node(s) were added/modified and need annotation. "
+            f"Please analyze: {', '.join(node_ids)}"
+            + (f" (+{remaining} more)" if remaining > 0 else "")
+            + ". Call lens_batch_save_annotations([{node_id, summary}, ...]). "
+            "Only provide summary (1-2 sentences) - role/side_effects are auto-detected."
+        ),
+    }
+
+    return json.dumps(data, indent=2)
+
+
+def _tool_result(tool_name: str, params: dict) -> str:
+    """Execute tool and wrap result with pending annotations."""
+    import lenspr
+    result = lenspr.handle_tool(tool_name, params)
+    return _wrap_result_with_pending(json.dumps(result, indent=2))
+
 # Modules to reload when hot-reload is triggered (in dependency order)
 _LENSPR_MODULES = [
     "lenspr.models",
@@ -159,6 +223,8 @@ def _start_watchdog_watcher(
                             len(result.deleted),
                             len(changed),
                         )
+                        # Queue nodes for annotation
+                        _add_pending_annotations(result.added + result.modified)
                 except Exception:
                     logger.exception("Auto-sync failed")
 
@@ -272,8 +338,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
             params["file_path"] = file_path
         if name is not None:
             params["name"] = name
-        result = lenspr.handle_tool("lens_list_nodes", params)
-        return json.dumps(result, indent=2)
+        return _tool_result("lens_list_nodes", params)
 
     @mcp.tool()
     def lens_get_node(node_id: str) -> str:
@@ -282,8 +347,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
         Args:
             node_id: The node identifier (e.g. app.models.User).
         """
-        result = lenspr.handle_tool("lens_get_node", {"node_id": node_id})
-        return json.dumps(result, indent=2)
+        return _tool_result("lens_get_node", {"node_id": node_id})
 
     @mcp.tool()
     def lens_get_connections(
@@ -313,11 +377,10 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
             node_id: The node identifier.
             depth: How many levels of dependents to traverse.
         """
-        result = lenspr.handle_tool("lens_check_impact", {
+        return _tool_result("lens_check_impact", {
             "node_id": node_id,
             "depth": depth,
         })
-        return json.dumps(result, indent=2)
 
     @mcp.tool()
     def lens_update_node(
@@ -376,11 +439,10 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
             query: Search query string.
             search_in: Where to search: name, code, docstring, or all.
         """
-        result = lenspr.handle_tool("lens_search", {
+        return _tool_result("lens_search", {
             "query": query,
             "search_in": search_in,
         })
-        return json.dumps(result, indent=2)
 
     @mcp.tool()
     def lens_get_structure(
@@ -402,8 +464,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
         params: dict = {"max_depth": max_depth, "mode": mode, "limit": limit, "offset": offset}
         if path_prefix is not None:
             params["path_prefix"] = path_prefix
-        result = lenspr.handle_tool("lens_get_structure", params)
-        return json.dumps(result, indent=2)
+        return _tool_result("lens_get_structure", params)
 
     @mcp.tool()
     def lens_rename(
@@ -444,7 +505,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
             depth: How many levels of callers/callees to include.
             include_source: Include full source code for callers/callees/tests.
         """
-        result = lenspr.handle_tool("lens_context", {
+        return _tool_result("lens_context", {
             "node_id": node_id,
             "include_callers": include_callers,
             "include_callees": include_callees,
@@ -452,7 +513,6 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
             "depth": depth,
             "include_source": include_source,
         })
-        return json.dumps(result, indent=2)
 
     @mcp.tool()
     def lens_grep(
@@ -470,12 +530,11 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
             file_glob: Glob pattern to filter files (e.g. '*.py', 'tests/**').
             max_results: Maximum number of results to return.
         """
-        result = lenspr.handle_tool("lens_grep", {
+        return _tool_result("lens_grep", {
             "pattern": pattern,
             "file_glob": file_glob,
             "max_results": max_results,
         })
-        return json.dumps(result, indent=2)
 
     @mcp.tool()
     def lens_diff() -> str:
@@ -484,8 +543,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
         Returns lists of added, modified, and deleted files compared
         to the current graph state.
         """
-        result = lenspr.handle_tool("lens_diff", {})
-        return json.dumps(result, indent=2)
+        return _tool_result("lens_diff", {})
 
     @mcp.tool()
     def lens_batch(updates: list[dict]) -> str:
@@ -616,6 +674,31 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
         return json.dumps(result, indent=2)
 
     @mcp.tool()
+    def lens_batch_save_annotations(
+        annotations: list[dict],
+    ) -> str:
+        """Save multiple annotations at once. ONE confirmation for many nodes.
+
+        You only need to provide summary for each node. Role and side_effects
+        are auto-detected from patterns (no hallucination risk).
+
+        Args:
+            annotations: Array of annotation objects, each with:
+                - node_id (required): The node to annotate
+                - summary (required): 1-2 sentence description of what the code does
+                - role (optional): Auto-detected if not provided
+                - side_effects (optional): Auto-detected if not provided
+
+        Example:
+            annotations=[
+                {"node_id": "app.utils.validate", "summary": "Validates email format by checking for @ symbol"},
+                {"node_id": "app.db.save", "summary": "Persists user data to the PostgreSQL database"}
+            ]
+        """
+        result = lenspr.handle_tool("lens_batch_save_annotations", {"annotations": annotations})
+        return json.dumps(result, indent=2)
+
+    @mcp.tool()
     def lens_annotate_batch(
         type_filter: str | None = None,
         file_path: str | None = None,
@@ -641,8 +724,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
             params["type_filter"] = type_filter
         if file_path is not None:
             params["file_path"] = file_path
-        result = lenspr.handle_tool("lens_annotate_batch", params)
-        return json.dumps(result, indent=2)
+        return _tool_result("lens_annotate_batch", params)
 
     @mcp.tool()
     def lens_annotation_stats() -> str:

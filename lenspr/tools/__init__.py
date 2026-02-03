@@ -19,6 +19,7 @@ from lenspr.tools.annotation import (
     handle_annotate,
     handle_annotate_batch,
     handle_annotation_stats,
+    handle_batch_save_annotations,
     handle_save_annotation,
 )
 from lenspr.tools.explain import (
@@ -80,6 +81,7 @@ __all__ = [
     # Annotation
     "handle_annotate",
     "handle_save_annotation",
+    "handle_batch_save_annotations",
     "handle_annotate_batch",
     "handle_annotation_stats",
     # Explain
@@ -116,6 +118,7 @@ _HANDLER_MAP: dict[str, tuple[str, str]] = {
     "lens_find_usages": ("lenspr.tools.analysis", "handle_find_usages"),
     "lens_annotate": ("lenspr.tools.annotation", "handle_annotate"),
     "lens_save_annotation": ("lenspr.tools.annotation", "handle_save_annotation"),
+    "lens_batch_save_annotations": ("lenspr.tools.annotation", "handle_batch_save_annotations"),
     "lens_annotate_batch": ("lenspr.tools.annotation", "handle_annotate_batch"),
     "lens_annotation_stats": ("lenspr.tools.annotation", "handle_annotation_stats"),
     # Git integration
