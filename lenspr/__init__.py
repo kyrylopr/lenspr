@@ -81,9 +81,15 @@ def init(
     lens_dir = root / ".lens"
 
     if lens_dir.exists() and not force:
-        # Load existing
+        # Load existing context
         _ctx = LensContext(root, lens_dir)
-        return _ctx
+        
+        # Auto-reinitialize if database is empty (previous failed init)
+        g = _ctx.get_graph()
+        if g.number_of_nodes() == 0:
+            force = True  # Fall through to reinitialize
+        else:
+            return _ctx
 
     # Initialize fresh
     from lenspr.database import init_database

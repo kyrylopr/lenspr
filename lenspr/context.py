@@ -13,7 +13,7 @@ import networkx as nx
 
 from lenspr import database
 from lenspr import graph as graph_ops
-from lenspr.models import SyncResult
+from lenspr.models import Node, SyncResult
 from lenspr.parsers.base import ProgressCallback
 from lenspr.parsers.python_parser import PythonParser
 from lenspr.patcher import PatchBuffer
@@ -131,7 +131,24 @@ class LensContext:
                 new_nodes, new_edges = self._parser.parse_project(
                     self.project_root, progress_callback
                 )
-                new_index = {n.id: n for n in new_nodes}
+
+                # Deduplicate nodes by ID (keep last occurrence)
+                # This handles edge cases like symlinks or files generating same module ID
+                seen_ids: set[str] = set()
+                unique_nodes: list[Node] = []
+                for node in reversed(new_nodes):
+                    if node.id not in seen_ids:
+                        seen_ids.add(node.id)
+                        unique_nodes.append(node)
+                unique_nodes.reverse()
+
+                if len(unique_nodes) != len(new_nodes):
+                    logger.warning(
+                        "Deduplicated %d duplicate node IDs",
+                        len(new_nodes) - len(unique_nodes)
+                    )
+
+                new_index = {n.id: n for n in unique_nodes}
 
                 # Compute diff
                 added = [n for nid, n in new_index.items() if nid not in old_index]
@@ -142,7 +159,7 @@ class LensContext:
                 ]
 
                 # Save new graph
-                database.save_graph(new_nodes, new_edges, self.graph_db)
+                database.save_graph(unique_nodes, new_edges, self.graph_db)
                 self.invalidate_graph()
 
                 # Update config

@@ -40,6 +40,8 @@ lenspr init .                   # Parses all Python files, builds the graph
 lenspr setup .                  # Creates .mcp.json config for Claude Code
 ```
 
+> ⚠️ **Re-initializing?** Use `lenspr init . --force` or delete the `.lens/` folder first.
+
 ### Step 3: Restart VSCode
 Close VSCode completely (Cmd+Q / Alt+F4) and reopen your project.
 Claude Code will now have access to `lens_*` tools.
@@ -99,6 +101,24 @@ LensPR parses Python into a directed graph (nodes = functions/classes, edges = c
 - **27 tools** for navigation, analysis, modification
 - **3-level validation** - syntax, structure, signature checks
 - **Change history** with rollback capability
+
+## Auto-Sync: How The Graph Stays Fresh
+
+⚠️ **Important:** The graph syncs automatically **only when MCP server is running**.
+
+| Mode | Auto-Sync | How |
+|------|-----------|-----|
+| **Claude Code** | ✅ Yes | File watcher runs in background, syncs on every .py change |
+| **CLI commands** | ❌ No | Run `lenspr sync .` manually after editing files |
+| **`lenspr watch`** | ✅ Yes | Standalone watcher, auto-syncs without Claude |
+
+**In Claude Code:** Just edit your code — the graph updates automatically within 1 second.
+
+**Using CLI only:** After editing files manually, run:
+```bash
+lenspr sync .    # Incremental sync (fast, only changed files)
+lenspr sync . --full   # Full reparse (if something seems wrong)
+```
 
 ## Project Status
 
