@@ -91,7 +91,7 @@ class TestUpdateNode:
         """Can't turn a function into a class."""
         # Debug: check what node type was assigned
         from lenspr import database
-        from lenspr.validator import validate_structure, validate_full
+        from lenspr.validator import validate_full, validate_structure
 
         node = database.get_node("app.greet", project.graph_db)
         assert node is not None, "Node app.greet not found in database"
