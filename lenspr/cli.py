@@ -295,6 +295,10 @@ def cmd_setup(args: argparse.Namespace) -> None:
 
     path = Path(args.path).resolve()
     mcp_config_path = path / ".mcp.json"
+    lens_dir = path / ".lens"
+
+    # Check if already initialized
+    is_initialized = lens_dir.exists() and (lens_dir / "graph.db").exists()
 
     # Check if MCP dependencies are installed
     mcp_installed = _check_mcp_dependencies()
@@ -339,16 +343,23 @@ def cmd_setup(args: argparse.Namespace) -> None:
         print("⚠️  MCP dependencies not installed!")
         print("   Run: pip install 'lenspr[mcp]'")
         print()
-    print("Next steps:")
+
+    # Show appropriate next steps
     if not mcp_installed:
+        print("Next steps:")
         print("  1. Install MCP: pip install 'lenspr[mcp]'")
-        print("  2. Run: lenspr init")
-        print("  3. Restart Claude Code (or Claude Desktop)")
+        if not is_initialized:
+            print("  2. Run: lenspr init .")
+            print("  3. Restart Claude Code (Cmd+Q / Alt+F4, then reopen)")
+        else:
+            print("  2. Restart Claude Code (Cmd+Q / Alt+F4, then reopen)")
+    elif not is_initialized:
+        print("Next steps:")
+        print("  1. Run: lenspr init .")
+        print("  2. Restart Claude Code (Cmd+Q / Alt+F4, then reopen)")
     else:
-        print("  1. Run: lenspr init")
-        print("  2. Restart Claude Code (or Claude Desktop)")
-    print()
-    print("The lens_* tools will be available after restart.")
+        print("✓ Ready! Restart Claude Code (Cmd+Q / Alt+F4, then reopen)")
+        print("  The lens_* tools will be available after restart.")
 
 
 def cmd_annotate(args: argparse.Namespace) -> None:
