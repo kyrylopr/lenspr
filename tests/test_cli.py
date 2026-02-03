@@ -31,7 +31,7 @@ class TestInit:
         result = run_cli("init", str(sample_project))
         assert result.returncode == 0
         assert (sample_project / ".lens").exists()
-        assert "Initialized" in result.stdout
+        assert "Done!" in result.stdout
 
     def test_init_shows_node_count(self, sample_project: Path) -> None:
         result = run_cli("init", str(sample_project))

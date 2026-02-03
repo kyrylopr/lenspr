@@ -26,6 +26,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from lenspr.context import LensContext
+from lenspr.parsers.base import ProgressCallback
 from lenspr.models import (
     Change,
     Edge,
@@ -53,7 +54,11 @@ def _require_ctx() -> LensContext:
     return _ctx
 
 
-def init(project_path: str, force: bool = False) -> LensContext:
+def init(
+    project_path: str,
+    force: bool = False,
+    progress_callback: ProgressCallback | None = None,
+) -> LensContext:
     """
     Initialize LensPR on a project.
 
@@ -62,6 +67,7 @@ def init(project_path: str, force: bool = False) -> LensContext:
     Args:
         project_path: Path to the Python project root.
         force: If True, reinitialize even if .lens/ already exists.
+        progress_callback: Optional callback(current, total, file_path) for progress.
 
     Returns:
         LensContext instance.
@@ -98,7 +104,7 @@ def init(project_path: str, force: bool = False) -> LensContext:
 
     # Create context and do initial parse
     _ctx = LensContext(root, lens_dir)
-    _ctx.full_sync()
+    _ctx.full_sync(progress_callback)
 
     return _ctx
 

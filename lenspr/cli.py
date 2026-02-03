@@ -31,8 +31,8 @@ def main() -> None:
 
     # -- search --
     p_search = subparsers.add_parser("search", help="Search nodes by name or content")
+    p_search.add_argument("path", help="Project root")
     p_search.add_argument("query", help="Search query")
-    p_search.add_argument("path", nargs="?", default=".", help="Project root (default: cwd)")
     p_search.add_argument(
         "--in",
         dest="search_in",
@@ -43,8 +43,8 @@ def main() -> None:
 
     # -- impact --
     p_impact = subparsers.add_parser("impact", help="Check impact of changing a node")
+    p_impact.add_argument("path", help="Project root")
     p_impact.add_argument("node_id", help="Node identifier (e.g. app.models.User)")
-    p_impact.add_argument("path", nargs="?", default=".", help="Project root (default: cwd)")
     p_impact.add_argument("--depth", type=int, default=2, help="Traversal depth (default: 2)")
 
     # -- watch --
@@ -77,19 +77,34 @@ def main() -> None:
     handlers[args.command](args)
 
 
+def _cli_progress(current: int, total: int, file_path: str) -> None:
+    """Progress callback for CLI commands."""
+    # Get just the filename for display
+    name = Path(file_path).name
+    # Truncate long names
+    if len(name) > 30:
+        name = name[:27] + "..."
+    # Write progress on same line
+    sys.stdout.write(f"\r  Parsing... {current}/{total} [{name:<30}]")
+    sys.stdout.flush()
+    if current == total:
+        sys.stdout.write("\n")
+
+
 def cmd_init(args: argparse.Namespace) -> None:
     import lenspr
 
     path = str(Path(args.path).resolve())
+    print(f"Initializing LensPR at {path}")
     try:
-        lenspr.init(path, force=args.force)
+        lenspr.init(path, force=args.force, progress_callback=_cli_progress)
     except lenspr.LensError as e:
-        print(f"Error: {e}", file=sys.stderr)
+        print(f"\nError: {e}", file=sys.stderr)
         sys.exit(1)
 
     ctx = lenspr.get_context()
     g = ctx.get_graph()
-    print(f"Initialized LensPR at {path}")
+    print(f"Done!")
     print(f"  Nodes: {g.number_of_nodes()}")
     print(f"  Edges: {g.number_of_edges()}")
 

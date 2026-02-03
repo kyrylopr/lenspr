@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from pathlib import Path
 
 from lenspr.models import Edge, Node, Resolution
+
+# Progress callback type: (current_file_index, total_files, current_file_path)
+ProgressCallback = Callable[[int, int, str], None]
 
 logger = logging.getLogger(__name__)
 
@@ -56,12 +60,20 @@ class BaseParser(ABC):
             Resolution with node_id and confidence level.
         """
 
-    def parse_project(self, root_path: Path) -> tuple[list[Node], list[Edge]]:
+    def parse_project(
+        self,
+        root_path: Path,
+        progress_callback: ProgressCallback | None = None,
+    ) -> tuple[list[Node], list[Edge]]:
         """
         Parse all files in a project directory.
 
         Default implementation walks the directory tree, skipping common
         non-source directories. Language parsers can override for custom behavior.
+
+        Args:
+            root_path: Project root directory.
+            progress_callback: Optional callback(current, total, file_path) for progress.
         """
         all_nodes: list[Node] = []
         all_edges: list[Edge] = []
@@ -82,20 +94,39 @@ class BaseParser(ABC):
             "build",
             ".eggs",
             ".tox",
+            "site-packages",  # Skip installed packages
+            "lib",  # Skip lib directories (often in venvs)
         }
 
+        # Also skip directories ending with common venv suffixes
+        venv_suffixes = ("-env", "-venv", "_env", "_venv")
+
+        def should_skip_path(path: Path) -> bool:
+            """Check if path should be skipped."""
+            for part in path.parts:
+                if part in skip_dirs:
+                    return True
+                # Skip directories with venv-like names
+                if any(part.endswith(suffix) for suffix in venv_suffixes):
+                    return True
+            return False
+
+        # Collect files first for progress tracking
+        files_to_parse: list[Path] = []
         for file_path in sorted(root_path.rglob("*")):
-            # Skip non-files
             if not file_path.is_file():
                 continue
-
-            # Skip files in excluded directories
-            if any(part in skip_dirs for part in file_path.parts):
+            if should_skip_path(file_path):
                 continue
-
-            # Skip files with wrong extension
             if file_path.suffix not in extensions:
                 continue
+            files_to_parse.append(file_path)
+
+        total = len(files_to_parse)
+
+        for i, file_path in enumerate(files_to_parse):
+            if progress_callback:
+                progress_callback(i + 1, total, str(file_path))
 
             try:
                 nodes, edges = self.parse_file(file_path, root_path)

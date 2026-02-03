@@ -18,7 +18,7 @@ from lenspr.models import (
     NodeType,
     Resolution,
 )
-from lenspr.parsers.base import BaseParser
+from lenspr.parsers.base import BaseParser, ProgressCallback
 
 logger = logging.getLogger(__name__)
 
@@ -825,7 +825,11 @@ class PythonParser(BaseParser):
                 untracked_reason="jedi_error",
             )
 
-    def parse_project(self, root_path: Path) -> tuple[list[Node], list[Edge]]:
+    def parse_project(
+        self,
+        root_path: Path,
+        progress_callback: ProgressCallback | None = None,
+    ) -> tuple[list[Node], list[Edge]]:
         """Parse project, initializing jedi context first."""
         self.set_project_root(root_path)
-        return super().parse_project(root_path)
+        return super().parse_project(root_path, progress_callback)

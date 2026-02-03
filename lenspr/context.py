@@ -14,6 +14,7 @@ import networkx as nx
 from lenspr import database
 from lenspr import graph as graph_ops
 from lenspr.models import SyncResult
+from lenspr.parsers.base import ProgressCallback
 from lenspr.parsers.python_parser import PythonParser
 from lenspr.patcher import PatchBuffer
 
@@ -101,17 +102,24 @@ class LensContext:
             finally:
                 fcntl.flock(lock_file, fcntl.LOCK_UN)
 
-    def full_sync(self) -> SyncResult:
+    def full_sync(
+        self, progress_callback: ProgressCallback | None = None
+    ) -> SyncResult:
         """
         Full reparse of the project + hash-based diff.
+
+        Args:
+            progress_callback: Optional callback(current, total, file_path) for progress.
 
         Returns SyncResult describing what changed.
         Thread-safe and process-safe via locking.
         """
         with self._lock:
-            return self._full_sync_locked()
+            return self._full_sync_locked(progress_callback)
 
-    def _full_sync_locked(self) -> SyncResult:
+    def _full_sync_locked(
+        self, progress_callback: ProgressCallback | None = None
+    ) -> SyncResult:
         with open(self._lock_path, "w") as lock_file:
             fcntl.flock(lock_file, fcntl.LOCK_EX)
             try:
@@ -120,7 +128,9 @@ class LensContext:
                 old_index = {n.id: n for n in old_nodes}
 
                 # Full reparse
-                new_nodes, new_edges = self._parser.parse_project(self.project_root)
+                new_nodes, new_edges = self._parser.parse_project(
+                    self.project_root, progress_callback
+                )
                 new_index = {n.id: n for n in new_nodes}
 
                 # Compute diff
@@ -164,13 +174,22 @@ class LensContext:
         skip_dirs = {
             "__pycache__", ".git", ".lens", ".venv", "venv", "env",
             "node_modules", ".mypy_cache", ".pytest_cache", ".ruff_cache",
-            "dist", "build", ".eggs", ".tox",
+            "dist", "build", ".eggs", ".tox", "site-packages", "lib",
         }
+        venv_suffixes = ("-env", "-venv", "_env", "_venv")
+
+        def should_skip(path: Path) -> bool:
+            for part in path.parts:
+                if part in skip_dirs:
+                    return True
+                if any(part.endswith(s) for s in venv_suffixes):
+                    return True
+            return False
 
         for file_path in sorted(self.project_root.rglob("*")):
             if not file_path.is_file():
                 continue
-            if any(part in skip_dirs for part in file_path.parts):
+            if should_skip(file_path):
                 continue
             if file_path.suffix not in extensions:
                 continue
@@ -287,12 +306,18 @@ class LensContext:
             fp: dict[str, dict[str, float | int]] = {}
             skip_dirs = {
                 "__pycache__", ".git", ".lens", ".venv", "venv", "env",
-                "node_modules",
+                "node_modules", "site-packages", "lib",
             }
+            venv_suffixes = ("-env", "-venv", "_env", "_venv")
             for file_path in self.project_root.rglob("*"):
                 if not file_path.is_file():
                     continue
-                if any(part in skip_dirs for part in file_path.parts):
+                skip = False
+                for part in file_path.parts:
+                    if part in skip_dirs or any(part.endswith(s) for s in venv_suffixes):
+                        skip = True
+                        break
+                if skip:
                     continue
                 if file_path.suffix not in extensions:
                     continue
