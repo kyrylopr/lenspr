@@ -194,10 +194,15 @@ class _ImportTable:
 
         Handles both simple names (e.g., "database") and dotted names
         (e.g., "database.save_annotation") by resolving the first part.
+
+        Returns INFERRED confidence so jedi can upgrade to full path.
+        For example: import table resolves "storage" -> "benchmarks.storage"
+        but jedi can resolve it to "backend.benchmarks.storage".
         """
         # Direct match (simple name)
         if name in self.names:
-            return self.names[name], EdgeConfidence.RESOLVED
+            # Return INFERRED so jedi can resolve to full qualified path
+            return self.names[name], EdgeConfidence.INFERRED
 
         # Try to resolve dotted names (e.g., "database.save_annotation")
         if "." in name:
@@ -206,7 +211,7 @@ class _ImportTable:
             if first in self.names:
                 # Resolve first part and append the rest
                 resolved_first = self.names[first]
-                return f"{resolved_first}.{rest}", EdgeConfidence.RESOLVED
+                return f"{resolved_first}.{rest}", EdgeConfidence.INFERRED
 
         # Check if name could come from a star import
         for module in self.star_imports:
@@ -772,6 +777,7 @@ class PythonParser(BaseParser):
         """Use jedi to upgrade INFERRED edges to RESOLVED or EXTERNAL."""
         try:
             script = jedi.Script(path=file_path, project=self._jedi_project)
+            source_lines = Path(file_path).read_text().splitlines()
         except Exception:
             return
 
@@ -794,18 +800,45 @@ class PythonParser(BaseParser):
                 names = script.goto(edge.line_number, col)
                 if not names and edge.column is None:
                     names = script.goto(edge.line_number, 4)
+
+                # For attribute access (e.g., storage.save()), the column points to
+                # the first part (storage), but jedi resolves better at the attribute
+                # position (save). Try to find and resolve the attribute.
+                resolved_id = None
                 if names:
                     d = names[0]
-                    module = d.module_name or ""
-                    name = d.name or ""
-                    resolved_id = f"{module}.{name}" if module else name
-                    if resolved_id and resolved_id != ".":
-                        edge.to_node = resolved_id
-                        # Check if resolved target is external
-                        if _is_external(resolved_id):
-                            edge.confidence = EdgeConfidence.EXTERNAL
-                        else:
-                            edge.confidence = EdgeConfidence.RESOLVED
+                    # If jedi resolved to a module import (not a function), and we have
+                    # a dotted target, try resolving at the attribute position
+                    if d.type == "module" and "." in edge.to_node and edge.line_number <= len(source_lines):
+                        line = source_lines[edge.line_number - 1]
+                        # Find the position after the first part (e.g., after "storage.")
+                        # Look for the pattern in the line
+                        first_part = edge.to_node.split(".")[-2] if edge.to_node.count(".") > 0 else ""
+                        last_part = edge.to_node.split(".")[-1]
+                        # Try to find the method name in the line
+                        method_pos = line.find(f".{last_part}")
+                        if method_pos >= 0:
+                            attr_col = method_pos + 1  # Skip the dot
+                            attr_names = script.goto(edge.line_number, attr_col)
+                            if attr_names:
+                                d = attr_names[0]
+
+                    # Prefer full_name which follows imports correctly,
+                    # fall back to module_name.name
+                    if d.full_name:
+                        resolved_id = d.full_name
+                    else:
+                        module = d.module_name or ""
+                        name = d.name or ""
+                        resolved_id = f"{module}.{name}" if module else name
+
+                if resolved_id and resolved_id != ".":
+                    edge.to_node = resolved_id
+                    # Check if resolved target is external
+                    if _is_external(resolved_id):
+                        edge.confidence = EdgeConfidence.EXTERNAL
+                    else:
+                        edge.confidence = EdgeConfidence.RESOLVED
             except Exception:
                 continue
 

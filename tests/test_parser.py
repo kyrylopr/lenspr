@@ -139,3 +139,50 @@ class TestRelativeImports:
         # The target should resolve to mypackage.submodule.storage.save
         targets = [e.to_node for e in handler_calls]
         assert any("storage.save" in t for t in targets)
+
+    def test_absolute_import_to_sibling_package(self, parser, tmp_path):
+        """Test that absolute imports to sibling packages resolve correctly.
+
+        This simulates a structure like chatplay where:
+        - backend/
+          - benchmarks/
+            - router.py (imports from benchmarks import storage)
+            - storage.py
+        """
+        # Create a package structure like chatplay
+        backend = tmp_path / "backend"
+        backend.mkdir()
+        (backend / "__init__.py").write_text("")
+
+        benchmarks = backend / "benchmarks"
+        benchmarks.mkdir()
+        (benchmarks / "__init__.py").write_text("")
+        (benchmarks / "storage.py").write_text(
+            "def list_benchmarks():\n"
+            "    return []\n"
+        )
+        (benchmarks / "router.py").write_text(
+            "from benchmarks import storage\n\n"
+            "def get_benchmarks():\n"
+            "    return storage.list_benchmarks()\n"
+        )
+
+        nodes, edges = parser.parse_project(tmp_path)
+
+        # Find the call edge from get_benchmarks to storage.list_benchmarks
+        call_edges = [e for e in edges if e.type == EdgeType.CALLS]
+        router_calls = [
+            e for e in call_edges
+            if "router.get_benchmarks" in e.from_node
+        ]
+
+        # Should have at least one call from get_benchmarks
+        assert len(router_calls) >= 1
+
+        # The target should resolve to backend.benchmarks.storage.list_benchmarks
+        targets = [e.to_node for e in router_calls]
+        # Jedi should resolve this to the full path
+        assert any(
+            "benchmarks.storage.list_benchmarks" in t
+            for t in targets
+        ), f"Expected benchmarks.storage.list_benchmarks in targets, got: {targets}"
