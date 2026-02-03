@@ -1,12 +1,34 @@
 # LensPR
 
+> **This repository is published for testing purposes and public discussion of results.**
+>
+> We welcome feedback, benchmarks, and discussions about LLM-assisted code development.
+> Feel free to open issues or PRs with your findings!
+
+---
+
 **Code-as-graph for safe LLM-assisted development.**
 
 LensPR parses your Python codebase into a directed graph (nodes = functions, classes, modules; edges = calls, imports, inheritance) and gives LLMs structured tools to navigate, analyze impact, and safely modify code.
 
+## Test Status
+
+| Component | Status |
+|-----------|--------|
+| Core Tests | 154 passed |
+| Graph Health | 87.6% confidence |
+| Total Nodes | 588 |
+| Total Edges | 2,241 |
+
+```
+pytest results: 154 passed, 5 skipped (optional watchdog dependency)
+```
+
 ## Benchmark Results
 
 We tested Claude with and without LensPR on 3 code analysis tasks:
+
+![LensPR Benchmark Summary](eval/results/chart_summary.png)
 
 | Metric | Without LensPR | With LensPR | Improvement |
 |--------|----------------|-------------|-------------|
@@ -14,17 +36,25 @@ We tested Claude with and without LensPR on 3 code analysis tasks:
 | **Tokens Used** | 1.27M | 388K | **-70%** |
 | **API Calls** | 84 | 38 | **-55%** |
 
+### Task Completion Rate
+
+![Task Completion](eval/results/chart_success.png)
+
+### Token Usage by Task
+
+![Token Usage](eval/results/chart_tokens.png)
+
 <details>
-<summary>📊 Detailed Results</summary>
+<summary>Detailed Results</summary>
 
 | Task | Mode | Tokens | Iterations | Status |
 |------|------|--------|------------|--------|
-| Understand Function | Without | 602,625 | 39 | ✅ |
-| Understand Function | **With** | **130,627** | **13** | ✅ |
-| Find All Usages | Without | 622,631 | 34 | ❌ Failed |
-| Find All Usages | **With** | **136,721** | **12** | ✅ |
-| Safe Code Change | Without | 50,000+ | 11+ | ❌ Rate Limit |
-| Safe Code Change | **With** | **120,661** | **13** | ✅ |
+| Understand Function | Without | 602,625 | 39 | Pass |
+| Understand Function | **With** | **130,627** | **13** | Pass |
+| Find All Usages | Without | 622,631 | 34 | Failed |
+| Find All Usages | **With** | **136,721** | **12** | Pass |
+| Safe Code Change | Without | 50,000+ | 11+ | Rate Limit |
+| Safe Code Change | **With** | **120,661** | **13** | Pass |
 
 **Without LensPR:** Claude loops through grep/read cycles, burns tokens, and often fails to complete.
 
@@ -41,15 +71,15 @@ LLMs see code as text. They don't know that the function on line 50 is called fr
 ## The Solution
 
 ```
-Source Files → AST Parser → Graph (SQLite + NetworkX) → Tools (CLI / MCP / API)
+Source Files -> AST Parser -> Graph (SQLite + NetworkX) -> Tools (CLI / MCP / API)
 ```
 
 LensPR provides:
-- **Impact analysis** before every change — know what breaks before it breaks
-- **Structured navigation** — LLMs explore code through graph queries, not file reads
-- **Safe patching** — validated changes applied to original files, no regeneration
-- **Confidence scoring** — explicit about what the graph can and cannot see
-- **Change history** — every modification tracked with rollback capability
+- **Impact analysis** before every change - know what breaks before it breaks
+- **Structured navigation** - LLMs explore code through graph queries, not file reads
+- **Safe patching** - validated changes applied to original files, no regeneration
+- **Confidence scoring** - explicit about what the graph can and cannot see
+- **Change history** - every modification tracked with rollback capability
 
 ## Installation
 
@@ -163,7 +193,7 @@ lenspr setup
 lenspr init
 ```
 
-This creates `.mcp.json` automatically. Restart Claude Code — the `lens_*` tools will be available.
+This creates `.mcp.json` automatically. Restart Claude Code - the `lens_*` tools will be available.
 
 **Recommended:** Add instructions for Claude to prefer lenspr tools. Create `.claude/CLAUDE.md`:
 
@@ -228,7 +258,7 @@ Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_
 
 | Tool | Description |
 |------|-------------|
-| `lens_check_impact` | **Always call before modifying** — shows severity (CRITICAL/HIGH/MEDIUM/LOW) |
+| `lens_check_impact` | **Always call before modifying** - shows severity (CRITICAL/HIGH/MEDIUM/LOW) |
 | `lens_validate_change` | Dry-run validation: check what would happen without applying |
 | `lens_health` | Graph quality report: nodes, edges, confidence %, docstring coverage |
 | `lens_diff` | Show what changed since last sync (added/modified/deleted files) |
@@ -266,40 +296,40 @@ Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_
 | `lens_recent_changes` | Recently modified nodes from git log |
 
 **Proactive Warnings in `lens_update_node`:**
-- ⚠️ HIGH IMPACT: >10 callers affected
-- ⚠️ NO TESTS: No test coverage for this node
-- ⚠️ CIRCULAR: Part of a circular import
+- HIGH IMPACT: >10 callers affected
+- NO TESTS: No test coverage for this node
+- CIRCULAR: Part of a circular import
 
 ## Architecture
 
 ```
 Source Files (always source of truth)
-     │
-     ▼
-Parser (ast + jedi) ──→ SQLite (graph.db, history.db, resolve_cache.db)
-                              │
-                              ▼
+     |
+     v
+Parser (ast + jedi) --> SQLite (graph.db, history.db, resolve_cache.db)
+                              |
+                              v
                         NetworkX (lazy cache for graph algorithms)
-                              │
-                              ▼
+                              |
+                              v
                         Tools (CLI / MCP Server / Python API / Claude API)
-                              │
-                              ▼
+                              |
+                              v
                         Patcher (line-based replace, bottom-to-top)
-                              │
-                              ▼
-                        Validator (syntax → structure → signature)
+                              |
+                              v
+                        Validator (syntax -> structure -> signature)
 ```
 
 ### Key Design Decisions
 
-- **Patcher, not generator** — files are patched in place, never regenerated. Only the changed lines are touched.
-- **SQLite is the single source of truth** — NetworkX graph is a read-only cache rebuilt on demand.
-- **3-level validation** — every code change is checked for valid syntax, preserved structure (function stays function), and signature compatibility.
-- **Bottom-to-top patching** — multiple patches in one file are applied from the end upward to avoid line number corruption.
-- **Pluggable parsers** — `BaseParser` interface ready for JS/TS/Go/Rust parsers.
-- **Confidence scoring** — edges marked as `resolved` (jedi confirmed), `inferred` (AST-based), or `unresolved` (dynamic dispatch).
-- **Change tracking** — every modification recorded in `history.db` with old/new source and affected nodes list.
+- **Patcher, not generator** - files are patched in place, never regenerated. Only the changed lines are touched.
+- **SQLite is the single source of truth** - NetworkX graph is a read-only cache rebuilt on demand.
+- **3-level validation** - every code change is checked for valid syntax, preserved structure (function stays function), and signature compatibility.
+- **Bottom-to-top patching** - multiple patches in one file are applied from the end upward to avoid line number corruption.
+- **Pluggable parsers** - `BaseParser` interface ready for JS/TS/Go/Rust parsers.
+- **Confidence scoring** - edges marked as `resolved` (jedi confirmed), `inferred` (AST-based), or `unresolved` (dynamic dispatch).
+- **Change tracking** - every modification recorded in `history.db` with old/new source and affected nodes list.
 
 ## Project Structure
 
@@ -308,11 +338,11 @@ lenspr/
 ├── lenspr/
 │   ├── __init__.py            # Public API (init, sync, list_nodes, check_impact, etc.)
 │   ├── models.py              # Data classes (Node, Edge, Change, Patch, etc.)
-│   ├── context.py             # LensContext — central state manager
+│   ├── context.py             # LensContext - central state manager
 │   ├── database.py            # SQLite operations (3 databases)
 │   ├── graph.py               # NetworkX graph algorithms (impact, dead code, cycles)
 │   ├── patcher.py             # File patching (PatchBuffer, bottom-to-top apply)
-│   ├── validator.py           # 3-level validation (syntax → structure → signature)
+│   ├── validator.py           # 3-level validation (syntax -> structure -> signature)
 │   ├── tracker.py             # Change history and rollback
 │   ├── claude_tools.py        # Tool definitions + handlers for Claude API
 │   ├── cli.py                 # CLI entry point (init, sync, status, search, impact, serve)
@@ -334,6 +364,9 @@ lenspr/
 │   ├── test_cli.py            # CLI command tests
 │   └── fixtures/              # Sample project for testing
 │       └── sample_project/
+├── eval/                      # Benchmark notebooks and results
+│   ├── benchmark.ipynb        # Main benchmark notebook
+│   └── results/               # Charts and JSON results
 ├── Makefile                   # Dev commands (test, lint, typecheck, serve, etc.)
 ├── pyproject.toml             # Project config (hatchling, ruff, mypy, pytest)
 ├── LICENSE                    # MIT
@@ -364,9 +397,24 @@ make format         # ruff format
 # Run MCP server locally
 make serve
 
+# Run benchmark
+make benchmark
+
 # Demo: parse lenspr itself
 make demo
 ```
+
+## Contributing
+
+This project is open for discussion and contributions. We especially welcome:
+
+- **Benchmark results** on different codebases
+- **Bug reports** with reproducible examples
+- **Feature requests** with use cases
+- **Performance improvements**
+- **Documentation improvements**
+
+Please open an issue or PR!
 
 ## Troubleshooting
 
@@ -423,4 +471,8 @@ pip install 'lenspr[mcp]'
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT - see [LICENSE](LICENSE).
+
+---
+
+> **Questions? Feedback?** Open an issue at [github.com/kyrylopr/lenspr/issues](https://github.com/kyrylopr/lenspr/issues)
