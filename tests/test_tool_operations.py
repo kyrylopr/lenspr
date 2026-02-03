@@ -91,18 +91,31 @@ class TestUpdateNode:
         """Can't turn a function into a class."""
         # Debug: check what node type was assigned
         from lenspr import database
+        from lenspr.validator import validate_structure, validate_full
 
         node = database.get_node("app.greet", project.graph_db)
         assert node is not None, "Node app.greet not found in database"
 
+        # Test validator directly first
+        new_source = "class greet:\n    pass"
+        struct_result = validate_structure(new_source, node)
+        full_result = validate_full(new_source, node)
+
+        # The structure validation MUST fail
+        assert not struct_result.valid, (
+            f"validate_structure should reject function->class. "
+            f"Got: valid={struct_result.valid}, errors={struct_result.errors}, "
+            f"node.type={node.type}"
+        )
+
         result = _handle_update_node(
-            {"node_id": "app.greet", "new_source": "class greet:\n    pass"},
+            {"node_id": "app.greet", "new_source": new_source},
             project,
         )
-        # Debug: print result details if test fails
         assert not result.success, (
             f"Expected failure but got: {result}. "
-            f"Node type was: {node.type}, node name: {node.name}"
+            f"Node type was: {node.type}, node name: {node.name}, "
+            f"struct_valid={struct_result.valid}, full_valid={full_result.valid}"
         )
 
     def test_update_nonexistent_node(self, project: LensContext) -> None:
