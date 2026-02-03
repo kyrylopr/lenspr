@@ -56,6 +56,9 @@ lenspr impact ./my_project app.models.User
 
 # Start MCP server (requires lenspr[mcp])
 lenspr serve ./my_project
+
+# Start MCP server with hot-reload (for development)
+lenspr serve ./my_project --dev
 ```
 
 ### Python API
@@ -152,7 +155,7 @@ Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_
 }
 ```
 
-## Available Tools (22 total)
+## Available Tools (27 total)
 
 ### Navigation & Discovery
 
@@ -198,6 +201,15 @@ Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_
 | `lens_annotation_stats` | Coverage stats: annotated %, breakdown by type and role |
 
 **Node Roles:** `validator`, `transformer`, `io`, `orchestrator`, `pure`, `handler`, `test`, `utility`, `factory`, `accessor`
+
+### Git Integration
+
+| Tool | Description |
+|------|-------------|
+| `lens_blame` | Git blame for a node's source lines (who wrote what, when) |
+| `lens_node_history` | Commit history for a specific node (line-level tracking) |
+| `lens_commit_scope` | What nodes were affected by a specific commit |
+| `lens_recent_changes` | Recently modified nodes from git log |
 
 **Proactive Warnings in `lens_update_node`:**
 - ⚠️ HIGH IMPACT: >10 callers affected
