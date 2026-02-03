@@ -1,9 +1,12 @@
 # LensPR
 
-> **This repository is published for testing purposes and public discussion of results.**
+> **This is a learning project and experimental playground.**
 >
-> We welcome feedback, benchmarks, and discussions about LLM-assisted code development.
-> Feel free to open issues or PRs with your findings!
+> I'm a developer learning and experimenting with LLM-assisted code development.
+> Please don't judge too harshly if something doesn't work perfectly!
+>
+> This repository is published for **testing purposes and public discussion of results**.
+> If you find this idea interesting, I'd love to collaborate on JS/TS support or other improvements.
 
 ---
 
@@ -11,18 +14,15 @@
 
 LensPR parses your Python codebase into a directed graph (nodes = functions, classes, modules; edges = calls, imports, inheritance) and gives LLMs structured tools to navigate, analyze impact, and safely modify code.
 
-## Test Status
+## Project Status
 
-| Component | Status |
-|-----------|--------|
-| Core Tests | 154 passed |
-| Graph Health | 87.6% confidence |
-| Total Nodes | 588 |
-| Total Edges | 2,241 |
-
-```
-pytest results: 154 passed, 5 skipped (optional watchdog dependency)
-```
+| Metric | Value | Notes |
+|--------|-------|-------|
+| Tests | 154 passed | 5 skipped (optional watchdog) |
+| Graph Confidence | 87.6% | Edges correctly resolved |
+| Code Nodes | 588 | Functions, classes, methods |
+| Docstring Coverage | 54% | Room for improvement |
+| Dead Code | 8 functions | Detected by `lens_dead_code` |
 
 ## Benchmark Results
 
@@ -404,15 +404,39 @@ make benchmark
 make demo
 ```
 
+## Known Limitations
+
+This is an alpha-stage project. Some things don't work perfectly yet:
+
+- **Python only** — no JS/TS/Go/Rust parsers yet (architecture supports it, implementation pending)
+- **Dynamic code** — `getattr`, `globals()`, `eval()` calls can't be fully tracked
+- **Rollback** — history tracking works, but `rollback` function is incomplete
+- **Large projects** — not tested on codebases >10k files
+- **46% docstring coverage** — many internal functions lack documentation
+
+## Roadmap / Ideas
+
+If this project interests you, here's what could be built next:
+
+| Priority | Feature | Description |
+|----------|---------|-------------|
+| High | **JS/TS Parser** | TypeScript AST + type inference for frontend codebases |
+| High | **Better tests** | More edge cases, integration tests, CI improvements |
+| Medium | **Runtime tracing** | Pytest plugin to capture actual call graphs at runtime |
+| Medium | **VS Code extension** | Visual graph explorer, click-to-navigate |
+| Low | **Go/Rust parsers** | Extend to compiled languages |
+| Low | **Web UI** | Interactive graph visualization |
+
+**Interested in contributing?** Open an issue to discuss!
+
 ## Contributing
 
-This project is open for discussion and contributions. We especially welcome:
+This project is open for discussion and contributions. I especially welcome:
 
+- **JS/TS parser implementation** — the `BaseParser` interface is ready
 - **Benchmark results** on different codebases
-- **Bug reports** with reproducible examples
-- **Feature requests** with use cases
-- **Performance improvements**
-- **Documentation improvements**
+- **Bug reports** with reproducible examples (even if it's "this doesn't work")
+- **Ideas and feedback** — what would make this useful for you?
 
 Please open an issue or PR!
 
