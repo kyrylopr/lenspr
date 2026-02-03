@@ -1222,7 +1222,7 @@ def _handle_dependencies(params: dict, ctx: LensContext) -> ToolResponse:
     G = ctx.get_graph()
     group_by = params.get("group_by", "package")
 
-    # Get stdlib modules (Python 3.10+)
+    # Get stdlib modules (Python 3.10+) and builtins
     stdlib_names: set[str]
     try:
         stdlib_names = set(sys.stdlib_module_names)
@@ -1231,13 +1231,33 @@ def _handle_dependencies(params: dict, ctx: LensContext) -> ToolResponse:
         from lenspr.parsers.python_parser import _STDLIB_MODULES
         stdlib_names = _STDLIB_MODULES
 
-    # Collect external edges
+    # Import builtins set from parser
+    from lenspr.parsers.python_parser import _BUILTINS
+
+    # Collect external dependencies from:
+    # 1. EXTERNAL confidence edges (builtins, stdlib calls)
+    # 2. IMPORTS edges to non-project modules (third-party, stdlib)
     deps_by_package: dict[str, dict] = defaultdict(lambda: {"usages": 0, "files": set()})
     deps_by_file: dict[str, list] = defaultdict(list)
 
+    # Get set of project module prefixes
+    project_modules = {
+        data.get("qualified_name", "").split(".")[0]
+        for _, data in G.nodes(data=True)
+        if data.get("type") == "module"
+    }
+
     for u, v, data in G.edges(data=True):
+        edge_type = data.get("type", "")
         conf = data.get("confidence", "")
-        if conf != "external":
+
+        # Include: EXTERNAL confidence OR import to non-project module
+        is_external_call = conf == "external"
+        is_external_import = (
+            edge_type == "imports" and v.split(".")[0] not in project_modules
+        )
+
+        if not (is_external_call or is_external_import):
             continue
 
         # Get package name (first part of target)
@@ -1246,8 +1266,13 @@ def _handle_dependencies(params: dict, ctx: LensContext) -> ToolResponse:
         if not package:
             continue
 
-        # Determine if stdlib or third-party
-        is_stdlib = package in stdlib_names
+        # Determine type: stdlib, builtin, or third-party
+        if package in _BUILTINS:
+            pkg_type = "builtin"
+        elif package in stdlib_names:
+            pkg_type = "stdlib"
+        else:
+            pkg_type = "third-party"
 
         # Get source file
         source_node = G.nodes.get(u, {})
@@ -1255,12 +1280,12 @@ def _handle_dependencies(params: dict, ctx: LensContext) -> ToolResponse:
 
         deps_by_package[package]["usages"] += 1
         deps_by_package[package]["files"].add(source_file)
-        deps_by_package[package]["type"] = "stdlib" if is_stdlib else "third-party"
+        deps_by_package[package]["type"] = pkg_type
 
         deps_by_file[source_file].append({
             "package": package,
             "target": target,
-            "type": "stdlib" if is_stdlib else "third-party",
+            "type": pkg_type,
         })
 
     if group_by == "file":
@@ -1281,6 +1306,7 @@ def _handle_dependencies(params: dict, ctx: LensContext) -> ToolResponse:
         )
     else:
         # group_by == "package"
+        builtin_deps = []
         stdlib_deps = []
         third_party_deps = []
         for pkg, info in sorted(deps_by_package.items()):
@@ -1290,7 +1316,9 @@ def _handle_dependencies(params: dict, ctx: LensContext) -> ToolResponse:
                 "usages": info["usages"],
                 "used_in_files": len(info["files"]),
             }
-            if info["type"] == "stdlib":
+            if info["type"] == "builtin":
+                builtin_deps.append(entry)
+            elif info["type"] == "stdlib":
                 stdlib_deps.append(entry)
             else:
                 third_party_deps.append(entry)
@@ -1298,8 +1326,9 @@ def _handle_dependencies(params: dict, ctx: LensContext) -> ToolResponse:
         return ToolResponse(
             success=True,
             data={
-                "dependencies": stdlib_deps + third_party_deps,
+                "dependencies": builtin_deps + stdlib_deps + third_party_deps,
                 "total_packages": len(deps_by_package),
+                "builtin_count": len(builtin_deps),
                 "stdlib_count": len(stdlib_deps),
                 "third_party_count": len(third_party_deps),
             },
