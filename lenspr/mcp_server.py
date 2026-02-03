@@ -27,6 +27,7 @@ _LENSPR_MODULES = [
     "lenspr.tools.modification",
     "lenspr.tools.analysis",
     "lenspr.tools.annotation",
+    "lenspr.tools.git",
     "lenspr.tools",
     "lenspr.claude_tools",
     "lenspr.context",
