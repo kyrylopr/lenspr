@@ -698,66 +698,77 @@ def _handle_context(params: dict, ctx: LensContext) -> ToolResponse:
     callers: list[dict] = []
     if include_callers and node_id in G:
         visited: set[str] = set()
-        frontier = set(G.predecessors(node_id))
+        # frontier: list of (pred_id, via_node) — via_node is who pred calls
+        frontier: list[tuple[str, str]] = [
+            (p, node_id) for p in G.predecessors(node_id)
+        ]
         for _level in range(depth):
-            next_frontier: set[str] = set()
-            for pred_id in frontier:
+            next_frontier: list[tuple[str, str]] = []
+            for pred_id, via in frontier:
                 if pred_id in visited:
                     continue
                 visited.add(pred_id)
                 pred_node = database.get_node(pred_id, ctx.graph_db)
-                if pred_node:
-                    edge_data = G.edges.get((pred_id, node_id), {})
-                    caller_info: dict[str, Any] = {
-                        "id": pred_node.id,
-                        "type": pred_node.type.value,
-                        "name": pred_node.name,
-                        "file_path": pred_node.file_path,
-                        "signature": pred_node.signature,
-                        "edge_type": edge_data.get("type", "unknown"),
-                        "depth": _level + 1,
-                    }
-                    if include_source:
-                        caller_info["source_code"] = pred_node.source_code
-                    else:
-                        caller_info["start_line"] = pred_node.start_line
-                        caller_info["end_line"] = pred_node.end_line
-                    callers.append(caller_info)
-                    if _level + 1 < depth:
-                        next_frontier.update(G.predecessors(pred_id))
+                if not pred_node:
+                    continue  # skip external/phantom nodes
+                edge_data = G.edges.get((pred_id, via), {})
+                caller_info: dict[str, Any] = {
+                    "id": pred_node.id,
+                    "type": pred_node.type.value,
+                    "name": pred_node.name,
+                    "file_path": pred_node.file_path,
+                    "signature": pred_node.signature,
+                    "edge_type": edge_data.get("type", "unknown"),
+                    "depth": _level + 1,
+                }
+                if include_source:
+                    caller_info["source_code"] = pred_node.source_code
+                else:
+                    caller_info["start_line"] = pred_node.start_line
+                    caller_info["end_line"] = pred_node.end_line
+                callers.append(caller_info)
+                if _level + 1 < depth:
+                    next_frontier.extend(
+                        (p, pred_id) for p in G.predecessors(pred_id)
+                    )
             frontier = next_frontier
 
     # Callees (what this node depends on)
     callees: list[dict] = []
     if include_callees and node_id in G:
         visited_out: set[str] = set()
-        frontier_out = set(G.successors(node_id))
+        frontier_out: list[tuple[str, str]] = [
+            (s, node_id) for s in G.successors(node_id)
+        ]
         for _level in range(depth):
-            next_frontier_out: set[str] = set()
-            for succ_id in frontier_out:
+            next_frontier_out: list[tuple[str, str]] = []
+            for succ_id, via in frontier_out:
                 if succ_id in visited_out:
                     continue
                 visited_out.add(succ_id)
                 succ_node = database.get_node(succ_id, ctx.graph_db)
-                if succ_node:
-                    edge_data = G.edges.get((node_id, succ_id), {})
-                    callee_info: dict[str, Any] = {
-                        "id": succ_node.id,
-                        "type": succ_node.type.value,
-                        "name": succ_node.name,
-                        "file_path": succ_node.file_path,
-                        "signature": succ_node.signature,
-                        "edge_type": edge_data.get("type", "unknown"),
-                        "depth": _level + 1,
-                    }
-                    if include_source:
-                        callee_info["source_code"] = succ_node.source_code
-                    else:
-                        callee_info["start_line"] = succ_node.start_line
-                        callee_info["end_line"] = succ_node.end_line
-                    callees.append(callee_info)
-                    if _level + 1 < depth:
-                        next_frontier_out.update(G.successors(succ_id))
+                if not succ_node:
+                    continue  # skip external/phantom nodes
+                edge_data = G.edges.get((via, succ_id), {})
+                callee_info: dict[str, Any] = {
+                    "id": succ_node.id,
+                    "type": succ_node.type.value,
+                    "name": succ_node.name,
+                    "file_path": succ_node.file_path,
+                    "signature": succ_node.signature,
+                    "edge_type": edge_data.get("type", "unknown"),
+                    "depth": _level + 1,
+                }
+                if include_source:
+                    callee_info["source_code"] = succ_node.source_code
+                else:
+                    callee_info["start_line"] = succ_node.start_line
+                    callee_info["end_line"] = succ_node.end_line
+                callees.append(callee_info)
+                if _level + 1 < depth:
+                    next_frontier_out.extend(
+                        (s, succ_id) for s in G.successors(succ_id)
+                    )
             frontier_out = next_frontier_out
 
     # Related tests
@@ -1058,12 +1069,19 @@ def _handle_health(params: dict, ctx: LensContext) -> ToolResponse:
     """Generate health report for the code graph."""
     G = ctx.get_graph()
 
-    # Node stats
-    total_nodes = G.number_of_nodes()
+    # Node stats — separate project nodes from phantom/external references
+    # Phantom nodes are auto-created by NetworkX when edges reference
+    # external targets (stdlib, third-party). They have no "type" attribute.
+    project_nodes = 0
+    external_refs = 0
     nodes_by_type: dict[str, int] = {}
     nodes_without_docstring = 0
     for _nid, data in G.nodes(data=True):
-        ntype = data.get("type", "unknown")
+        ntype = data.get("type")
+        if ntype is None:
+            external_refs += 1
+            continue
+        project_nodes += 1
         nodes_by_type[ntype] = nodes_by_type.get(ntype, 0) + 1
         if ntype in ("function", "method", "class") and not data.get("docstring"):
             nodes_without_docstring += 1
@@ -1105,7 +1123,8 @@ def _handle_health(params: dict, ctx: LensContext) -> ToolResponse:
     return ToolResponse(
         success=True,
         data={
-            "total_nodes": total_nodes,
+            "total_nodes": project_nodes,
+            "external_refs": external_refs,
             "nodes_by_type": nodes_by_type,
             "total_edges": total_edges,
             "edges_by_type": edges_by_type,
