@@ -260,7 +260,7 @@ def cmd_serve(args: argparse.Namespace) -> None:
     except ImportError:
         print(
             "MCP dependencies not installed. Install with:\n"
-            "  pip install lenspr[mcp]",
+            "  pip install 'lenspr[mcp]'",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -269,12 +269,24 @@ def cmd_serve(args: argparse.Namespace) -> None:
     run_server(path, hot_reload=getattr(args, "dev", False))
 
 
+def _check_mcp_dependencies() -> bool:
+    """Check if MCP dependencies are installed."""
+    try:
+        import mcp  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
 def cmd_setup(args: argparse.Namespace) -> None:
     """Configure MCP server for Claude Code / Claude Desktop."""
     import shutil
 
     path = Path(args.path).resolve()
     mcp_config_path = path / ".mcp.json"
+
+    # Check if MCP dependencies are installed
+    mcp_installed = _check_mcp_dependencies()
 
     # Find lenspr executable
     lenspr_bin = shutil.which("lenspr")
@@ -312,10 +324,20 @@ def cmd_setup(args: argparse.Namespace) -> None:
         _update_global_claude_config(str(path), lenspr_bin)
 
     print()
+    if not mcp_installed:
+        print("⚠️  MCP dependencies not installed!")
+        print("   Run: pip install 'lenspr[mcp]'")
+        print()
     print("Next steps:")
-    print("  1. Run: lenspr init")
-    print("  2. Restart Claude Code (or Claude Desktop)")
-    print("  3. The lens_* tools will be available automatically")
+    if not mcp_installed:
+        print("  1. Install MCP: pip install 'lenspr[mcp]'")
+        print("  2. Run: lenspr init")
+        print("  3. Restart Claude Code (or Claude Desktop)")
+    else:
+        print("  1. Run: lenspr init")
+        print("  2. Restart Claude Code (or Claude Desktop)")
+    print()
+    print("The lens_* tools will be available after restart.")
 
 
 def _update_global_claude_config(project_path: str, lenspr_bin: str) -> None:

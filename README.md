@@ -326,6 +326,52 @@ make serve
 make demo
 ```
 
+## Troubleshooting
+
+### zsh: no matches found: lenspr[mcp]
+
+zsh interprets brackets as glob patterns. Use quotes:
+
+```bash
+pip install 'lenspr[mcp]'
+```
+
+### lens_* tools not available in Claude Code
+
+MCP servers are loaded at session start. After running `lenspr setup`:
+
+1. **Completely close VSCode** (not just the window)
+2. Reopen your project: `code /path/to/project`
+3. The lens_* tools will now be available
+
+### Dependency conflicts with FastAPI
+
+The `mcp` package requires newer versions of `starlette` and `anyio`. If you have an older FastAPI:
+
+```bash
+# Option 1: Upgrade FastAPI
+pip install 'fastapi>=0.110'
+
+# Option 2: Use a separate virtual environment for lenspr
+python -m venv .lenspr-env
+source .lenspr-env/bin/activate
+pip install 'lenspr[mcp]'
+```
+
+### MCP server not starting
+
+Check if MCP dependencies are installed:
+
+```bash
+python -c "import mcp; print('OK')"
+```
+
+If not, install them:
+
+```bash
+pip install 'lenspr[mcp]'
+```
+
 ## Requirements
 
 - Python 3.11+
