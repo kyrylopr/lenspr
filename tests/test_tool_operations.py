@@ -93,7 +93,8 @@ class TestUpdateNode:
             {"node_id": "app.greet", "new_source": "class greet:\n    pass"},
             project,
         )
-        assert not result.success
+        # Debug: print result details if test fails
+        assert not result.success, f"Expected failure but got: {result}"
 
     def test_update_nonexistent_node(self, project: LensContext) -> None:
         result = _handle_update_node(

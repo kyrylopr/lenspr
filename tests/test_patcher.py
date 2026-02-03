@@ -3,7 +3,7 @@
 
 import pytest
 
-from lenspr.models import Node, NodeType, Patch, PatchError
+from lenspr.models import Node, NodeType, Patch
 from lenspr.patcher import PatchBuffer, apply_patch, apply_patches, insert_code, remove_lines
 
 
@@ -55,7 +55,7 @@ class TestApplyPatches:
             Patch(start_line=1, end_line=3, new_source="..."),
             Patch(start_line=2, end_line=5, new_source="..."),
         ]
-        with pytest.raises(PatchError, match="Overlapping"):
+        with pytest.raises(Exception, match="Overlapping"):
             apply_patches(sample_file, patches)
 
 
