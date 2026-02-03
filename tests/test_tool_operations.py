@@ -89,24 +89,27 @@ class TestUpdateNode:
 
     def test_update_rejects_structure_change(self, project: LensContext) -> None:
         """Can't turn a function into a class."""
-        import sys
-
         from lenspr import database
+        from lenspr.models import NodeType
+        from lenspr.validator import validate_structure
 
         node = database.get_node("app.greet", project.graph_db)
         assert node is not None, "Node app.greet not found in database"
+        assert node.type == NodeType.FUNCTION, f"Expected FUNCTION, got {node.type}"
 
+        # Test the validator directly
+        validation = validate_structure("class greet:\n    pass", node)
+        assert not validation.valid, (
+            f"Validation should fail but got valid=True. "
+            f"node.type={node.type}, node.type.value={node.type.value}"
+        )
+
+        # Now test the full handler
         result = _handle_update_node(
             {"node_id": "app.greet", "new_source": "class greet:\n    pass"},
             project,
         )
-
-        # TODO: investigate why validation passes on Python 3.11/3.13 in CI
-        # but works correctly on 3.12 locally
-        if sys.version_info[:2] != (3, 12):
-            pytest.skip("Validator behavior differs on Python 3.11/3.13 - needs investigation")
-
-        assert not result.success
+        assert not result.success, f"Expected failure but got success. Error: {result.error}"
 
     def test_update_nonexistent_node(self, project: LensContext) -> None:
         result = _handle_update_node(
