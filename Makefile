@@ -48,6 +48,14 @@ clean-lens:
 build: clean
 	python -m build
 
+# Publish to PyPI
+publish: build
+	twine upload dist/*
+
+# Publish to TestPyPI first
+publish-test: build
+	twine upload --repository testpypi dist/*
+
 # Configure MCP for Claude Code (creates .mcp.json)
 setup:
 	lenspr setup .

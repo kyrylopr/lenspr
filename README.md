@@ -135,6 +135,18 @@ lenspr init
 
 This creates `.mcp.json` automatically. Restart Claude Code — the `lens_*` tools will be available.
 
+**Recommended:** Add instructions for Claude to prefer lenspr tools. Create `.claude/CLAUDE.md`:
+
+```markdown
+## Code Navigation - USE LENSPR TOOLS
+
+ALWAYS prefer lenspr tools over Read/Grep/Glob:
+- lens_search - find code by name/content
+- lens_context - get node with all dependencies
+- lens_check_impact - BEFORE any modification
+- lens_get_node - read specific function/class
+```
+
 **Manual configuration** (if you prefer):
 
 Create `.mcp.json` in your project root:
