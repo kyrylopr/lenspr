@@ -24,23 +24,52 @@ Instead of grep/read loops, Claude gets structured tools: one `lens_context` cal
 
 ## Quick Start
 
+### Step 1: Install
 ```bash
-pip install lenspr
+# Recommended: using pipx (isolated, available globally)
+pipx install 'lenspr[mcp]'
 
-# Initialize on your project
-lenspr init ./my_project
-
-# Check impact before changing code
-lenspr impact ./my_project app.models.User
+# Or with pip (in your current environment)
+pip install 'lenspr[mcp]'
 ```
 
-### With Claude Code (MCP)
+### Step 2: Initialize on your project
+```bash
+cd ./my_project
+lenspr init .                   # Parses all Python files, builds the graph
+lenspr setup .                  # Creates .mcp.json config for Claude Code
+```
+
+### Step 3: Restart VSCode
+Close VSCode completely (Cmd+Q / Alt+F4) and reopen your project.
+Claude Code will now have access to `lens_*` tools.
+
+### Step 4: Use it
+
+**In Claude Code** — just ask:
+- "What does my_function do?"
+- "What calls validate_user?"
+- "Check impact of changing Settings class"
+
+**From CLI:**
+```bash
+lenspr status .                 # Show graph stats
+lenspr search . "validate"      # Find functions by name
+lenspr impact . my.function     # Check what breaks if you change it
+```
+
+## All CLI Commands
 
 ```bash
-pip install 'lenspr[mcp]'
-lenspr setup    # Creates .mcp.json
-lenspr init     # Builds the graph
-# Restart VSCode - lens_* tools are now available
+lenspr init <path>              # Build the code graph (run once)
+lenspr setup <path>             # Create .mcp.json for Claude Code
+lenspr status <path>            # Show graph stats (nodes, edges)
+lenspr search <path> "query"    # Search functions/classes by name
+lenspr impact <path> <node_id>  # Check what breaks if you change a node
+lenspr sync <path>              # Resync after file changes
+lenspr serve <path>             # Start MCP server manually
+lenspr watch <path>             # Auto-sync on file changes
+lenspr annotate <path>          # Show annotation coverage
 ```
 
 ### Python API
