@@ -13,7 +13,9 @@ import pytest
 from lenspr import database
 from lenspr.claude_tools import (
     _handle_add_node,
+    _handle_context,
     _handle_delete_node,
+    _handle_grep,
     _handle_update_node,
 )
 from lenspr.context import LensContext
@@ -189,3 +191,160 @@ class TestDeleteNode:
     def test_delete_nonexistent_node(self, project: LensContext) -> None:
         result = _handle_delete_node({"node_id": "app.nonexistent"}, project)
         assert not result.success
+
+
+@pytest.fixture
+def project_with_tests(tmp_path: Path) -> LensContext:
+    """Create a project with source + test files for context/grep tests."""
+    src = tmp_path / "app.py"
+    src.write_text(
+        "def greet(name):\n"
+        '    return f"Hello, {name}"\n'
+        "\n"
+        "\n"
+        "def farewell(name):\n"
+        '    return f"Goodbye, {name}"\n'
+    )
+
+    helper = tmp_path / "utils.py"
+    helper.write_text(
+        "from app import greet\n"
+        "\n"
+        "\n"
+        "def welcome(name):\n"
+        "    return greet(name) + '!'\n"
+    )
+
+    test_file = tmp_path / "test_app.py"
+    test_file.write_text(
+        "from app import greet, farewell\n"
+        "\n"
+        "\n"
+        "def test_greet():\n"
+        "    assert greet('World') == 'Hello, World'\n"
+        "\n"
+        "\n"
+        "def test_farewell():\n"
+        "    assert farewell('World') == 'Goodbye, World'\n"
+    )
+
+    lens_dir = tmp_path / ".lens"
+    lens_dir.mkdir()
+    database.init_database(lens_dir)
+
+    ctx = LensContext(project_root=tmp_path, lens_dir=lens_dir)
+    ctx.full_sync()
+    return ctx
+
+
+class TestContext:
+    def test_returns_target_node(self, project_with_tests: LensContext) -> None:
+        result = _handle_context({"node_id": "app.greet"}, project_with_tests)
+        assert result.success
+        assert result.data is not None
+        assert result.data["target"]["id"] == "app.greet"
+        assert "source_code" in result.data["target"]
+
+    def test_includes_callers(self, project_with_tests: LensContext) -> None:
+        result = _handle_context({"node_id": "app.greet"}, project_with_tests)
+        assert result.success
+        assert result.data is not None
+        caller_ids = [c["id"] for c in result.data["callers"]]
+        assert "utils.welcome" in caller_ids
+
+    def test_includes_callees(self, project_with_tests: LensContext) -> None:
+        result = _handle_context({"node_id": "utils.welcome"}, project_with_tests)
+        assert result.success
+        assert result.data is not None
+        callee_ids = [c["id"] for c in result.data["callees"]]
+        assert "app.greet" in callee_ids
+
+    def test_includes_tests(self, project_with_tests: LensContext) -> None:
+        result = _handle_context({"node_id": "app.greet"}, project_with_tests)
+        assert result.success
+        assert result.data is not None
+        test_ids = [t["id"] for t in result.data["tests"]]
+        assert "test_app.test_greet" in test_ids
+
+    def test_excludes_callers(self, project_with_tests: LensContext) -> None:
+        result = _handle_context(
+            {"node_id": "app.greet", "include_callers": False},
+            project_with_tests,
+        )
+        assert result.success
+        assert result.data is not None
+        assert "callers" not in result.data
+
+    def test_excludes_tests(self, project_with_tests: LensContext) -> None:
+        result = _handle_context(
+            {"node_id": "app.greet", "include_tests": False},
+            project_with_tests,
+        )
+        assert result.success
+        assert result.data is not None
+        assert "tests" not in result.data
+
+    def test_nonexistent_node(self, project_with_tests: LensContext) -> None:
+        result = _handle_context({"node_id": "app.nope"}, project_with_tests)
+        assert not result.success
+
+    def test_caller_source_included(self, project_with_tests: LensContext) -> None:
+        result = _handle_context({"node_id": "app.greet"}, project_with_tests)
+        assert result.success
+        assert result.data is not None
+        for caller in result.data["callers"]:
+            assert "source_code" in caller
+
+
+class TestGrep:
+    def test_finds_pattern(self, project_with_tests: LensContext) -> None:
+        result = _handle_grep({"pattern": "Hello"}, project_with_tests)
+        assert result.success
+        assert result.data is not None
+        assert result.data["count"] > 0
+
+    def test_returns_graph_context(self, project_with_tests: LensContext) -> None:
+        result = _handle_grep({"pattern": "Hello"}, project_with_tests)
+        assert result.success
+        assert result.data is not None
+        for match in result.data["results"]:
+            assert "file" in match
+            assert "line" in match
+            # Should have node context for matches inside functions
+            if match["file"] == "app.py":
+                assert "node_id" in match
+
+    def test_regex_pattern(self, project_with_tests: LensContext) -> None:
+        result = _handle_grep({"pattern": r"def \w+greet"}, project_with_tests)
+        assert result.success
+        assert result.data is not None
+        assert result.data["count"] > 0
+
+    def test_file_glob_filter(self, project_with_tests: LensContext) -> None:
+        result = _handle_grep(
+            {"pattern": "greet", "file_glob": "test_*.py"},
+            project_with_tests,
+        )
+        assert result.success
+        assert result.data is not None
+        for match in result.data["results"]:
+            assert match["file"].startswith("test_")
+
+    def test_max_results(self, project_with_tests: LensContext) -> None:
+        result = _handle_grep(
+            {"pattern": "def", "max_results": 2},
+            project_with_tests,
+        )
+        assert result.success
+        assert result.data is not None
+        assert result.data["count"] <= 2
+        assert result.data["truncated"]
+
+    def test_no_results(self, project_with_tests: LensContext) -> None:
+        result = _handle_grep(
+            {"pattern": "zzz_nonexistent_zzz"},
+            project_with_tests,
+        )
+        assert result.success
+        assert result.data is not None
+        assert result.data["count"] == 0

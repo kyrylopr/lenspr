@@ -4,11 +4,124 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
+import time
 
 from mcp.server.fastmcp import FastMCP
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger("lenspr.mcp")
+
+
+def _start_watcher(project_path: str) -> None:
+    """Start a background file watcher that auto-syncs on changes.
+
+    Uses watchdog if available, otherwise falls back to a simple
+    polling watcher.
+    """
+    try:
+        from watchdog.events import FileSystemEventHandler
+        from watchdog.observers import Observer
+
+        _start_watchdog_watcher(project_path, FileSystemEventHandler, Observer)  # type: ignore[arg-type]
+    except ImportError:
+        logger.info("watchdog not installed, using polling watcher")
+        _start_polling_watcher(project_path)
+
+
+def _start_watchdog_watcher(
+    project_path: str,
+    handler_cls: type,
+    observer_cls: type,
+) -> None:
+    """Watchdog-based file watcher running in a daemon thread."""
+    import lenspr
+
+    class _SyncHandler(handler_cls):  # type: ignore[misc]
+        def __init__(self) -> None:
+            self._pending = False
+            self._lock = threading.Lock()
+
+        def on_modified(self, event: object) -> None:
+            if (
+                hasattr(event, "src_path")
+                and event.src_path.endswith(".py")  # type: ignore[union-attr]
+            ):
+                with self._lock:
+                    self._pending = True
+
+        def on_created(self, event: object) -> None:
+            self.on_modified(event)
+
+        def on_deleted(self, event: object) -> None:
+            self.on_modified(event)
+
+    handler = _SyncHandler()
+    observer = observer_cls()
+    observer.schedule(handler, project_path, recursive=True)
+    observer.daemon = True
+    observer.start()
+
+    def _sync_loop() -> None:
+        while True:
+            time.sleep(2)
+            should_sync = False
+            with handler._lock:
+                if handler._pending:
+                    handler._pending = False
+                    should_sync = True
+            if should_sync:
+                try:
+                    result = lenspr.sync()
+                    total = (
+                        len(result.added)
+                        + len(result.modified)
+                        + len(result.deleted)
+                    )
+                    if total > 0:
+                        logger.info(
+                            "Auto-sync: +%d ~%d -%d",
+                            len(result.added),
+                            len(result.modified),
+                            len(result.deleted),
+                        )
+                except Exception:
+                    logger.exception("Auto-sync failed")
+
+    t = threading.Thread(target=_sync_loop, daemon=True)
+    t.start()
+    logger.info("Watchdog file watcher started for: %s", project_path)
+
+
+def _start_polling_watcher(project_path: str) -> None:
+    """Simple polling watcher as fallback when watchdog is unavailable."""
+    import lenspr
+
+    def _poll_loop() -> None:
+        while True:
+            time.sleep(5)
+            try:
+                result = lenspr.sync()
+                total = (
+                    len(result.added)
+                    + len(result.modified)
+                    + len(result.deleted)
+                )
+                if total > 0:
+                    logger.info(
+                        "Poll-sync: +%d ~%d -%d",
+                        len(result.added),
+                        len(result.modified),
+                        len(result.deleted),
+                    )
+            except Exception:
+                logger.exception("Poll-sync failed")
+
+    t = threading.Thread(target=_poll_loop, daemon=True)
+    t.start()
+    logger.info(
+        "Polling file watcher started for: %s (every 5s)", project_path
+    )
 
 
 def run_server(project_path: str) -> None:
@@ -17,6 +130,9 @@ def run_server(project_path: str) -> None:
 
     lenspr.init(project_path)
     instructions = lenspr.get_system_prompt()
+
+    # Start background file watcher for auto-sync
+    _start_watcher(project_path)
 
     mcp = FastMCP(
         name="lenspr",
@@ -173,6 +289,58 @@ def run_server(project_path: str) -> None:
         result = lenspr.handle_tool("lens_rename", {
             "node_id": node_id,
             "new_name": new_name,
+        })
+        return json.dumps(result, indent=2)
+
+    @mcp.tool()
+    def lens_context(
+        node_id: str,
+        include_callers: bool = True,
+        include_callees: bool = True,
+        include_tests: bool = True,
+        depth: int = 1,
+    ) -> str:
+        """Get full context for a node in one call: source, callers, callees, tests, imports.
+
+        Replaces multiple get_node + get_connections calls. Returns the target node's
+        source code plus source code of all related nodes.
+
+        Args:
+            node_id: The node identifier (e.g. app.models.User).
+            include_callers: Include nodes that call/use this node.
+            include_callees: Include nodes this node calls/uses.
+            include_tests: Include related test functions.
+            depth: How many levels of callers/callees to include.
+        """
+        result = lenspr.handle_tool("lens_context", {
+            "node_id": node_id,
+            "include_callers": include_callers,
+            "include_callees": include_callees,
+            "include_tests": include_tests,
+            "depth": depth,
+        })
+        return json.dumps(result, indent=2)
+
+    @mcp.tool()
+    def lens_grep(
+        pattern: str,
+        file_glob: str = "*.py",
+        max_results: int = 50,
+    ) -> str:
+        """Search for a text pattern across all project files with graph context.
+
+        Returns matching lines with information about which function/class contains
+        each match. Supports regex patterns.
+
+        Args:
+            pattern: Text or regex pattern to search for.
+            file_glob: Glob pattern to filter files (e.g. '*.py', 'tests/**').
+            max_results: Maximum number of results to return.
+        """
+        result = lenspr.handle_tool("lens_grep", {
+            "pattern": pattern,
+            "file_glob": file_glob,
+            "max_results": max_results,
         })
         return json.dumps(result, indent=2)
 
