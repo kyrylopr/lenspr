@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 LENS_TOOLS: list[dict[str, Any]] = [
     {
         "name": "lens_list_nodes",
-        "description": "List all nodes in the codebase, optionally filtered by type or file.",
+        "description": "List all nodes in the codebase, optionally filtered by type, file, or name.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -33,6 +33,10 @@ LENS_TOOLS: list[dict[str, Any]] = [
                 "file_path": {
                     "type": "string",
                     "description": "Filter by file path.",
+                },
+                "name": {
+                    "type": "string",
+                    "description": "Filter by name (substring match, e.g. 'parse' finds 'parse_file', 'reparse').",
                 },
             },
         },
@@ -332,6 +336,7 @@ def _handle_list_nodes(params: dict, ctx: LensContext) -> ToolResponse:
         ctx.graph_db,
         type_filter=params.get("type"),
         file_filter=params.get("file_path"),
+        name_filter=params.get("name"),
     )
     return ToolResponse(
         success=True,

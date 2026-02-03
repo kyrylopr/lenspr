@@ -143,18 +143,22 @@ def run_server(project_path: str) -> None:
     def lens_list_nodes(
         type: str | None = None,
         file_path: str | None = None,
+        name: str | None = None,
     ) -> str:
-        """List all nodes in the codebase, optionally filtered by type or file.
+        """List all nodes in the codebase, optionally filtered by type, file, or name.
 
         Args:
             type: Filter by node type (module, class, function, method, block).
             file_path: Filter by file path.
+            name: Filter by name (substring match, e.g. 'parse' finds 'parse_file').
         """
         params: dict = {}
         if type is not None:
             params["type"] = type
         if file_path is not None:
             params["file_path"] = file_path
+        if name is not None:
+            params["name"] = name
         result = lenspr.handle_tool("lens_list_nodes", params)
         return json.dumps(result, indent=2)
 
