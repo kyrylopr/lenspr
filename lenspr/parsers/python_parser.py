@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import ast
-import textwrap
 import uuid
 from pathlib import Path
-from typing import Optional
 
 import jedi
 
@@ -81,7 +79,9 @@ def _get_signature(node: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
     return f"{prefix}def {node.name}({', '.join(parts)})"
 
 
-def _get_docstring(node: ast.AST) -> Optional[str]:
+def _get_docstring(
+    node: ast.AsyncFunctionDef | ast.FunctionDef | ast.ClassDef | ast.Module,
+) -> str | None:
     """Extract docstring from a class or function node."""
     return ast.get_docstring(node)
 
@@ -109,19 +109,19 @@ class _ImportTable:
         self.names: dict[str, str] = {}  # local_name → qualified_name
         self.star_imports: list[str] = []  # modules imported with *
 
-    def add_import(self, module: str, name: str, alias: Optional[str] = None) -> None:
+    def add_import(self, module: str, name: str, alias: str | None = None) -> None:
         local = alias or name
         qualified = f"{module}.{name}" if module else name
         self.names[local] = qualified
 
-    def add_module_import(self, module: str, alias: Optional[str] = None) -> None:
+    def add_module_import(self, module: str, alias: str | None = None) -> None:
         local = alias or module
         self.names[local] = module
 
     def add_star_import(self, module: str) -> None:
         self.star_imports.append(module)
 
-    def resolve(self, name: str) -> Optional[tuple[str, EdgeConfidence]]:
+    def resolve(self, name: str) -> tuple[str, EdgeConfidence] | None:
         """Try to resolve a local name to a qualified name."""
         if name in self.names:
             return self.names[name], EdgeConfidence.RESOLVED
@@ -376,7 +376,7 @@ class CodeGraphVisitor(ast.NodeVisitor):
                 )
             )
 
-    def _resolve_name_from_ast(self, node: ast.AST) -> Optional[str]:
+    def _resolve_name_from_ast(self, node: ast.AST) -> str | None:
         """Extract a dotted name string from an AST node."""
         if isinstance(node, ast.Name):
             return node.id
@@ -396,7 +396,7 @@ class CodeGraphVisitor(ast.NodeVisitor):
         Groups consecutive unclaimed statements into BLOCK nodes.
         Covers: constants, type aliases, if __name__ guards, assignments, etc.
         """
-        block_start: Optional[int] = None
+        block_start: int | None = None
         block_stmts: list[ast.stmt] = []
 
         def _flush_block() -> None:
@@ -498,7 +498,7 @@ class PythonParser(BaseParser):
     """
 
     def __init__(self) -> None:
-        self._jedi_project: Optional[jedi.Project] = None
+        self._jedi_project: jedi.Project | None = None
 
     def get_file_extensions(self) -> list[str]:
         return [".py"]

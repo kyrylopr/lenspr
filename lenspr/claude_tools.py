@@ -3,17 +3,14 @@
 from __future__ import annotations
 
 import hashlib
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from lenspr import database, graph
 from lenspr.models import (
-    Node,
-    NodeNotFoundError,
     PatchError,
     ToolResponse,
 )
-from lenspr.patcher import PatchBuffer, insert_code, remove_lines
+from lenspr.patcher import insert_code, remove_lines
 from lenspr.validator import validate_full
 
 if TYPE_CHECKING:
@@ -184,7 +181,7 @@ LENS_TOOLS: list[dict[str, Any]] = [
 
 
 def handle_tool_call(
-    tool_name: str, parameters: dict, ctx: "LensContext"
+    tool_name: str, parameters: dict, ctx: LensContext
 ) -> ToolResponse:
     """Route a tool call to the appropriate handler."""
     handlers = {
@@ -210,7 +207,7 @@ def handle_tool_call(
         return ToolResponse(success=False, error=str(e))
 
 
-def _handle_list_nodes(params: dict, ctx: "LensContext") -> ToolResponse:
+def _handle_list_nodes(params: dict, ctx: LensContext) -> ToolResponse:
     nodes = database.get_nodes(
         ctx.graph_db,
         type_filter=params.get("type"),
@@ -235,7 +232,7 @@ def _handle_list_nodes(params: dict, ctx: "LensContext") -> ToolResponse:
     )
 
 
-def _handle_get_node(params: dict, ctx: "LensContext") -> ToolResponse:
+def _handle_get_node(params: dict, ctx: LensContext) -> ToolResponse:
     node = database.get_node(params["node_id"], ctx.graph_db)
     if not node:
         return ToolResponse(
@@ -260,7 +257,7 @@ def _handle_get_node(params: dict, ctx: "LensContext") -> ToolResponse:
     )
 
 
-def _handle_get_connections(params: dict, ctx: "LensContext") -> ToolResponse:
+def _handle_get_connections(params: dict, ctx: LensContext) -> ToolResponse:
     direction = params.get("direction", "both")
     edges = database.get_edges(params["node_id"], ctx.graph_db, direction)
     return ToolResponse(
@@ -283,14 +280,14 @@ def _handle_get_connections(params: dict, ctx: "LensContext") -> ToolResponse:
     )
 
 
-def _handle_check_impact(params: dict, ctx: "LensContext") -> ToolResponse:
+def _handle_check_impact(params: dict, ctx: LensContext) -> ToolResponse:
     G = ctx.get_graph()
     depth = params.get("depth", 2)
     impact = graph.get_impact_zone(G, params["node_id"], depth)
     return ToolResponse(success=True, data=impact)
 
 
-def _handle_update_node(params: dict, ctx: "LensContext") -> ToolResponse:
+def _handle_update_node(params: dict, ctx: LensContext) -> ToolResponse:
     node_id = params["node_id"]
     new_source = params["new_source"]
 
@@ -354,7 +351,7 @@ def _handle_update_node(params: dict, ctx: "LensContext") -> ToolResponse:
     )
 
 
-def _handle_add_node(params: dict, ctx: "LensContext") -> ToolResponse:
+def _handle_add_node(params: dict, ctx: LensContext) -> ToolResponse:
     file_path = ctx.project_root / params["file_path"]
     source_code = params["source_code"]
 
@@ -392,7 +389,7 @@ def _handle_add_node(params: dict, ctx: "LensContext") -> ToolResponse:
     )
 
 
-def _handle_delete_node(params: dict, ctx: "LensContext") -> ToolResponse:
+def _handle_delete_node(params: dict, ctx: LensContext) -> ToolResponse:
     node_id = params["node_id"]
     node = database.get_node(node_id, ctx.graph_db)
 
@@ -425,7 +422,7 @@ def _handle_delete_node(params: dict, ctx: "LensContext") -> ToolResponse:
     return ToolResponse(success=True, data={"deleted": node_id})
 
 
-def _handle_search(params: dict, ctx: "LensContext") -> ToolResponse:
+def _handle_search(params: dict, ctx: LensContext) -> ToolResponse:
     search_in = params.get("search_in", "all")
     nodes = database.search_nodes(params["query"], ctx.graph_db, search_in)
     return ToolResponse(
@@ -446,14 +443,14 @@ def _handle_search(params: dict, ctx: "LensContext") -> ToolResponse:
     )
 
 
-def _handle_get_structure(params: dict, ctx: "LensContext") -> ToolResponse:
+def _handle_get_structure(params: dict, ctx: LensContext) -> ToolResponse:
     G = ctx.get_graph()
     max_depth = params.get("max_depth", 2)
     structure = graph.get_structure(G, max_depth)
     return ToolResponse(success=True, data={"structure": structure})
 
 
-def _handle_rename(params: dict, ctx: "LensContext") -> ToolResponse:
+def _handle_rename(params: dict, ctx: LensContext) -> ToolResponse:
     node_id = params["node_id"]
     new_name = params["new_name"]
 

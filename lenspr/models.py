@@ -6,7 +6,6 @@ import hashlib
 import json
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional
 
 
 class NodeType(Enum):
@@ -57,8 +56,8 @@ class Node:
     start_line: int
     end_line: int
     source_code: str
-    docstring: Optional[str] = None
-    signature: Optional[str] = None  # For functions/methods
+    docstring: str | None = None
+    signature: str | None = None  # For functions/methods
     hash: str = ""  # SHA256 of source_code, computed automatically
     metadata: dict = field(default_factory=dict)
 
@@ -102,7 +101,11 @@ class Node:
             docstring=data.get("docstring"),
             signature=data.get("signature"),
             hash=data.get("hash", ""),
-            metadata=json.loads(data["metadata"]) if isinstance(data.get("metadata"), str) else data.get("metadata", {}),
+            metadata=(
+                json.loads(data["metadata"])
+                if isinstance(data.get("metadata"), str)
+                else data.get("metadata", {})
+            ),
         )
 
 
@@ -114,7 +117,7 @@ class Edge:
     from_node: str  # Source node ID
     to_node: str  # Target node ID
     type: EdgeType
-    line_number: Optional[int] = None  # Where the relationship occurs in source
+    line_number: int | None = None  # Where the relationship occurs in source
     confidence: EdgeConfidence = EdgeConfidence.RESOLVED
     source: EdgeSource = EdgeSource.STATIC
     untracked_reason: str = ""  # Why confidence is UNRESOLVED (e.g. "dynamic_call")
@@ -146,7 +149,11 @@ class Edge:
             confidence=EdgeConfidence(data.get("confidence", "resolved")),
             source=EdgeSource(data.get("source", "static")),
             untracked_reason=data.get("untracked_reason", ""),
-            metadata=json.loads(data["metadata"]) if isinstance(data.get("metadata"), str) else data.get("metadata", {}),
+            metadata=(
+                json.loads(data["metadata"])
+                if isinstance(data.get("metadata"), str)
+                else data.get("metadata", {})
+            ),
         )
 
 
@@ -158,8 +165,8 @@ class Change:
     timestamp: str  # ISO 8601
     node_id: str
     action: str  # "created" | "modified" | "deleted"
-    old_source: Optional[str] = None
-    new_source: Optional[str] = None
+    old_source: str | None = None
+    new_source: str | None = None
     old_hash: str = ""
     new_hash: str = ""
     affected_nodes: list[str] = field(default_factory=list)
@@ -180,7 +187,7 @@ class Patch:
 class Resolution:
     """Result of name resolution."""
 
-    node_id: Optional[str]
+    node_id: str | None
     confidence: EdgeConfidence
     untracked_reason: str = ""
 
@@ -231,7 +238,7 @@ class RenameResult:
     files_modified: int = 0
     references_updated: int = 0
     needs_review: list[dict] = field(default_factory=list)  # String matches not auto-renamed
-    error: Optional[str] = None
+    error: str | None = None
 
 
 @dataclass
@@ -239,12 +246,12 @@ class ToolResponse:
     """Structured response from a Claude tool call."""
 
     success: bool
-    data: Optional[dict] = None
-    error: Optional[str] = None
-    hint: Optional[str] = None
+    data: dict | None = None
+    error: str | None = None
+    hint: str | None = None
     warnings: list[str] = field(default_factory=list)
     affected_nodes: list[str] = field(default_factory=list)
-    diff: Optional[str] = None
+    diff: str | None = None
 
 
 # Custom exceptions

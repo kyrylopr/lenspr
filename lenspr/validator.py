@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass, field
-from typing import Optional
 
 from lenspr.models import Node, NodeType
 
@@ -162,7 +161,7 @@ def validate_full(new_source: str, old_node: Node) -> ValidationResult:
     return ValidationResult(valid=True, warnings=all_warnings)
 
 
-def _find_function(tree: ast.Module) -> Optional[ast.FunctionDef | ast.AsyncFunctionDef]:
+def _find_function(tree: ast.Module) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
     """Find the first function/async function definition in a module."""
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
