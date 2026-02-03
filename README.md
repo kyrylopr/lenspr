@@ -152,7 +152,7 @@ Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_
 }
 ```
 
-## Available Tools
+## Available Tools (22 total)
 
 ### Navigation & Discovery
 
@@ -161,28 +161,48 @@ Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_
 | `lens_list_nodes` | List all functions/classes/modules with type/file/name filters |
 | `lens_get_node` | Get full source code of a specific node |
 | `lens_get_connections` | See what calls a node and what it calls |
-| `lens_context` | **One call = source + callers + callees + tests** — the most useful tool |
+| `lens_context` | **One call = source + callers + callees + tests + annotations** |
 | `lens_search` | Search nodes by name, code content, or docstring |
 | `lens_grep` | Text/regex search with graph context (which function contains each match) |
-| `lens_get_structure` | Compact project overview (files, classes, functions) |
+| `lens_get_structure` | Compact project overview with pagination (summary mode for large projects) |
+| `lens_find_usages` | Find all callers, importers, and inheritors of a node |
 
 ### Analysis & Safety
 
 | Tool | Description |
 |------|-------------|
-| `lens_check_impact` | **Always call before modifying** — shows all affected nodes |
+| `lens_check_impact` | **Always call before modifying** — shows severity (CRITICAL/HIGH/MEDIUM/LOW) |
+| `lens_validate_change` | Dry-run validation: check what would happen without applying |
 | `lens_health` | Graph quality report: nodes, edges, confidence %, docstring coverage |
 | `lens_diff` | Show what changed since last sync (added/modified/deleted files) |
+| `lens_dead_code` | Find unreachable code from entry points |
+| `lens_dependencies` | List all external dependencies (stdlib, third-party) |
 
 ### Modification
 
 | Tool | Description |
 |------|-------------|
-| `lens_update_node` | Update node source with 3-level validation |
+| `lens_update_node` | Update node source with 3-level validation + proactive warnings |
 | `lens_add_node` | Add new function/class to a file |
 | `lens_delete_node` | Remove a node from the codebase |
 | `lens_rename` | Rename a function/class across the entire project |
-| `lens_batch` | Apply multiple updates atomically (all-or-nothing)
+| `lens_batch` | Apply multiple updates atomically (all-or-nothing) |
+
+### Semantic Annotations
+
+| Tool | Description |
+|------|-------------|
+| `lens_annotate` | Generate suggested role, side_effects from code analysis |
+| `lens_save_annotation` | Save semantic annotations (summary, role, side_effects, inputs, outputs) |
+| `lens_annotate_batch` | Get nodes needing annotation (unannotated or stale) |
+| `lens_annotation_stats` | Coverage stats: annotated %, breakdown by type and role |
+
+**Node Roles:** `validator`, `transformer`, `io`, `orchestrator`, `pure`, `handler`, `test`, `utility`, `factory`, `accessor`
+
+**Proactive Warnings in `lens_update_node`:**
+- ⚠️ HIGH IMPACT: >10 callers affected
+- ⚠️ NO TESTS: No test coverage for this node
+- ⚠️ CIRCULAR: Part of a circular import
 
 ## Architecture
 

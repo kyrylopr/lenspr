@@ -407,5 +407,139 @@ def run_server(project_path: str) -> None:
         result = lenspr.handle_tool("lens_dependencies", {"group_by": group_by})
         return json.dumps(result, indent=2)
 
+    @mcp.tool()
+    def lens_validate_change(node_id: str, new_source: str) -> str:
+        """Dry-run validation: check what would happen if you update a node.
+
+        Returns validation result, proactive warnings, and impact analysis
+        WITHOUT actually applying changes. Use before lens_update_node.
+
+        Args:
+            node_id: The node to validate.
+            new_source: Proposed new source code.
+        """
+        result = lenspr.handle_tool("lens_validate_change", {
+            "node_id": node_id,
+            "new_source": new_source,
+        })
+        return json.dumps(result, indent=2)
+
+    @mcp.tool()
+    def lens_dead_code(entry_points: list[str] | None = None) -> str:
+        """Find potentially dead code not reachable from entry points.
+
+        Entry points are auto-detected (main, CLI commands, test functions, API handlers).
+
+        Args:
+            entry_points: Additional entry point node IDs. If empty, auto-detects.
+        """
+        params: dict = {}
+        if entry_points is not None:
+            params["entry_points"] = entry_points
+        result = lenspr.handle_tool("lens_dead_code", params)
+        return json.dumps(result, indent=2)
+
+    @mcp.tool()
+    def lens_find_usages(node_id: str, include_tests: bool = True) -> str:
+        """Find all usages of a node across the codebase.
+
+        Returns callers, importers, and string references.
+
+        Args:
+            node_id: The node to find usages of.
+            include_tests: Include usages from test files. Default: true.
+        """
+        result = lenspr.handle_tool("lens_find_usages", {
+            "node_id": node_id,
+            "include_tests": include_tests,
+        })
+        return json.dumps(result, indent=2)
+
+    # -- Semantic Annotation Tools --
+
+    @mcp.tool()
+    def lens_annotate(node_id: str) -> str:
+        """Generate semantic annotations for a node.
+
+        Returns suggested summary, role, and side effects.
+
+        Args:
+            node_id: The node to annotate.
+        """
+        result = lenspr.handle_tool("lens_annotate", {"node_id": node_id})
+        return json.dumps(result, indent=2)
+
+    @mcp.tool()
+    def lens_save_annotation(
+        node_id: str,
+        summary: str | None = None,
+        role: str | None = None,
+        side_effects: list[str] | None = None,
+        semantic_inputs: list[str] | None = None,
+        semantic_outputs: list[str] | None = None,
+    ) -> str:
+        """Save semantic annotations to a node.
+
+        Args:
+            node_id: The node to annotate.
+            summary: Short description of what this node does.
+            role: Semantic role (validator, transformer, io, etc.).
+            side_effects: List of side effects like 'writes_file', 'network_io'.
+            semantic_inputs: Semantic types of inputs.
+            semantic_outputs: Semantic types of outputs.
+        """
+        params: dict = {"node_id": node_id}
+        if summary is not None:
+            params["summary"] = summary
+        if role is not None:
+            params["role"] = role
+        if side_effects is not None:
+            params["side_effects"] = side_effects
+        if semantic_inputs is not None:
+            params["semantic_inputs"] = semantic_inputs
+        if semantic_outputs is not None:
+            params["semantic_outputs"] = semantic_outputs
+        result = lenspr.handle_tool("lens_save_annotation", params)
+        return json.dumps(result, indent=2)
+
+    @mcp.tool()
+    def lens_annotate_batch(
+        type_filter: str | None = None,
+        file_path: str | None = None,
+        unannotated_only: bool = True,
+        stale_only: bool = False,
+        limit: int = 10,
+    ) -> str:
+        """Get nodes that need annotation.
+
+        Args:
+            type_filter: Filter by node type (function, method, class).
+            file_path: Filter by file path prefix.
+            unannotated_only: Only return unannotated nodes. Default: true.
+            stale_only: Only return nodes with stale annotations. Default: false.
+            limit: Max nodes to return. Default: 10.
+        """
+        params: dict = {
+            "unannotated_only": unannotated_only,
+            "stale_only": stale_only,
+            "limit": limit,
+        }
+        if type_filter is not None:
+            params["type_filter"] = type_filter
+        if file_path is not None:
+            params["file_path"] = file_path
+        result = lenspr.handle_tool("lens_annotate_batch", params)
+        return json.dumps(result, indent=2)
+
+    @mcp.tool()
+    def lens_annotation_stats() -> str:
+        """Get annotation coverage statistics for the codebase.
+
+        Returns: total annotatable, annotated count, stale annotations,
+        breakdown by type and role.
+        """
+        result = lenspr.handle_tool("lens_annotation_stats", {})
+        return json.dumps(result, indent=2)
+
     logger.info("Starting LensPR MCP server for: %s", project_path)
     mcp.run(transport="stdio")

@@ -65,3 +65,22 @@ tree:
 # Show graph health report
 health:
 	@python3 -c "import lenspr; lenspr.init('.'); r=lenspr.handle_tool('lens_health',{}); d=r['data']; print(f'Nodes: {d[\"total_nodes\"]} | Edges: {d[\"total_edges\"]} | Confidence: {d[\"confidence_pct\"]}% | Docstrings: {d[\"docstring_pct\"]}%')"
+
+# Show annotation coverage
+annotations:
+	@python3 -c "import lenspr; lenspr.init('.'); r=lenspr.handle_tool('lens_annotation_stats',{}); d=r['data']; print(f'Annotated: {d[\"annotated\"]}/{d[\"total_annotatable\"]} ({d[\"coverage_pct\"]}%) | Stale: {d[\"stale_annotations\"]}')"
+
+# Auto-annotate all nodes
+annotate-all:
+	@python3 -c "\
+import lenspr; \
+lenspr.init('.'); \
+batch = lenspr.handle_tool('lens_annotate_batch', {'unannotated_only': True, 'limit': 1000}); \
+count = 0; \
+for n in batch['data']['nodes']: \
+    s = lenspr.handle_tool('lens_annotate', {'node_id': n['id']}); \
+    if s['success']: \
+        d = s['data']; \
+        lenspr.handle_tool('lens_save_annotation', {'node_id': n['id'], 'role': d['suggested_role'], 'side_effects': d['detected_side_effects'], 'semantic_inputs': d['detected_inputs'], 'semantic_outputs': d['detected_outputs']}); \
+        count += 1; \
+print(f'Annotated {count} nodes')"

@@ -22,7 +22,14 @@ CREATE TABLE IF NOT EXISTS nodes (
     docstring TEXT,
     signature TEXT,
     hash TEXT NOT NULL,
-    metadata TEXT NOT NULL DEFAULT '{}'
+    metadata TEXT NOT NULL DEFAULT '{}',
+    -- Semantic annotation fields
+    summary TEXT,
+    role TEXT,
+    side_effects TEXT,
+    semantic_inputs TEXT,
+    semantic_outputs TEXT,
+    annotation_hash TEXT
 );
 
 CREATE TABLE IF NOT EXISTS edges (
@@ -95,12 +102,32 @@ def init_database(lens_dir: Path) -> None:
 
     with _connect(lens_dir / "graph.db") as conn:
         conn.executescript(_GRAPH_SCHEMA)
+        _migrate_annotations(conn)
 
     with _connect(lens_dir / "history.db") as conn:
         conn.executescript(_HISTORY_SCHEMA)
 
     with _connect(lens_dir / "resolve_cache.db") as conn:
         conn.executescript(_RESOLVE_CACHE_SCHEMA)
+
+
+def _migrate_annotations(conn: sqlite3.Connection) -> None:
+    """Add annotation columns to existing databases if missing."""
+    cursor = conn.execute("PRAGMA table_info(nodes)")
+    columns = {row["name"] for row in cursor.fetchall()}
+
+    annotation_columns = [
+        ("summary", "TEXT"),
+        ("role", "TEXT"),
+        ("side_effects", "TEXT"),
+        ("semantic_inputs", "TEXT"),
+        ("semantic_outputs", "TEXT"),
+        ("annotation_hash", "TEXT"),
+    ]
+
+    for col_name, col_type in annotation_columns:
+        if col_name not in columns:
+            conn.execute(f"ALTER TABLE nodes ADD COLUMN {col_name} {col_type}")
 
 
 def save_graph(nodes: list[Node], edges: list[Edge], db_path: Path) -> None:
@@ -116,9 +143,13 @@ def save_graph(nodes: list[Node], edges: list[Edge], db_path: Path) -> None:
         conn.executemany(
             """INSERT INTO nodes
             (id, type, name, qualified_name, file_path, start_line, end_line,
-             source_code, docstring, signature, hash, metadata)
+             source_code, docstring, signature, hash, metadata,
+             summary, role, side_effects, semantic_inputs, semantic_outputs,
+             annotation_hash)
             VALUES (:id, :type, :name, :qualified_name, :file_path, :start_line,
-                    :end_line, :source_code, :docstring, :signature, :hash, :metadata)""",
+                    :end_line, :source_code, :docstring, :signature, :hash, :metadata,
+                    :summary, :role, :side_effects, :semantic_inputs, :semantic_outputs,
+                    :annotation_hash)""",
             [n.to_dict() for n in nodes],
         )
 
@@ -135,6 +166,9 @@ def save_graph(nodes: list[Node], edges: list[Edge], db_path: Path) -> None:
 def load_graph(db_path: Path) -> tuple[list[Node], list[Edge]]:
     """Load full graph from database."""
     with _connect(db_path) as conn:
+        # Ensure annotation columns exist (migration for existing DBs)
+        _migrate_annotations(conn)
+
         rows = conn.execute("SELECT * FROM nodes").fetchall()
         nodes = [Node.from_dict(dict(r)) for r in rows]
 
@@ -226,6 +260,99 @@ def delete_node(node_id: str, db_path: Path) -> bool:
         )
         cursor = conn.execute("DELETE FROM nodes WHERE id = ?", (node_id,))
         return cursor.rowcount > 0
+
+
+def save_annotation(
+    node_id: str,
+    db_path: Path,
+    summary: str | None = None,
+    role: str | None = None,
+    side_effects: list[str] | None = None,
+    semantic_inputs: list[str] | None = None,
+    semantic_outputs: list[str] | None = None,
+) -> bool:
+    """Save semantic annotations for a node. Also stores current hash as annotation_hash."""
+    import json
+
+    with _connect(db_path) as conn:
+        # Get current node hash
+        row = conn.execute("SELECT hash FROM nodes WHERE id = ?", (node_id,)).fetchone()
+        if not row:
+            return False
+
+        current_hash = row["hash"]
+
+        # Update annotations
+        cursor = conn.execute(
+            """UPDATE nodes SET
+                summary = ?,
+                role = ?,
+                side_effects = ?,
+                semantic_inputs = ?,
+                semantic_outputs = ?,
+                annotation_hash = ?
+            WHERE id = ?""",
+            (
+                summary,
+                role,
+                json.dumps(side_effects) if side_effects else None,
+                json.dumps(semantic_inputs) if semantic_inputs else None,
+                json.dumps(semantic_outputs) if semantic_outputs else None,
+                current_hash,
+                node_id,
+            ),
+        )
+        return cursor.rowcount > 0
+
+
+def get_annotation_stats(db_path: Path) -> dict:
+    """Get annotation coverage statistics for the codebase."""
+    with _connect(db_path) as conn:
+        # Total annotatable nodes (functions, methods, classes)
+        total = conn.execute(
+            "SELECT COUNT(*) FROM nodes WHERE type IN ('function', 'method', 'class')"
+        ).fetchone()[0]
+
+        # Annotated nodes
+        annotated = conn.execute(
+            "SELECT COUNT(*) FROM nodes WHERE summary IS NOT NULL OR role IS NOT NULL"
+        ).fetchone()[0]
+
+        # Stale annotations (hash != annotation_hash)
+        stale = conn.execute(
+            """SELECT COUNT(*) FROM nodes
+               WHERE annotation_hash IS NOT NULL AND hash != annotation_hash"""
+        ).fetchone()[0]
+
+        # By type
+        by_type = {}
+        for node_type in ("function", "method", "class"):
+            type_total = conn.execute(
+                "SELECT COUNT(*) FROM nodes WHERE type = ?", (node_type,)
+            ).fetchone()[0]
+            type_annotated = conn.execute(
+                """SELECT COUNT(*) FROM nodes
+                   WHERE type = ? AND (summary IS NOT NULL OR role IS NOT NULL)""",
+                (node_type,),
+            ).fetchone()[0]
+            by_type[node_type] = {"total": type_total, "annotated": type_annotated}
+
+        # By role
+        by_role: dict[str, int] = {}
+        rows = conn.execute(
+            "SELECT role, COUNT(*) FROM nodes WHERE role IS NOT NULL GROUP BY role"
+        ).fetchall()
+        for row in rows:
+            by_role[row[0]] = row[1]
+
+        return {
+            "total_annotatable": total,
+            "annotated": annotated,
+            "coverage_pct": round((annotated / total * 100) if total > 0 else 0, 1),
+            "stale_annotations": stale,
+            "by_type": by_type,
+            "by_role": by_role,
+        }
 
 
 def search_nodes(query: str, db_path: Path, search_in: str = "all") -> list[Node]:

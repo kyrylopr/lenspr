@@ -45,6 +45,21 @@ class EdgeSource(Enum):
     BOTH = "both"  # Confirmed by both static and runtime
 
 
+class NodeRole(Enum):
+    """Semantic role of a code node."""
+
+    VALIDATOR = "validator"  # Validates input, returns bool/raises
+    TRANSFORMER = "transformer"  # Transforms data A → B
+    IO = "io"  # Reads/writes external systems (files, network, db)
+    ORCHESTRATOR = "orchestrator"  # Coordinates multiple calls
+    PURE = "pure"  # No side effects, deterministic
+    HANDLER = "handler"  # Handles events/requests
+    TEST = "test"  # Test function
+    UTILITY = "utility"  # Generic helper
+    FACTORY = "factory"  # Creates objects
+    ACCESSOR = "accessor"  # Gets/sets properties
+
+
 @dataclass
 class Node:
     """A unit of code in the graph (function, class, module, or block)."""
@@ -62,6 +77,14 @@ class Node:
     hash: str = ""  # SHA256 of source_code, computed automatically
     metadata: dict = field(default_factory=dict)
 
+    # Semantic annotations (optional, populated by lens_annotate/lens_save_annotation)
+    summary: str | None = None  # Short description of what this does
+    role: NodeRole | None = None  # Semantic role (validator, transformer, etc.)
+    side_effects: list[str] = field(default_factory=list)  # e.g. ["writes_file", "network_io"]
+    semantic_inputs: list[str] = field(default_factory=list)  # e.g. ["user_input", "config"]
+    semantic_outputs: list[str] = field(default_factory=list)  # e.g. ["validated_data"]
+    annotation_hash: str | None = None  # Hash of source when annotation was created
+
     def __post_init__(self) -> None:
         if not self.hash:
             self.hash = self.compute_hash()
@@ -69,6 +92,18 @@ class Node:
     def compute_hash(self) -> str:
         """Compute SHA256 hash of source code for change detection."""
         return hashlib.sha256(self.source_code.encode("utf-8")).hexdigest()
+
+    @property
+    def is_annotated(self) -> bool:
+        """Check if this node has any semantic annotations."""
+        return self.summary is not None or self.role is not None
+
+    @property
+    def is_annotation_stale(self) -> bool:
+        """Check if annotation was made on older version of source."""
+        if not self.is_annotated or not self.annotation_hash:
+            return False
+        return self.annotation_hash != self.hash
 
     def to_dict(self) -> dict:
         """Serialize to dictionary for database storage."""
@@ -85,11 +120,39 @@ class Node:
             "signature": self.signature,
             "hash": self.hash,
             "metadata": json.dumps(self.metadata),
+            # Annotation fields
+            "summary": self.summary,
+            "role": self.role.value if self.role else None,
+            "side_effects": (
+                json.dumps(self.side_effects) if self.side_effects else None
+            ),
+            "semantic_inputs": (
+                json.dumps(self.semantic_inputs) if self.semantic_inputs else None
+            ),
+            "semantic_outputs": (
+                json.dumps(self.semantic_outputs) if self.semantic_outputs else None
+            ),
+            "annotation_hash": self.annotation_hash,
         }
 
     @classmethod
     def from_dict(cls, data: dict) -> Node:
         """Deserialize from dictionary."""
+        # Parse JSON lists for annotations
+        side_effects = data.get("side_effects")
+        if isinstance(side_effects, str):
+            side_effects = json.loads(side_effects) if side_effects else []
+        semantic_inputs = data.get("semantic_inputs")
+        if isinstance(semantic_inputs, str):
+            semantic_inputs = json.loads(semantic_inputs) if semantic_inputs else []
+        semantic_outputs = data.get("semantic_outputs")
+        if isinstance(semantic_outputs, str):
+            semantic_outputs = json.loads(semantic_outputs) if semantic_outputs else []
+
+        # Parse role enum
+        role_value = data.get("role")
+        role = NodeRole(role_value) if role_value else None
+
         return cls(
             id=data["id"],
             type=NodeType(data["type"]),
@@ -107,6 +170,13 @@ class Node:
                 if isinstance(data.get("metadata"), str)
                 else data.get("metadata", {})
             ),
+            # Annotation fields
+            summary=data.get("summary"),
+            role=role,
+            side_effects=side_effects or [],
+            semantic_inputs=semantic_inputs or [],
+            semantic_outputs=semantic_outputs or [],
+            annotation_hash=data.get("annotation_hash"),
         )
 
 

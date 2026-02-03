@@ -108,6 +108,25 @@ LENS_TOOLS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "lens_validate_change",
+        "description": (
+            "Dry-run validation: check what would happen if you update a node. "
+            "Returns validation result, proactive warnings, and impact analysis "
+            "WITHOUT actually applying changes. Use before lens_update_node."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "node_id": {"type": "string", "description": "The node to validate."},
+                "new_source": {
+                    "type": "string",
+                    "description": "Proposed new source code.",
+                },
+            },
+            "required": ["node_id", "new_source"],
+        },
+    },
+    {
         "name": "lens_add_node",
         "description": "Add a new function or class to a file.",
         "input_schema": {
@@ -336,6 +355,145 @@ LENS_TOOLS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "name": "lens_dead_code",
+        "description": (
+            "Find potentially dead code: functions/classes not reachable from entry points. "
+            "Entry points are auto-detected (main, CLI commands, test functions, API handlers)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "entry_points": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Additional entry point node IDs. If empty, auto-detects "
+                        "main(), test_*, and CLI/API handlers."
+                    ),
+                },
+            },
+        },
+    },
+    {
+        "name": "lens_find_usages",
+        "description": (
+            "Find all usages of a node across the codebase. "
+            "Returns callers, importers, and string references."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "node_id": {"type": "string", "description": "The node to find usages of."},
+                "include_tests": {
+                    "type": "boolean",
+                    "description": "Include usages from test files. Default: true.",
+                },
+            },
+            "required": ["node_id"],
+        },
+    },
+    # -- Semantic Annotation Tools --
+    {
+        "name": "lens_annotate",
+        "description": (
+            "Generate semantic annotations for a node. Returns suggested summary, role, "
+            "and detected side effects based on code analysis and context."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "node_id": {"type": "string", "description": "The node to annotate."},
+            },
+            "required": ["node_id"],
+        },
+    },
+    {
+        "name": "lens_save_annotation",
+        "description": "Save semantic annotations to a node.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "node_id": {"type": "string", "description": "The node to annotate."},
+                "summary": {
+                    "type": "string",
+                    "description": "Short description of what this node does.",
+                },
+                "role": {
+                    "type": "string",
+                    "enum": [
+                        "validator", "transformer", "io", "orchestrator",
+                        "pure", "handler", "test", "utility", "factory", "accessor"
+                    ],
+                    "description": "Semantic role of the node.",
+                },
+                "side_effects": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Side effects like 'writes_file', 'network_io', 'modifies_state'."
+                    ),
+                },
+                "semantic_inputs": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Semantic types of inputs like 'user_input', 'config'.",
+                },
+                "semantic_outputs": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Semantic types of outputs like 'validated_data', 'error_message'."
+                    ),
+                },
+            },
+            "required": ["node_id"],
+        },
+    },
+    {
+        "name": "lens_annotate_batch",
+        "description": (
+            "Get nodes that need annotation. Returns nodes without annotations "
+            "or with stale annotations."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "type_filter": {
+                    "type": "string",
+                    "enum": ["function", "method", "class"],
+                    "description": "Filter by node type.",
+                },
+                "file_path": {
+                    "type": "string",
+                    "description": "Filter by file path prefix.",
+                },
+                "unannotated_only": {
+                    "type": "boolean",
+                    "description": "Only return unannotated nodes. Default: true.",
+                },
+                "stale_only": {
+                    "type": "boolean",
+                    "description": "Only return nodes with stale annotations. Default: false.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max nodes to return. Default: 10.",
+                },
+            },
+        },
+    },
+    {
+        "name": "lens_annotation_stats",
+        "description": (
+            "Get annotation coverage statistics: total annotatable, annotated count, "
+            "stale annotations, breakdown by type and role."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
 ]
 
 
@@ -352,6 +510,7 @@ def handle_tool_call(
         "lens_get_connections": _handle_get_connections,
         "lens_check_impact": _handle_check_impact,
         "lens_update_node": _handle_update_node,
+        "lens_validate_change": _handle_validate_change,
         "lens_add_node": _handle_add_node,
         "lens_delete_node": _handle_delete_node,
         "lens_search": _handle_search,
@@ -363,6 +522,12 @@ def handle_tool_call(
         "lens_batch": _handle_batch,
         "lens_health": _handle_health,
         "lens_dependencies": _handle_dependencies,
+        "lens_dead_code": _handle_dead_code,
+        "lens_find_usages": _handle_find_usages,
+        "lens_annotate": _handle_annotate,
+        "lens_save_annotation": _handle_save_annotation,
+        "lens_annotate_batch": _handle_annotate_batch,
+        "lens_annotation_stats": _handle_annotation_stats,
     }
 
     handler = handlers.get(tool_name)
@@ -451,9 +616,149 @@ def _handle_get_connections(params: dict, ctx: LensContext) -> ToolResponse:
 
 def _handle_check_impact(params: dict, ctx: LensContext) -> ToolResponse:
     G = ctx.get_graph()
+    node_id = params["node_id"]
     depth = params.get("depth", 2)
-    impact = graph.get_impact_zone(G, params["node_id"], depth)
-    return ToolResponse(success=True, data=impact)
+    impact = graph.get_impact_zone(G, node_id, depth)
+
+    # Calculate severity based on impact
+    total_affected = impact.get("total_affected", 0)
+    direct_callers = impact.get("direct_callers", [])
+    inheritors = impact.get("inheritors", [])
+    untracked = impact.get("untracked_warnings", [])
+
+    # Determine severity level
+    if total_affected > 20 or len(inheritors) > 0:
+        severity = "CRITICAL"
+        severity_reason = (
+            f"{total_affected} affected nodes"
+            + (f", {len(inheritors)} inheritors" if inheritors else "")
+        )
+    elif total_affected > 10 or len(untracked) > 0:
+        severity = "HIGH"
+        severity_reason = f"{total_affected} affected nodes"
+        if untracked:
+            severity_reason += f", {len(untracked)} untracked calls"
+    elif total_affected > 5:
+        severity = "MEDIUM"
+        severity_reason = f"{total_affected} affected nodes"
+    else:
+        severity = "LOW"
+        severity_reason = f"{total_affected} affected nodes"
+
+    # Check for tests
+    has_tests = False
+    node_data = G.nodes.get(node_id, {})
+    node_name = node_data.get("name", "")
+
+    for pred_id in direct_callers:
+        pred_data = G.nodes.get(pred_id, {})
+        pred_name = pred_data.get("name", "")
+        pred_file = pred_data.get("file_path", "")
+        if pred_name.startswith("test_") or "test_" in pred_file:
+            has_tests = True
+            break
+
+    if not has_tests:
+        test_nodes = database.search_nodes(
+            f"test_{node_name}", ctx.graph_db, search_in="name"
+        )
+        has_tests = len(test_nodes) > 0
+
+    # Add severity and test info to impact result
+    impact["severity"] = severity
+    impact["severity_reason"] = severity_reason
+    impact["has_tests"] = has_tests
+
+    # Generate warnings based on severity
+    warnings: list[str] = []
+    if severity == "CRITICAL":
+        warnings.append(
+            f"⚠️ CRITICAL: Changing this node affects {total_affected} nodes. "
+            "Review carefully before proceeding."
+        )
+    elif severity == "HIGH":
+        warnings.append(
+            f"⚠️ HIGH IMPACT: This change affects {total_affected} nodes."
+        )
+    if not has_tests:
+        warnings.append("⚠️ NO TESTS: Consider adding tests before modifying.")
+    if untracked:
+        warnings.append(
+            f"⚠️ UNTRACKED CALLS: {len(untracked)} calls cannot be statically traced."
+        )
+
+    return ToolResponse(success=True, data=impact, warnings=warnings)
+
+
+def _get_proactive_warnings(
+    node_id: str, new_source: str, ctx: LensContext
+) -> list[str]:
+    """
+    Generate proactive warnings before applying a change.
+
+    Warnings:
+    - high_impact: If node has >10 direct callers
+    - no_tests: If no test functions call this node
+    - signature_change: If function signature differs (detected by validator)
+    - circular_dependency: If node is part of a circular import
+    """
+    warnings: list[str] = []
+    G = ctx.get_graph()
+
+    if node_id not in G:
+        return warnings
+
+    # 1. High impact warning (>10 callers)
+    direct_callers = list(G.predecessors(node_id))
+    caller_count = len(direct_callers)
+    if caller_count > 10:
+        warnings.append(
+            f"⚠️ HIGH IMPACT: This node has {caller_count} direct callers. "
+            "Changes may affect many parts of the codebase."
+        )
+    elif caller_count > 5:
+        warnings.append(
+            f"⚠️ MODERATE IMPACT: This node has {caller_count} direct callers."
+        )
+
+    # 2. No tests warning
+    has_tests = False
+    node_data = G.nodes.get(node_id, {})
+    node_name = node_data.get("name", "")
+
+    for pred_id in direct_callers:
+        pred_data = G.nodes.get(pred_id, {})
+        pred_name = pred_data.get("name", "")
+        pred_file = pred_data.get("file_path", "")
+        if pred_name.startswith("test_") or "test_" in pred_file:
+            has_tests = True
+            break
+
+    # Also check by naming convention
+    if not has_tests:
+        test_nodes = database.search_nodes(
+            f"test_{node_name}", ctx.graph_db, search_in="name"
+        )
+        has_tests = len(test_nodes) > 0
+
+    if not has_tests:
+        warnings.append(
+            "⚠️ NO TESTS: No test functions found for this node. "
+            "Consider adding tests before modifying."
+        )
+
+    # 3. Circular import warning
+    cycles = graph.detect_circular_imports(G)
+    node_module = node_id.rsplit(".", 1)[0] if "." in node_id else node_id
+    for cycle in cycles:
+        if node_module in cycle:
+            warnings.append(
+                f"⚠️ CIRCULAR DEPENDENCY: This node is part of a circular import: "
+                f"{' → '.join(cycle)}"
+            )
+            break
+
+    return warnings
 
 
 def _handle_update_node(params: dict, ctx: LensContext) -> ToolResponse:
@@ -467,15 +772,23 @@ def _handle_update_node(params: dict, ctx: LensContext) -> ToolResponse:
             error=f"Node not found: {node_id}",
         )
 
+    # Get proactive warnings BEFORE making changes
+    proactive_warnings = _get_proactive_warnings(node_id, new_source, ctx)
+
     # Three-level validation
     validation = validate_full(new_source, node)
     if not validation.valid:
+        # Include proactive warnings even on validation failure
+        all_warnings = proactive_warnings + validation.warnings
         return ToolResponse(
             success=False,
             error=validation.errors[0] if validation.errors else "Validation failed.",
             hint="Fix the issues and try again.",
-            warnings=validation.warnings,
+            warnings=all_warnings,
         )
+
+    # Combine all warnings
+    all_warnings = proactive_warnings + validation.warnings
 
     # Buffer the patch
     file_path = ctx.project_root / node.file_path
@@ -486,7 +799,7 @@ def _handle_update_node(params: dict, ctx: LensContext) -> ToolResponse:
         ctx.patch_buffer.flush()
     except PatchError as e:
         ctx.patch_buffer.discard()
-        return ToolResponse(success=False, error=str(e))
+        return ToolResponse(success=False, error=str(e), warnings=all_warnings)
 
     # Compute impact BEFORE reparse (graph still has old edges)
     G = ctx.get_graph()
@@ -514,8 +827,63 @@ def _handle_update_node(params: dict, ctx: LensContext) -> ToolResponse:
     return ToolResponse(
         success=True,
         data={"node_id": node_id, "new_hash": new_hash},
-        warnings=validation.warnings,
+        warnings=all_warnings,
         affected_nodes=impact.get("direct_callers", []),
+    )
+
+
+def _handle_validate_change(params: dict, ctx: LensContext) -> ToolResponse:
+    """
+    Dry-run validation: check what would happen without applying changes.
+
+    Returns:
+    - validation: syntax, structure, signature check results
+    - proactive_warnings: high_impact, no_tests, circular_dependency
+    - impact: affected callers, inheritors
+    """
+    node_id = params["node_id"]
+    new_source = params["new_source"]
+
+    node = database.get_node(node_id, ctx.graph_db)
+    if not node:
+        return ToolResponse(
+            success=False,
+            error=f"Node not found: {node_id}",
+        )
+
+    # Get proactive warnings
+    proactive_warnings = _get_proactive_warnings(node_id, new_source, ctx)
+
+    # Three-level validation (does NOT apply changes)
+    validation = validate_full(new_source, node)
+
+    # Get impact analysis
+    G = ctx.get_graph()
+    impact = graph.get_impact_zone(G, node_id, depth=2)
+
+    # Combine all warnings
+    all_warnings = proactive_warnings + validation.warnings
+
+    return ToolResponse(
+        success=True,
+        data={
+            "node_id": node_id,
+            "would_apply": validation.valid,
+            "validation": {
+                "valid": validation.valid,
+                "errors": validation.errors,
+                "warnings": validation.warnings,
+            },
+            "proactive_warnings": proactive_warnings,
+            "impact": {
+                "direct_callers": impact.get("direct_callers", []),
+                "indirect_callers": impact.get("indirect_callers", []),
+                "inheritors": impact.get("inheritors", []),
+                "total_affected": impact.get("total_affected", 0),
+                "untracked_warnings": impact.get("untracked_warnings", []),
+            },
+        },
+        warnings=all_warnings,
     )
 
 
@@ -736,7 +1104,7 @@ def _handle_context(params: dict, ctx: LensContext) -> ToolResponse:
     G = ctx.get_graph()
 
     # Target node info
-    target = {
+    target: dict[str, Any] = {
         "id": node.id,
         "type": node.type.value,
         "name": node.name,
@@ -748,6 +1116,17 @@ def _handle_context(params: dict, ctx: LensContext) -> ToolResponse:
         "docstring": node.docstring,
         "signature": node.signature,
     }
+
+    # Include annotations if present
+    if node.is_annotated:
+        target["annotation"] = {
+            "summary": node.summary,
+            "role": node.role.value if node.role else None,
+            "side_effects": node.side_effects,
+            "semantic_inputs": node.semantic_inputs,
+            "semantic_outputs": node.semantic_outputs,
+            "is_stale": node.is_annotation_stale,
+        }
 
     # Callers (who depends on this node)
     callers: list[dict] = []
@@ -1333,3 +1712,419 @@ def _handle_dependencies(params: dict, ctx: LensContext) -> ToolResponse:
                 "third_party_count": len(third_party_deps),
             },
         )
+
+
+def _handle_dead_code(params: dict, ctx: LensContext) -> ToolResponse:
+    """Find potentially dead code not reachable from entry points."""
+    G = ctx.get_graph()
+
+    # Auto-detect entry points if not provided
+    entry_points: list[str] = params.get("entry_points", [])
+
+    if not entry_points:
+        # Auto-detect common entry points
+        for nid, data in G.nodes(data=True):
+            name = data.get("name", "")
+            node_type = data.get("type", "")
+            file_path = data.get("file_path", "")
+
+            # main() functions
+            if name in ("main", "__main__"):
+                entry_points.append(nid)
+            # Test functions
+            elif name.startswith("test_") or file_path.startswith("tests/"):
+                entry_points.append(nid)
+            # CLI entry points (click, typer, argparse patterns)
+            elif name in ("cli", "app", "run", "main_cli"):
+                entry_points.append(nid)
+            # API handlers (FastAPI, Flask patterns)
+            elif node_type == "function" and any(
+                pattern in name
+                for pattern in ["_handler", "_endpoint", "_view", "_route"]
+            ):
+                entry_points.append(nid)
+            # Module-level blocks (might have side effects)
+            elif node_type == "block":
+                entry_points.append(nid)
+
+    # Find dead code
+    dead_code = graph.find_dead_code(G, entry_points)
+
+    # Group by file for easier review
+    dead_by_file: dict[str, list[dict]] = {}
+    for nid in dead_code:
+        node_data = G.nodes.get(nid, {})
+        file_path = node_data.get("file_path", "unknown")
+        if file_path not in dead_by_file:
+            dead_by_file[file_path] = []
+        dead_by_file[file_path].append({
+            "id": nid,
+            "name": node_data.get("name", ""),
+            "type": node_data.get("type", ""),
+            "start_line": node_data.get("start_line", 0),
+        })
+
+    return ToolResponse(
+        success=True,
+        data={
+            "dead_code": dead_code,
+            "count": len(dead_code),
+            "by_file": dead_by_file,
+            "entry_points_used": len(entry_points),
+        },
+        warnings=[
+            "Dead code detection has limitations: dynamically called code may be "
+            "reported as dead. Review before deleting."
+        ] if dead_code else [],
+    )
+
+
+def _handle_find_usages(params: dict, ctx: LensContext) -> ToolResponse:
+    """Find all usages of a node across the codebase."""
+    node_id = params["node_id"]
+    include_tests = params.get("include_tests", True)
+
+    node = database.get_node(node_id, ctx.graph_db)
+    if not node:
+        return ToolResponse(
+            success=False,
+            error=f"Node not found: {node_id}",
+        )
+
+    G = ctx.get_graph()
+
+    # Find all callers/users via graph edges
+    usages: list[dict] = []
+    for pred_id in G.predecessors(node_id):
+        pred_data = G.nodes.get(pred_id, {})
+        pred_file = pred_data.get("file_path", "")
+        pred_name = pred_data.get("name", "")
+
+        # Skip tests if requested
+        if not include_tests:
+            if pred_name.startswith("test_") or "test_" in pred_file:
+                continue
+
+        edge_data = G.edges.get((pred_id, node_id), {})
+        usages.append({
+            "id": pred_id,
+            "name": pred_name,
+            "type": pred_data.get("type", ""),
+            "file_path": pred_file,
+            "start_line": pred_data.get("start_line", 0),
+            "edge_type": edge_data.get("type", "unknown"),
+            "is_test": pred_name.startswith("test_") or "test_" in pred_file,
+        })
+
+    # Group by usage type
+    callers = [u for u in usages if u["edge_type"] == "calls"]
+    importers = [u for u in usages if u["edge_type"] == "imports"]
+    inheritors = [u for u in usages if u["edge_type"] == "inherits"]
+    other = [u for u in usages if u["edge_type"] not in ("calls", "imports", "inherits")]
+
+    return ToolResponse(
+        success=True,
+        data={
+            "node_id": node_id,
+            "node_name": node.name,
+            "total_usages": len(usages),
+            "callers": callers,
+            "caller_count": len(callers),
+            "importers": importers,
+            "importer_count": len(importers),
+            "inheritors": inheritors,
+            "inheritor_count": len(inheritors),
+            "other": other,
+            "test_usages": len([u for u in usages if u["is_test"]]),
+        },
+    )
+
+
+# -- Semantic Annotation Handlers --
+
+
+def _handle_annotate(params: dict, ctx: LensContext) -> ToolResponse:
+    """Generate suggested annotations for a node based on code analysis."""
+    node_id = params["node_id"]
+
+    node = database.get_node(node_id, ctx.graph_db)
+    if not node:
+        return ToolResponse(
+            success=False,
+            error=f"Node not found: {node_id}",
+        )
+
+    G = ctx.get_graph()
+
+    # Analyze the code to suggest annotations
+    suggested_role = _detect_role(node, G)
+    detected_side_effects = _detect_side_effects(node)
+    detected_inputs, detected_outputs = _detect_io_semantics(node)
+
+    # Get context for better understanding
+    callers = []
+    callees = []
+
+    if node_id in G:
+        for pred_id in list(G.predecessors(node_id))[:5]:
+            pred_data = G.nodes.get(pred_id, {})
+            callers.append({
+                "id": pred_id,
+                "name": pred_data.get("name", ""),
+                "type": pred_data.get("type", ""),
+            })
+
+        for succ_id in list(G.successors(node_id))[:5]:
+            succ_data = G.nodes.get(succ_id, {})
+            callees.append({
+                "id": succ_id,
+                "name": succ_data.get("name", ""),
+                "type": succ_data.get("type", ""),
+            })
+
+    # Current annotation status
+    annotation_status = {
+        "is_annotated": node.is_annotated,
+        "is_stale": node.is_annotation_stale,
+        "current_summary": node.summary,
+        "current_role": node.role.value if node.role else None,
+    }
+
+    return ToolResponse(
+        success=True,
+        data={
+            "node_id": node_id,
+            "name": node.name,
+            "type": node.type.value,
+            "file_path": node.file_path,
+            "source_code": node.source_code,
+            "signature": node.signature,
+            "docstring": node.docstring,
+            "suggested_role": suggested_role,
+            "detected_side_effects": detected_side_effects,
+            "detected_inputs": detected_inputs,
+            "detected_outputs": detected_outputs,
+            "callers": callers,
+            "callees": callees,
+            "annotation_status": annotation_status,
+        },
+    )
+
+
+def _detect_role(node, graph) -> str:
+    """Detect semantic role based on code patterns."""
+    name = node.name.lower()
+    source = node.source_code.lower()
+
+    # Test function
+    if name.startswith("test_") or "_test" in name:
+        return "test"
+
+    # Validator patterns
+    if any(p in name for p in ["validate", "check", "verify", "is_", "has_"]):
+        return "validator"
+
+    # Accessor patterns
+    if name.startswith("get_") or name.startswith("set_"):
+        return "accessor"
+
+    # Factory patterns
+    if any(p in name for p in ["create_", "make_", "build_", "new_"]):
+        return "factory"
+
+    # Handler patterns
+    if any(p in name for p in ["handle_", "_handler", "on_", "_callback"]):
+        return "handler"
+
+    # I/O patterns
+    io_keywords = ["open(", "read(", "write(", "requests.", "http", "socket", "cursor"]
+    if any(kw in source for kw in io_keywords):
+        return "io"
+
+    # Transformer patterns (has return and parameters)
+    if node.signature and "->" in node.signature and "(" in node.signature:
+        params = node.signature.split("(")[1].split(")")[0]
+        if params and "self" not in params.split(",")[0]:
+            return "transformer"
+
+    # Orchestrator (calls many other functions)
+    if node.id in graph:
+        callees = list(graph.successors(node.id))
+        if len(callees) > 5:
+            return "orchestrator"
+
+    # Pure function (no side effects detected)
+    if not _detect_side_effects(node):
+        return "pure"
+
+    return "utility"
+
+
+def _detect_side_effects(node) -> list[str]:
+    """Detect potential side effects from code patterns."""
+    source = node.source_code.lower()
+    effects: list[str] = []
+
+    # File I/O
+    if any(p in source for p in ["open(", "write(", "writelines(", "pathlib"]):
+        effects.append("writes_file")
+    if any(p in source for p in ["read(", "readlines(", "json.load"]):
+        effects.append("reads_file")
+
+    # Network I/O
+    if any(p in source for p in ["requests.", "urllib", "http", "socket", "aiohttp"]):
+        effects.append("network_io")
+
+    # Database
+    if any(p in source for p in ["cursor", "execute(", "commit(", "session."]):
+        effects.append("database_io")
+
+    # Logging/printing
+    if any(p in source for p in ["print(", "logging.", "logger."]):
+        effects.append("logging")
+
+    # State modification
+    if any(p in source for p in ["self.", "global ", "nonlocal "]):
+        if "=" in source:
+            effects.append("modifies_state")
+
+    return effects
+
+
+def _detect_io_semantics(node) -> tuple[list[str], list[str]]:
+    """Detect semantic input/output types from signature and docstring."""
+    inputs: list[str] = []
+    outputs: list[str] = []
+
+    sig = node.signature or ""
+    doc = node.docstring or ""
+    name = node.name.lower()
+
+    # Input detection from parameter names
+    param_patterns = {
+        "user": "user_input",
+        "config": "config",
+        "request": "request",
+        "data": "data",
+        "path": "file_path",
+        "url": "url",
+        "query": "query",
+        "id": "identifier",
+    }
+
+    for pattern, semantic in param_patterns.items():
+        if pattern in sig.lower():
+            inputs.append(semantic)
+
+    # Output detection from return type and name
+    if "-> bool" in sig or name.startswith("is_") or name.startswith("has_"):
+        outputs.append("boolean")
+    if "-> str" in sig:
+        outputs.append("string")
+    if "-> list" in sig or "-> List" in sig:
+        outputs.append("list")
+    if "-> dict" in sig or "-> Dict" in sig:
+        outputs.append("dict")
+    if "error" in name or "exception" in doc.lower():
+        outputs.append("error")
+    if "valid" in name:
+        outputs.append("validation_result")
+
+    return inputs, outputs
+
+
+def _handle_save_annotation(params: dict, ctx: LensContext) -> ToolResponse:
+    """Save semantic annotations to a node."""
+    node_id = params["node_id"]
+
+    node = database.get_node(node_id, ctx.graph_db)
+    if not node:
+        return ToolResponse(
+            success=False,
+            error=f"Node not found: {node_id}",
+        )
+
+    success = database.save_annotation(
+        node_id=node_id,
+        db_path=ctx.graph_db,
+        summary=params.get("summary"),
+        role=params.get("role"),
+        side_effects=params.get("side_effects"),
+        semantic_inputs=params.get("semantic_inputs"),
+        semantic_outputs=params.get("semantic_outputs"),
+    )
+
+    if not success:
+        return ToolResponse(
+            success=False,
+            error=f"Failed to save annotation for {node_id}",
+        )
+
+    return ToolResponse(
+        success=True,
+        data={
+            "node_id": node_id,
+            "saved": True,
+            "summary": params.get("summary"),
+            "role": params.get("role"),
+        },
+    )
+
+
+def _handle_annotate_batch(params: dict, ctx: LensContext) -> ToolResponse:
+    """Get nodes that need annotation."""
+    type_filter = params.get("type_filter")
+    file_path = params.get("file_path")
+    unannotated_only = params.get("unannotated_only", True)
+    stale_only = params.get("stale_only", False)
+    limit = params.get("limit", 10)
+
+    # Get all nodes
+    nodes = database.get_nodes(
+        ctx.graph_db,
+        type_filter=type_filter,
+        file_filter=file_path,
+    )
+
+    # Filter to annotatable types
+    nodes = [n for n in nodes if n.type.value in ("function", "method", "class")]
+
+    # Apply filters
+    if stale_only:
+        nodes = [n for n in nodes if n.is_annotation_stale]
+    elif unannotated_only:
+        nodes = [n for n in nodes if not n.is_annotated]
+
+    # Limit results
+    nodes = nodes[:limit]
+
+    return ToolResponse(
+        success=True,
+        data={
+            "nodes": [
+                {
+                    "id": n.id,
+                    "name": n.name,
+                    "type": n.type.value,
+                    "file_path": n.file_path,
+                    "signature": n.signature,
+                    "is_annotated": n.is_annotated,
+                    "is_stale": n.is_annotation_stale,
+                }
+                for n in nodes
+            ],
+            "count": len(nodes),
+            "filter_applied": {
+                "type": type_filter,
+                "file_path": file_path,
+                "unannotated_only": unannotated_only,
+                "stale_only": stale_only,
+            },
+        },
+    )
+
+
+def _handle_annotation_stats(params: dict, ctx: LensContext) -> ToolResponse:
+    """Get annotation coverage statistics."""
+    stats = database.get_annotation_stats(ctx.graph_db)
+    return ToolResponse(success=True, data=stats)
