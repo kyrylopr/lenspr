@@ -272,16 +272,37 @@ class CodeGraphVisitor(ast.NodeVisitor):
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         module = node.module or ""
+
+        # Handle relative imports (from . import x, from .. import y)
+        if node.level > 0:
+            # Resolve relative path from current module
+            # e.g., from . import storage in backend.benchmarks.router
+            # → backend.benchmarks.storage
+            parts = self.module_id.split(".")
+            # Go up 'level' directories (level=1 means same package)
+            if len(parts) >= node.level:
+                base = ".".join(parts[:-node.level]) if node.level < len(parts) else ""
+                if module:
+                    module = f"{base}.{module}" if base else module
+                else:
+                    module = base
+            # If level > len(parts), we can't resolve - keep as-is
+
         for alias in node.names:
             if alias.name == "*":
                 self.import_table.add_star_import(module)
             else:
+                # For relative imports, the target is module.name or just name if module is empty
+                if module:
+                    target = f"{module}.{alias.name}"
+                else:
+                    target = alias.name
                 self.import_table.add_import(module, alias.name, alias.asname)
                 self.edges.append(
                     Edge(
                         id=_edge_id(),
                         from_node=self.module_id,
-                        to_node=f"{module}.{alias.name}",
+                        to_node=target,
                         type=EdgeType.IMPORTS,
                         line_number=node.lineno,
                         confidence=EdgeConfidence.RESOLVED,

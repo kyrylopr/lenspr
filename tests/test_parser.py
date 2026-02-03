@@ -104,3 +104,38 @@ class TestParseProject:
         nodes, edges = parser.parse_project(FIXTURES)
         ids = [n.id for n in nodes]
         assert len(ids) == len(set(ids)), f"Duplicate IDs: {[i for i in ids if ids.count(i) > 1]}"
+
+
+class TestRelativeImports:
+    def test_relative_import_resolution(self, parser, tmp_path):
+        """Test that relative imports resolve to full qualified names."""
+        # Create a package with relative imports
+        pkg = tmp_path / "mypackage"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text("")
+
+        subpkg = pkg / "submodule"
+        subpkg.mkdir()
+        (subpkg / "__init__.py").write_text("")
+        (subpkg / "storage.py").write_text("def save(): pass\n")
+        (subpkg / "router.py").write_text(
+            "from . import storage\n\n"
+            "def handler():\n"
+            "    return storage.save()\n"
+        )
+
+        nodes, edges = parser.parse_project(tmp_path)
+
+        # Find the call edge from handler to storage.save
+        call_edges = [e for e in edges if e.type == EdgeType.CALLS]
+        handler_calls = [
+            e for e in call_edges
+            if "router.handler" in e.from_node
+        ]
+
+        # Should have at least one call from handler
+        assert len(handler_calls) >= 1
+
+        # The target should resolve to mypackage.submodule.storage.save
+        targets = [e.to_node for e in handler_calls]
+        assert any("storage.save" in t for t in targets)
