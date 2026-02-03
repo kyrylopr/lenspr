@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Optional
 
 from lenspr.models import Change
 
@@ -14,8 +13,8 @@ from lenspr.models import Change
 def record_change(
     node_id: str,
     action: str,
-    old_source: Optional[str],
-    new_source: Optional[str],
+    old_source: str | None,
+    new_source: str | None,
     old_hash: str,
     new_hash: str,
     affected_nodes: list[str],
@@ -27,7 +26,7 @@ def record_change(
 
     Returns the change ID.
     """
-    timestamp = datetime.now(timezone.utc).isoformat()
+    timestamp = datetime.now(UTC).isoformat()
 
     conn = sqlite3.connect(str(db_path))
     try:
@@ -56,8 +55,8 @@ def record_change(
 
 def get_history(
     db_path: Path,
-    node_id: Optional[str] = None,
-    since: Optional[str] = None,
+    node_id: str | None = None,
+    since: str | None = None,
     limit: int = 50,
 ) -> list[Change]:
     """
@@ -105,7 +104,7 @@ def get_history(
         conn.close()
 
 
-def rollback(change_id: int, db_path: Path) -> Optional[str]:
+def rollback(change_id: int, db_path: Path) -> str | None:
     """
     Revert a specific change by restoring old_source.
 
@@ -123,6 +122,7 @@ def rollback(change_id: int, db_path: Path) -> Optional[str]:
         if not row:
             return None
 
-        return row["old_source"]
+        result: str | None = row["old_source"]
+        return result
     finally:
         conn.close()

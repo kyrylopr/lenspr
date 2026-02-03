@@ -22,9 +22,8 @@ Usage:
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Optional
 
 from lenspr.context import LensContext
 from lenspr.models import (
@@ -35,13 +34,15 @@ from lenspr.models import (
     NodeNotFoundError,
     NotInitializedError,
     SyncResult,
-    ToolResponse,
+)
+from lenspr.models import (
+    ToolResponse as ToolResponse,
 )
 
 __version__ = "0.1.0"
 
 # Module-level context — set by init()
-_ctx: Optional[LensContext] = None
+_ctx: LensContext | None = None
 
 
 def _require_ctx() -> LensContext:
@@ -86,8 +87,8 @@ def init(project_path: str, force: bool = False) -> LensContext:
     # Write config
     config = {
         "version": __version__,
-        "initialized_at": datetime.now(timezone.utc).isoformat(),
-        "last_sync": datetime.now(timezone.utc).isoformat(),
+        "initialized_at": datetime.now(UTC).isoformat(),
+        "last_sync": datetime.now(UTC).isoformat(),
         "exclude_patterns": [
             "__pycache__", "*.pyc", ".git", "venv", ".venv", "node_modules",
         ],
@@ -118,15 +119,15 @@ def get_system_prompt() -> str:
 
     prompt_template = _load_prompt_template()
 
-    G = ctx.get_graph()
+    g = ctx.get_graph()
     from lenspr.graph import get_structure
-    structure = get_structure(G)
+    structure = get_structure(g)
 
     # Format structure as readable text
     structure_text = _format_structure(structure)
 
-    node_count = G.number_of_nodes()
-    edge_count = G.number_of_edges()
+    node_count = g.number_of_nodes()
+    edge_count = g.number_of_edges()
     file_count = len(structure)
 
     return prompt_template.format(
@@ -165,7 +166,7 @@ def handle_tool(name: str, parameters: dict) -> dict:
 # -- Direct access functions --
 
 
-def list_nodes(type: Optional[str] = None, file: Optional[str] = None) -> list[Node]:
+def list_nodes(type: str | None = None, file: str | None = None) -> list[Node]:
     """List nodes with optional filters."""
     ctx = _require_ctx()
     from lenspr.database import get_nodes
@@ -192,12 +193,12 @@ def get_connections(node_id: str, direction: str = "both") -> list[Edge]:
 def check_impact(node_id: str, depth: int = 2) -> dict:
     """Analyze impact of changing a node."""
     ctx = _require_ctx()
-    G = ctx.get_graph()
+    g = ctx.get_graph()
     from lenspr.graph import get_impact_zone
-    return get_impact_zone(G, node_id, depth)
+    return get_impact_zone(g, node_id, depth)
 
 
-def get_history(node_id: Optional[str] = None) -> list[Change]:
+def get_history(node_id: str | None = None) -> list[Change]:
     """Get change history."""
     ctx = _require_ctx()
     from lenspr.tracker import get_history as tracker_get_history

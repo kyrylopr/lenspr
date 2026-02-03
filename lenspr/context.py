@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC
 from pathlib import Path
-from typing import Optional
 
 import networkx as nx
 
-from lenspr import database, graph as graph_ops
-from lenspr.models import Edge, Node, SyncResult
+from lenspr import database
+from lenspr import graph as graph_ops
+from lenspr.models import SyncResult
 from lenspr.parsers.python_parser import PythonParser
 from lenspr.patcher import PatchBuffer
 
@@ -25,7 +26,7 @@ class LensContext:
     - Parser instance
     """
 
-    def __init__(self, project_root: Path, lens_dir: Optional[Path] = None) -> None:
+    def __init__(self, project_root: Path, lens_dir: Path | None = None) -> None:
         self.project_root = project_root.resolve()
         self.lens_dir = lens_dir or (self.project_root / ".lens")
         self.graph_db = self.lens_dir / "graph.db"
@@ -34,7 +35,7 @@ class LensContext:
         self.config_path = self.lens_dir / "config.json"
         self.patch_buffer = PatchBuffer()
 
-        self._graph: Optional[nx.DiGraph] = None
+        self._graph: nx.DiGraph | None = None
         self._parser = PythonParser()
 
     @property
@@ -114,12 +115,12 @@ class LensContext:
 
     def _update_config(self) -> None:
         """Update config.json with current state."""
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         config = {}
         if self.config_path.exists():
             config = json.loads(self.config_path.read_text())
 
-        config["last_sync"] = datetime.now(timezone.utc).isoformat()
+        config["last_sync"] = datetime.now(UTC).isoformat()
 
         self.config_path.write_text(json.dumps(config, indent=2))

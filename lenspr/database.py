@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import json
 import sqlite3
 from pathlib import Path
-from typing import Optional
 
-from lenspr.models import Change, Edge, Node
+from lenspr.models import Edge, Node
 
 # -- Schema definitions --
 
@@ -145,7 +143,7 @@ def load_graph(db_path: Path) -> tuple[list[Node], list[Edge]]:
     return nodes, edges
 
 
-def get_node(node_id: str, db_path: Path) -> Optional[Node]:
+def get_node(node_id: str, db_path: Path) -> Node | None:
     """Retrieve a single node by ID."""
     with _connect(db_path) as conn:
         row = conn.execute("SELECT * FROM nodes WHERE id = ?", (node_id,)).fetchone()
@@ -156,9 +154,9 @@ def get_node(node_id: str, db_path: Path) -> Optional[Node]:
 
 def get_nodes(
     db_path: Path,
-    type_filter: Optional[str] = None,
-    file_filter: Optional[str] = None,
-    name_filter: Optional[str] = None,
+    type_filter: str | None = None,
+    file_filter: str | None = None,
+    name_filter: str | None = None,
 ) -> list[Node]:
     """List nodes with optional filters."""
     query = "SELECT * FROM nodes WHERE 1=1"
@@ -256,7 +254,7 @@ def search_nodes(query: str, db_path: Path, search_in: str = "all") -> list[Node
 # -- Resolution cache --
 
 def cache_resolution(
-    file_path: str, line: int, column: int, node_id: Optional[str],
+    file_path: str, line: int, column: int, node_id: str | None,
     confidence: str, db_path: Path
 ) -> None:
     """Cache a name resolution result."""
@@ -271,11 +269,12 @@ def cache_resolution(
 
 def get_cached_resolution(
     file_path: str, line: int, column: int, db_path: Path
-) -> Optional[tuple[Optional[str], str]]:
+) -> tuple[str | None, str] | None:
     """Get a cached resolution result. Returns (node_id, confidence) or None."""
     with _connect(db_path) as conn:
         row = conn.execute(
-            "SELECT node_id, confidence FROM resolutions WHERE file_path = ? AND line = ? AND column = ?",
+            "SELECT node_id, confidence FROM resolutions "
+            "WHERE file_path = ? AND line = ? AND column = ?",
             (file_path, line, column),
         ).fetchone()
         if row:

@@ -5,7 +5,6 @@ from __future__ import annotations
 import ast
 from collections import defaultdict
 from pathlib import Path
-from typing import Optional
 
 from lenspr.models import Node, Patch, PatchError
 
@@ -148,7 +147,7 @@ class PatchBuffer:
         self._pending.clear()
         return modified
 
-    def discard(self, file_path: Optional[Path] = None) -> None:
+    def discard(self, file_path: Path | None = None) -> None:
         """Discard pending patches, optionally for a specific file only."""
         if file_path:
             self._pending.pop(file_path, None)

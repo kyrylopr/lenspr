@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Optional
-
 import networkx as nx
 
 from lenspr.models import Edge, EdgeType, Node
@@ -16,7 +14,7 @@ def build_graph(nodes: list[Node], edges: list[Edge]) -> nx.DiGraph:
     Node attributes include all Node fields.
     Edge attributes include all Edge fields.
     """
-    G = nx.DiGraph()
+    G: nx.DiGraph = nx.DiGraph()
 
     for node in nodes:
         G.add_node(node.id, **node.to_dict())
@@ -162,7 +160,8 @@ def find_path(G: nx.DiGraph, from_id: str, to_id: str) -> list[str]:
 
 def get_subgraph(G: nx.DiGraph, node_ids: set[str]) -> nx.DiGraph:
     """Extract subgraph containing only specified nodes and edges between them."""
-    return G.subgraph(node_ids).copy()
+    subgraph: nx.DiGraph = G.subgraph(node_ids).copy()  # type: ignore[assignment]
+    return subgraph
 
 
 def detect_circular_imports(G: nx.DiGraph) -> list[list[str]]:
@@ -205,25 +204,32 @@ def get_structure(G: nx.DiGraph, max_depth: int = 2) -> dict:
         elif node_type == "class":
             if file_path in structure:
                 methods = [
-                    {"id": mid, "name": mdata.get("name", ""), "signature": mdata.get("signature", "")}
+                    {
+                        "id": mid,
+                        "name": mdata.get("name", ""),
+                        "signature": mdata.get("signature", ""),
+                    }
                     for mid, mdata in G.nodes(data=True)
                     if mdata.get("type") == "method" and mid.startswith(nid + ".")
                 ]
-                structure.setdefault(file_path, {"module": "", "classes": [], "functions": [], "blocks": []})
+                default = {"module": "", "classes": [], "functions": [], "blocks": []}
+                structure.setdefault(file_path, default)
                 structure[file_path]["classes"].append({
                     "id": nid,
                     "name": data.get("name", ""),
                     "methods": methods if max_depth > 1 else [],
                 })
         elif node_type == "function":
-            structure.setdefault(file_path, {"module": "", "classes": [], "functions": [], "blocks": []})
+            default = {"module": "", "classes": [], "functions": [], "blocks": []}
+            structure.setdefault(file_path, default)
             structure[file_path]["functions"].append({
                 "id": nid,
                 "name": data.get("name", ""),
                 "signature": data.get("signature", ""),
             })
         elif node_type == "block":
-            structure.setdefault(file_path, {"module": "", "classes": [], "functions": [], "blocks": []})
+            default = {"module": "", "classes": [], "functions": [], "blocks": []}
+            structure.setdefault(file_path, default)
             structure[file_path]["blocks"].append({
                 "id": nid,
                 "name": data.get("name", ""),
