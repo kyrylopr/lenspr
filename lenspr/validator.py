@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from dataclasses import dataclass, field
 
-from lenspr.models import Node, NodeType
+from lenspr.models import Node
 
 
 @dataclass
@@ -55,22 +55,22 @@ def validate_structure(new_source: str, old_node: Node) -> ValidationResult:
 
     first = body[0]
 
-    # Check type match
-    expected_types: dict[NodeType, tuple[type, ...]] = {
-        NodeType.FUNCTION: (ast.FunctionDef, ast.AsyncFunctionDef),
-        NodeType.METHOD: (ast.FunctionDef, ast.AsyncFunctionDef),
-        NodeType.CLASS: (ast.ClassDef,),
+    # Check type match using string values for cross-Python-version compatibility
+    expected_ast_types: dict[str, tuple[type, ...]] = {
+        "function": (ast.FunctionDef, ast.AsyncFunctionDef),
+        "method": (ast.FunctionDef, ast.AsyncFunctionDef),
+        "class": (ast.ClassDef,),
     }
 
-    if old_node.type in expected_types:
-        allowed = expected_types[old_node.type]
+    type_str = old_node.type.value
+    if type_str in expected_ast_types:
+        allowed = expected_ast_types[type_str]
         if not isinstance(first, allowed):
-            type_name = old_node.type.value
             actual = type(first).__name__
             return ValidationResult(
                 valid=False,
                 errors=[
-                    f"Node '{old_node.id}' is a {type_name}, "
+                    f"Node '{old_node.id}' is a {type_str}, "
                     f"but new source is {actual}."
                 ],
             )
@@ -94,7 +94,7 @@ def validate_signature(new_source: str, old_node: Node) -> ValidationResult:
     """
     result = ValidationResult(valid=True)
 
-    if old_node.type not in (NodeType.FUNCTION, NodeType.METHOD):
+    if old_node.type.value not in ("function", "method"):
         return result
 
     try:
