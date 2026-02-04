@@ -26,10 +26,11 @@ from lenspr.tools.explain import (
     handle_explain,
 )
 from lenspr.tools.arch import (
-    handle_architecture,
+    handle_class_metrics,
+    handle_compare_classes,
     handle_components,
-    handle_explain_architecture,
-    handle_patterns,
+    handle_largest_classes,
+    handle_project_metrics,
 )
 from lenspr.tools.git import (
     handle_blame,
@@ -97,11 +98,12 @@ __all__ = [
     "handle_node_history",
     "handle_commit_scope",
     "handle_recent_changes",
-    # Architecture
-    "handle_architecture",
-    "handle_patterns",
+    # Architecture Metrics
+    "handle_class_metrics",
+    "handle_project_metrics",
+    "handle_largest_classes",
+    "handle_compare_classes",
     "handle_components",
-    "handle_explain_architecture",
 ]
 
 
@@ -139,11 +141,12 @@ _HANDLER_MAP: dict[str, tuple[str, str]] = {
     "lens_recent_changes": ("lenspr.tools.git", "handle_recent_changes"),
     # Explain
     "lens_explain": ("lenspr.tools.explain", "handle_explain"),
-    # Architecture
-    "lens_architecture": ("lenspr.tools.arch", "handle_architecture"),
-    "lens_patterns": ("lenspr.tools.arch", "handle_patterns"),
+    # Architecture Metrics
+    "lens_class_metrics": ("lenspr.tools.arch", "handle_class_metrics"),
+    "lens_project_metrics": ("lenspr.tools.arch", "handle_project_metrics"),
+    "lens_largest_classes": ("lenspr.tools.arch", "handle_largest_classes"),
+    "lens_compare_classes": ("lenspr.tools.arch", "handle_compare_classes"),
     "lens_components": ("lenspr.tools.arch", "handle_components"),
-    "lens_explain_architecture": ("lenspr.tools.arch", "handle_explain_architecture"),
 }
 
 # Hot-reload mode: when True, handlers are resolved dynamically each call

@@ -631,13 +631,32 @@ LENS_TOOLS: list[dict[str, Any]] = [
             "required": ["annotations"],
         },
     },
-    # -- Architecture Analysis Tools --
+    # -- Architecture Metrics Tools (raw data, Claude decides interpretation) --
     {
-        "name": "lens_architecture",
+        "name": "lens_class_metrics",
         "description": (
-            "Analyze codebase architecture: detect patterns (Facade, Strategy, Factory), "
-            "identify components with cohesion metrics, and get architectural recommendations. "
-            "Use this to understand high-level code organization."
+            "Get pre-computed metrics for a class: method count, lines, "
+            "public/private methods, dependencies, internal calls, method prefixes, "
+            "and percentile rank compared to other classes. "
+            "Metrics are computed during init/sync - this is O(1) read."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "node_id": {
+                    "type": "string",
+                    "description": "The class node ID to get metrics for.",
+                },
+            },
+            "required": ["node_id"],
+        },
+    },
+    {
+        "name": "lens_project_metrics",
+        "description": (
+            "Get project-wide class metrics: total classes, avg/median/min/max methods, "
+            "and percentiles (p90, p95). Use this to understand the distribution "
+            "before interpreting individual class metrics."
         ),
         "input_schema": {
             "type": "object",
@@ -645,36 +664,46 @@ LENS_TOOLS: list[dict[str, Any]] = [
         },
     },
     {
-        "name": "lens_patterns",
+        "name": "lens_largest_classes",
         "description": (
-            "Detect architectural patterns in the codebase. "
-            "Patterns: Facade, Strategy, Factory, Singleton, Decorator, Repository, Service. "
-            "Returns pattern type, primary node, confidence score, and evidence."
+            "Get classes sorted by method count (descending). "
+            "Returns the N largest classes with their metrics. "
+            "Use this to identify potentially complex classes for review."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "pattern": {
-                    "type": "string",
-                    "enum": [
-                        "facade", "strategy", "factory", "singleton",
-                        "decorator", "repository", "service"
-                    ],
-                    "description": "Filter by specific pattern type.",
-                },
-                "min_confidence": {
-                    "type": "number",
-                    "description": "Minimum confidence threshold (0.0-1.0). Default: 0.5.",
+                "limit": {
+                    "type": "integer",
+                    "description": "Max classes to return. Default: 10.",
                 },
             },
+        },
+    },
+    {
+        "name": "lens_compare_classes",
+        "description": (
+            "Compare metrics between multiple classes. "
+            "Returns metrics side-by-side for easy comparison."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "node_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of class node IDs to compare.",
+                },
+            },
+            "required": ["node_ids"],
         },
     },
     {
         "name": "lens_components",
         "description": (
             "Analyze components (directory-based modules) with cohesion metrics. "
-            "Components are directories containing related code. Returns cohesion score, "
-            "public API nodes, and internal nodes."
+            "Components are directories containing related code. Returns cohesion score "
+            "(internal edges / total edges), public API nodes, and internal nodes."
         ),
         "input_schema": {
             "type": "object",
@@ -688,25 +717,6 @@ LENS_TOOLS: list[dict[str, Any]] = [
                     "description": "Minimum cohesion threshold (0.0-1.0). Default: 0.0.",
                 },
             },
-        },
-    },
-    {
-        "name": "lens_explain_architecture",
-        "description": (
-            "Explain why a class/function has its current architecture. "
-            "For classes flagged as 'God Objects', explains whether the pattern is "
-            "intentional (Facade, Service) or needs refactoring. "
-            "USE THIS before suggesting to split large classes."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "node_id": {
-                    "type": "string",
-                    "description": "The class or function to analyze.",
-                },
-            },
-            "required": ["node_id"],
         },
     },
 ]

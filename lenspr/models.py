@@ -179,6 +179,9 @@ class Node:
     semantic_outputs: list[str] = field(default_factory=list)  # e.g. ["validated_data"]
     annotation_hash: str | None = None  # Hash of source when annotation was created
 
+    # Pre-computed metrics (populated during sync, read by lens_class_metrics etc.)
+    metrics: dict = field(default_factory=dict)
+
     def __post_init__(self) -> None:
         if not self.hash:
             self.hash = self.compute_hash()
@@ -227,6 +230,7 @@ class Node:
                 json.dumps(self.semantic_outputs) if self.semantic_outputs else None
             ),
             "annotation_hash": self.annotation_hash,
+            "metrics": json.dumps(self.metrics) if self.metrics else None,
         }
 
     @classmethod
@@ -271,6 +275,11 @@ class Node:
             semantic_inputs=semantic_inputs or [],
             semantic_outputs=semantic_outputs or [],
             annotation_hash=data.get("annotation_hash"),
+            metrics=(
+                json.loads(data["metrics"])
+                if isinstance(data.get("metrics"), str)
+                else data.get("metrics", {})
+            ),
         )
 
 

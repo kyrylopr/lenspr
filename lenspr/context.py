@@ -13,6 +13,7 @@ import networkx as nx
 
 from lenspr import database
 from lenspr import graph as graph_ops
+from lenspr.architecture import compute_all_metrics
 from lenspr.models import Node, SyncResult
 from lenspr.parsers.base import ProgressCallback
 from lenspr.parsers.multi import MultiParser
@@ -211,6 +212,16 @@ class LensContext:
 
                 new_index = {n.id: n for n in unique_nodes}
 
+                # Compute metrics for all nodes (stored in graph)
+                node_metrics, project_metrics = compute_all_metrics(
+                    unique_nodes, new_edges
+                )
+
+                # Assign metrics to each node
+                for node in unique_nodes:
+                    if node.id in node_metrics:
+                        node.metrics = node_metrics[node.id]
+
                 # Compute diff
                 added = [n for nid, n in new_index.items() if nid not in old_index]
                 deleted = [n for nid, n in old_index.items() if nid not in new_index]
@@ -221,6 +232,9 @@ class LensContext:
 
                 # Save new graph
                 database.save_graph(unique_nodes, new_edges, self.graph_db)
+
+                # Save project metrics
+                database.save_project_metrics(project_metrics, self.graph_db)
                 self.invalidate_graph()
 
                 # Update config

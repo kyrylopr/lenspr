@@ -111,12 +111,12 @@ def main() -> None:
     # -- architecture --
     p_arch = subparsers.add_parser(
         "architecture",
-        help="Analyze codebase architecture: patterns, components, cohesion"
+        help="Analyze codebase architecture: metrics, components, largest classes"
     )
     p_arch.add_argument("path", nargs="?", default=".", help="Project root (default: cwd)")
     p_arch.add_argument(
-        "--patterns", action="store_true",
-        help="Show only detected patterns"
+        "--metrics", action="store_true",
+        help="Show project-wide class metrics"
     )
     p_arch.add_argument(
         "--components", action="store_true",
@@ -124,7 +124,11 @@ def main() -> None:
     )
     p_arch.add_argument(
         "--explain", metavar="NODE_ID",
-        help="Explain architecture of a specific class/function"
+        help="Show class metrics for a specific class"
+    )
+    p_arch.add_argument(
+        "--largest", type=int, metavar="N", default=0,
+        help="Show N largest classes by method count"
     )
     p_arch.add_argument(
         "--json", action="store_true",
@@ -632,12 +636,14 @@ def cmd_annotate(args: argparse.Namespace) -> None:
 
 
 def cmd_architecture(args: argparse.Namespace) -> None:
-    """Analyze codebase architecture: patterns, components, cohesion."""
+    """Analyze codebase architecture using pre-computed metrics."""
     import lenspr
     from lenspr import database
-    from lenspr.architecture import (
-        analyze_architecture,
-        format_architecture_report,
+    from lenspr.tools.arch import (
+        handle_class_metrics,
+        handle_components,
+        handle_largest_classes,
+        handle_project_metrics,
     )
 
     path = Path(args.path).resolve()
@@ -647,13 +653,9 @@ def cmd_architecture(args: argparse.Namespace) -> None:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
-    nodes, edges = database.load_graph(ctx.graph_db)
-
-    # Handle --explain flag
+    # Handle --explain flag (class metrics)
     if args.explain:
-        from lenspr.tools.arch import handle_explain_architecture
-
-        result = handle_explain_architecture({"node_id": args.explain}, ctx)
+        result = handle_class_metrics({"node_id": args.explain}, ctx)
         if not result.success:
             print(f"Error: {result.error}", file=sys.stderr)
             sys.exit(1)
@@ -663,87 +665,123 @@ def cmd_architecture(args: argparse.Namespace) -> None:
             print(json.dumps(data, indent=2))
         else:
             print(f"\n{'=' * 60}")
-            print(f"ARCHITECTURE ANALYSIS: {args.explain}")
+            print(f"CLASS METRICS: {args.explain}")
             print(f"{'=' * 60}\n")
 
-            print(f"Type: {data.get('type', 'unknown')}")
-            print(f"Methods: {data.get('methods', 0)}")
+            print(f"Name: {data.get('name', 'unknown')}")
+            print(f"Methods: {data.get('method_count', 0)}")
+            print(f"Lines: {data.get('lines', 0)}")
+            print(f"Public/Private: {data.get('public_methods', 0)}/{data.get('private_methods', 0)}")
+            print(f"Dependencies: {data.get('dependency_count', 0)}")
+            print(f"Internal calls: {data.get('internal_calls', 0)}")
+            print(f"Percentile rank: {data.get('percentile_rank', 0):.1f}%")
             print()
 
-            if "pattern" in data:
-                p = data["pattern"]
-                print(f"Detected Pattern: {p.get('type', 'none').upper()}")
-                print(f"Confidence: {p.get('confidence', 0):.0%}")
-                for ev in p.get("evidence", []):
-                    print(f"  • {ev}")
-                print()
-
-            print(f"Analysis: {data.get('analysis', 'N/A')}")
-            print()
-            print(f"Recommendation: {data.get('recommendation', 'N/A')}")
+            prefixes = data.get("method_prefixes", {})
+            if prefixes:
+                print("Method prefixes:")
+                for prefix, count in list(prefixes.items())[:5]:
+                    print(f"  {prefix}_*: {count}")
             print()
 
-            if "component" in data:
-                c = data["component"]
-                print(f"Component: {c.get('name')} (cohesion: {c.get('cohesion', 0):.0%})")
+            deps = data.get("dependencies", [])
+            if deps:
+                print(f"Dependencies ({len(deps)}):")
+                for dep in deps[:10]:
+                    print(f"  → {dep}")
 
         return
 
-    # Run full analysis
-    report = analyze_architecture(nodes, edges, path)
+    # Handle --largest flag
+    if args.largest:
+        result = handle_largest_classes({"limit": args.largest}, ctx)
+        if not result.success:
+            print(f"Error: {result.error}", file=sys.stderr)
+            sys.exit(1)
+
+        data = result.data or {}
+        if args.json:
+            print(json.dumps(data, indent=2))
+        else:
+            print(f"\n{'=' * 60}")
+            print(f"LARGEST CLASSES (top {args.largest})")
+            print(f"{'=' * 60}\n")
+
+            for cls in data.get("classes", []):
+                print(f"  {cls['name']}: {cls['method_count']} methods")
+                print(f"    {cls['lines']} lines, {cls['dependency_count']} deps, p{cls['percentile_rank']:.0f}")
+                print()
+
+        return
+
+    # Handle --components flag
+    if args.components:
+        result = handle_components({}, ctx)
+        if not result.success:
+            print(f"Error: {result.error}", file=sys.stderr)
+            sys.exit(1)
+
+        data = result.data or {}
+        if args.json:
+            print(json.dumps(data, indent=2))
+        else:
+            print(f"\n{'=' * 60}")
+            print("COMPONENTS")
+            print(f"{'=' * 60}\n")
+
+            components = data.get("components", [])
+            if not components:
+                print("  No components detected.")
+            else:
+                for c in components:
+                    print(f"  {c['name']}")
+                    print(f"    Path: {c['path']}")
+                    print(f"    Cohesion: {c['cohesion']:.0%}")
+                    print(f"    Classes: {len(c.get('classes', []))}")
+                    print()
+
+            print(f"Total: {data.get('count', 0)} components, avg cohesion: {data.get('avg_cohesion', 0):.0%}")
+
+        return
+
+    # Default: show project metrics + largest classes
+    proj_result = handle_project_metrics({}, ctx)
+    largest_result = handle_largest_classes({"limit": 10}, ctx)
 
     if args.json:
-        print(json.dumps(report.to_dict(), indent=2))
+        output = {
+            "project_metrics": proj_result.data if proj_result.success else None,
+            "largest_classes": largest_result.data if largest_result.success else None,
+        }
+        print(json.dumps(output, indent=2))
         return
 
-    # Handle --patterns or --components filters
-    if args.patterns:
-        print(f"\n{'=' * 60}")
-        print("DETECTED PATTERNS")
-        print(f"{'=' * 60}\n")
-
-        if not report.patterns:
-            print("  No architectural patterns detected.")
-        else:
-            for p in sorted(report.patterns, key=lambda x: -x.confidence):
-                print(f"  {p.pattern.value.upper()}: {p.node_id}")
-                print(f"    Confidence: {p.confidence:.0%}")
-                for ev in p.evidence:
-                    print(f"    • {ev}")
-                print()
-
-        print(f"Total: {len(report.patterns)} patterns")
-        return
-
-    if args.components:
-        print(f"\n{'=' * 60}")
-        print("COMPONENTS")
-        print(f"{'=' * 60}\n")
-
-        if not report.components:
-            print("  No components detected.")
-        else:
-            for c in sorted(report.components, key=lambda x: -x.cohesion):
-                pattern_str = f" [{c.pattern.value}]" if c.pattern else ""
-                print(f"  {c.name}{pattern_str}")
-                print(f"    Path: {c.path}")
-                print(f"    Cohesion: {c.cohesion:.0%}")
-                print(f"    Classes: {len(c.classes)}, Public API: {len(c.public_api)}")
-                print()
-
-        avg_cohesion = (
-            sum(c.cohesion for c in report.components) / len(report.components)
-            if report.components
-            else 0
-        )
-        print(f"Total: {len(report.components)} components, avg cohesion: {avg_cohesion:.0%}")
-        return
-
-    # Default: full report
     print(f"\n{'=' * 60}")
-    print("ARCHITECTURE ANALYSIS")
+    print("ARCHITECTURE METRICS")
     print(f"{'=' * 60}\n")
-    print(format_architecture_report(report))
+
+    if proj_result.success and proj_result.data:
+        pm = proj_result.data
+        print("Project-wide class statistics:")
+        print(f"  Total classes: {pm.get('total_classes', 0)}")
+        print(f"  Methods: avg={pm.get('avg_methods', 0)}, median={pm.get('median_methods', 0)}")
+        print(f"  Range: {pm.get('min_methods', 0)} - {pm.get('max_methods', 0)}")
+        print(f"  Percentiles: p90={pm.get('p90_methods', 0)}, p95={pm.get('p95_methods', 0)}")
+        print()
+    else:
+        print("No project metrics found. Run 'lenspr init --force' to compute.")
+        print()
+
+    if largest_result.success and largest_result.data:
+        classes = largest_result.data.get("classes", [])
+        if classes:
+            print("Largest classes:")
+            for cls in classes[:10]:
+                print(f"  {cls['name']}: {cls['method_count']} methods (p{cls['percentile_rank']:.0f})")
+        print()
+
+    print("Use --explain <class> to see detailed metrics for a class.")
+    print("Use --components to see component cohesion metrics.")
 
 
 def _update_global_claude_config(project_path: str, lenspr_bin: str) -> None:

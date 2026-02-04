@@ -29,7 +29,14 @@ CREATE TABLE IF NOT EXISTS nodes (
     side_effects TEXT,
     semantic_inputs TEXT,
     semantic_outputs TEXT,
-    annotation_hash TEXT
+    annotation_hash TEXT,
+    -- Pre-computed metrics (stored as JSON)
+    metrics TEXT
+);
+
+CREATE TABLE IF NOT EXISTS project_metrics (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS edges (
@@ -123,6 +130,7 @@ def _migrate_annotations(conn: sqlite3.Connection) -> None:
         ("semantic_inputs", "TEXT"),
         ("semantic_outputs", "TEXT"),
         ("annotation_hash", "TEXT"),
+        ("metrics", "TEXT"),
     ]
 
     for col_name, col_type in annotation_columns:
@@ -145,11 +153,11 @@ def save_graph(nodes: list[Node], edges: list[Edge], db_path: Path) -> None:
             (id, type, name, qualified_name, file_path, start_line, end_line,
              source_code, docstring, signature, hash, metadata,
              summary, role, side_effects, semantic_inputs, semantic_outputs,
-             annotation_hash)
+             annotation_hash, metrics)
             VALUES (:id, :type, :name, :qualified_name, :file_path, :start_line,
                     :end_line, :source_code, :docstring, :signature, :hash, :metadata,
                     :summary, :role, :side_effects, :semantic_inputs, :semantic_outputs,
-                    :annotation_hash)""",
+                    :annotation_hash, :metrics)""",
             [n.to_dict() for n in nodes],
         )
 
@@ -408,3 +416,53 @@ def get_cached_resolution(
         if row:
             return row["node_id"], row["confidence"]
     return None
+
+
+# -- Project metrics --
+
+def save_project_metrics(metrics: dict, db_path: Path) -> None:
+    """Save project-wide metrics to the database."""
+    import json
+
+    with _connect(db_path) as conn:
+        # Ensure table exists (for migrations)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS project_metrics (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+        """)
+        conn.execute("DELETE FROM project_metrics")
+        for key, value in metrics.items():
+            conn.execute(
+                "INSERT INTO project_metrics (key, value) VALUES (?, ?)",
+                (key, json.dumps(value)),
+            )
+
+
+def get_project_metrics(db_path: Path) -> dict:
+    """Load project-wide metrics from the database."""
+    import json
+
+    with _connect(db_path) as conn:
+        # Ensure table exists (for migrations)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS project_metrics (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+        """)
+        rows = conn.execute("SELECT key, value FROM project_metrics").fetchall()
+        return {row["key"]: json.loads(row["value"]) for row in rows}
+
+
+def update_node_metrics(node_id: str, metrics: dict, db_path: Path) -> bool:
+    """Update a node's pre-computed metrics."""
+    import json
+
+    with _connect(db_path) as conn:
+        cursor = conn.execute(
+            "UPDATE nodes SET metrics = ? WHERE id = ?",
+            (json.dumps(metrics), node_id),
+        )
+        return cursor.rowcount > 0

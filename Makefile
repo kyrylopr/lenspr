@@ -1,4 +1,4 @@
-.PHONY: install install-all dev test test-cov lint lint-fix format typecheck check clean build setup serve demo health doctor annotate annotate-all annotate-node annotate-file benchmark check-deps architecture patterns components explain-arch
+.PHONY: install install-all dev test test-cov lint lint-fix format typecheck check clean build setup serve demo health doctor annotate annotate-all annotate-node annotate-file benchmark check-deps architecture metrics components largest class-metrics
 
 # ============================================================================
 # INSTALLATION
@@ -198,23 +198,27 @@ annotate-file:
 	@lenspr annotate . --file $(FILE)
 
 # ============================================================================
-# ARCHITECTURE ANALYSIS
+# ARCHITECTURE METRICS
 # ============================================================================
 
-# Full architecture analysis (patterns + components)
+# Show project metrics + largest classes
 architecture:
 	@lenspr architecture .
 
-# Show detected patterns only (Facade, Strategy, Factory, etc.)
-patterns:
-	@lenspr architecture . --patterns
+# Show project-wide metrics only
+metrics:
+	@lenspr architecture . --metrics
 
 # Show component cohesion metrics
 components:
 	@lenspr architecture . --components
 
-# Explain architecture of a class: make explain-arch NODE=app.MyClass
-explain-arch:
+# Show largest classes: make largest N=20
+largest:
+	@lenspr architecture . --largest $(or $(N),10)
+
+# Show class metrics: make class-metrics NODE=app.MyClass
+class-metrics:
 	@lenspr architecture . --explain $(NODE)
 
 # ============================================================================
@@ -288,7 +292,8 @@ help:
 	@echo "  make annotations  Show annotation coverage"
 	@echo ""
 	@echo "Architecture:"
-	@echo "  make architecture   Full architecture analysis"
-	@echo "  make patterns       Show detected patterns"
+	@echo "  make architecture   Show project metrics + largest classes"
+	@echo "  make metrics        Show project-wide statistics"
 	@echo "  make components     Show component cohesion"
-	@echo "  make explain-arch   Explain class architecture (NODE=...)"
+	@echo "  make largest        Show largest classes (N=...)"
+	@echo "  make class-metrics  Show class metrics (NODE=...)"

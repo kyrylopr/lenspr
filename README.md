@@ -201,13 +201,14 @@ results = lenspr.handle_tool("lens_search", {
 | `lens_batch_save_annotations` | Annotate multiple nodes at once |
 | `lens_annotation_stats` | Coverage statistics |
 
-### Architecture Analysis
+### Architecture Metrics
 | Tool | Description |
 |------|-------------|
-| `lens_architecture` | Full analysis: patterns, components, cohesion |
-| `lens_patterns` | Detect patterns (Facade, Strategy, Factory, etc.) |
+| `lens_class_metrics` | Get pre-computed metrics for a class |
+| `lens_project_metrics` | Get project-wide class statistics |
+| `lens_largest_classes` | Get classes sorted by method count |
+| `lens_compare_classes` | Compare metrics between multiple classes |
 | `lens_components` | Analyze component cohesion and boundaries |
-| `lens_explain_architecture` | Explain why a class has its structure |
 
 Full reference: [docs/TOOLS.md](docs/TOOLS.md)
 
@@ -282,45 +283,54 @@ For full annotations with summaries:
 
 Claude will call `lens_annotate_batch` → analyze code → call `lens_batch_save_annotations`.
 
-## Architecture Analysis
+## Architecture Metrics
 
-LensPR can detect architectural patterns and analyze component structure:
+LensPR computes class metrics during init/sync and provides raw data for Claude to interpret.
 
-### Detected Patterns
+**Philosophy:** LensPR is a data provider, not a decision maker. It provides metrics - Claude decides what they mean.
 
-| Pattern | Detection Criteria |
-|---------|-------------------|
-| **Facade** | Class delegates to 3+ other classes |
-| **Strategy** | Interface/base class with 2+ implementations |
-| **Factory** | Function creating different types based on conditions |
-| **Singleton** | Class with `_instance` and `get_instance()` |
-| **Repository** | Class with CRUD-like methods (get, save, delete) |
-| **Service** | Class with Service/Manager/Handler in name |
-| **Decorator** | Class wrapping another object |
+### Available Metrics
+
+| Metric | Description |
+|--------|-------------|
+| `method_count` | Total methods in class |
+| `lines` | Lines of code |
+| `public_methods` | Public method count |
+| `private_methods` | Private method count (prefixed with _) |
+| `dependency_count` | Number of external classes used |
+| `internal_calls` | Methods calling other methods in same class |
+| `method_prefixes` | Common prefixes (get_, set_, handle_, etc.) |
+| `percentile_rank` | Position compared to other classes (0-100) |
 
 ### CLI Commands
 
 ```bash
-lenspr architecture .                    # Full analysis
-lenspr architecture . --patterns         # Show only patterns
-lenspr architecture . --components       # Show only components
-lenspr architecture . --explain MyClass  # Explain why class has its structure
+lenspr architecture .                    # Show project metrics + largest classes
+lenspr architecture . --metrics          # Show project-wide statistics
+lenspr architecture . --largest 10       # Show 10 largest classes
+lenspr architecture . --components       # Show component cohesion metrics
+lenspr architecture . --explain MyClass  # Show detailed metrics for a class
 lenspr architecture . --json             # Output as JSON
 ```
 
-### Why This Matters
-
-Before architecture analysis, LensPR would flag large classes as "God Objects". Now it understands:
+### Example Output
 
 ```
-# Old behavior
-⚠️ AdaptiveCrawler has 50 methods - consider splitting
+PROJECT METRICS:
+  Total classes: 145
+  Methods: avg=8.2, median=5
+  Range: 0 - 52
+  Percentiles: p90=18, p95=28
 
-# New behavior
-✓ AdaptiveCrawler: FACADE pattern
-  Delegates to: ShopifyCrawler, WooCommerceCrawler, GenericCrawler
-  Recommendation: KEEP - architecture is intentional
+CLASS METRICS (LensContext):
+  Methods: 52
+  Lines: 320
+  Public/Private: 35/17
+  Dependencies: 8
+  Percentile rank: 99.3%
 ```
+
+Claude interprets the data: a class at p99 with many dependencies might be a Facade or might need refactoring - context decides.
 
 ## Project Structure
 
@@ -333,7 +343,7 @@ lenspr/
 ├── graph.py             # NetworkX algorithms
 ├── patcher.py           # File patching
 ├── validator.py         # 3-level validation
-├── architecture.py      # Pattern detection, component analysis
+├── architecture.py      # Metrics computation, component analysis
 ├── mcp_server.py        # MCP server (33 tools)
 ├── cli.py               # CLI entry point
 ├── parsers/
@@ -349,7 +359,7 @@ lenspr/
     ├── analysis.py      # Impact, health, dead code
     ├── modification.py  # Update, add, delete, rename
     ├── annotation.py    # Semantic annotations
-    ├── arch.py          # Architecture analysis tools
+    ├── arch.py          # Architecture metrics tools
     ├── git.py           # Blame, history
     └── patterns.py      # Role/side_effects detection
 ```

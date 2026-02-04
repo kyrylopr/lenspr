@@ -1,4 +1,8 @@
-"""Architecture analysis tool handlers for LensPR."""
+"""Architecture metrics tool handlers for LensPR.
+
+Philosophy: LensPR is a data provider, not a decision maker.
+These tools return raw metrics computed during sync. Claude decides what they mean.
+"""
 
 from __future__ import annotations
 
@@ -7,111 +11,149 @@ from typing import TYPE_CHECKING
 
 from lenspr import database
 from lenspr.architecture import (
-    ArchitectureReport,
-    analyze_architecture,
-    detect_all_patterns,
     detect_components,
-    format_architecture_report,
+    get_class_analysis_from_stored,
 )
-from lenspr.models import ToolResponse
+from lenspr.models import NodeType, ToolResponse
 
 if TYPE_CHECKING:
     from lenspr.context import LensContext
 
 
-def handle_architecture(params: dict, ctx: LensContext) -> ToolResponse:
-    """Analyze codebase architecture: patterns, components, and relationships.
+def handle_class_metrics(params: dict, ctx: LensContext) -> ToolResponse:
+    """Get pre-computed metrics for a class.
 
-    Returns detected patterns (Facade, Strategy, Factory, etc.),
-    components with cohesion metrics, and architectural recommendations.
+    Returns method count, lines, public/private methods, dependencies,
+    internal calls, method prefixes, and percentile rank.
+
+    Metrics are computed during init/sync - this is O(1) read.
     """
-    # Get all nodes and edges
-    nodes, edges = database.load_graph(ctx.graph_db)
-    project_root = Path(ctx.project_root)
+    node_id = params.get("node_id")
+    if not node_id:
+        return ToolResponse(success=False, error="node_id is required")
 
-    # Run full analysis
-    report = analyze_architecture(nodes, edges, project_root)
+    node = database.get_node(node_id, ctx.graph_db)
+    if not node:
+        return ToolResponse(success=False, error=f"Node not found: {node_id}")
+
+    if node.type != NodeType.CLASS:
+        return ToolResponse(
+            success=False,
+            error=f"Node {node_id} is {node.type.value}, not a class"
+        )
+
+    analysis = get_class_analysis_from_stored(node)
+
+    return ToolResponse(success=True, data=analysis)
+
+
+def handle_project_metrics(params: dict, ctx: LensContext) -> ToolResponse:
+    """Get project-wide class metrics.
+
+    Returns total classes, avg/median/min/max methods, and percentiles (p90, p95).
+    Use this to understand the distribution before interpreting individual class metrics.
+
+    Metrics are computed during init/sync - this is O(1) read.
+    """
+    metrics = database.get_project_metrics(ctx.graph_db)
+
+    if not metrics:
+        return ToolResponse(
+            success=False,
+            error="No project metrics found. Run 'lenspr init --force' to compute."
+        )
 
     return ToolResponse(
         success=True,
         data={
-            "patterns": [
-                {
-                    "pattern": p.pattern.value,
-                    "node_id": p.node_id,
-                    "confidence": round(p.confidence, 2),
-                    "related_nodes": p.related_nodes[:10],  # Limit for readability
-                    "evidence": p.evidence,
-                }
-                for p in report.patterns
-            ],
-            "components": [
-                {
-                    "id": c.id,
-                    "name": c.name,
-                    "path": c.path,
-                    "pattern": c.pattern.value if c.pattern else None,
-                    "cohesion": c.cohesion,
-                    "classes": len(c.classes),
-                    "public_api": len(c.public_api),
-                    "internal": len(c.internal_nodes),
-                    "delegates_to": c.delegates_to[:5] if c.delegates_to else [],
-                }
-                for c in report.components
-            ],
-            "warnings": report.warnings,
-            "recommendations": report.recommendations,
-            "summary": {
-                "total_patterns": len(report.patterns),
-                "total_components": len(report.components),
-                "high_cohesion": sum(1 for c in report.components if c.cohesion >= 0.7),
-                "low_cohesion": sum(1 for c in report.components if c.cohesion < 0.5),
-            },
-        },
+            "total_classes": metrics.get("total_classes", 0),
+            "avg_methods": metrics.get("avg_methods", 0),
+            "median_methods": metrics.get("median_methods", 0),
+            "min_methods": metrics.get("min_methods", 0),
+            "max_methods": metrics.get("max_methods", 0),
+            "p90_methods": metrics.get("p90_methods", 0),
+            "p95_methods": metrics.get("p95_methods", 0),
+        }
     )
 
 
-def handle_patterns(params: dict, ctx: LensContext) -> ToolResponse:
-    """Detect architectural patterns in the codebase.
+def handle_largest_classes(params: dict, ctx: LensContext) -> ToolResponse:
+    """Get classes sorted by method count (descending).
 
-    Detects: Facade, Strategy, Factory, Singleton, Decorator, Repository, Service.
-    Returns pattern type, primary node, confidence, and evidence.
+    Returns the N largest classes with their metrics.
+    Use this to identify potentially complex classes for review.
+
+    Args:
+        limit: Max classes to return (default 10)
     """
-    pattern_filter = params.get("pattern")  # Optional filter by pattern type
-    min_confidence = params.get("min_confidence", 0.5)
+    limit = params.get("limit", 10)
 
-    nodes, edges = database.load_graph(ctx.graph_db)
+    nodes, _ = database.load_graph(ctx.graph_db)
 
-    patterns = detect_all_patterns(nodes, edges)
+    # Filter to classes with metrics
+    classes_with_metrics = [
+        n for n in nodes
+        if n.type == NodeType.CLASS and n.metrics and "method_count" in n.metrics
+    ]
 
-    # Filter
-    if pattern_filter:
-        patterns = [p for p in patterns if p.pattern.value == pattern_filter]
-    patterns = [p for p in patterns if p.confidence >= min_confidence]
-
-    # Sort by confidence
-    patterns = sorted(patterns, key=lambda p: -p.confidence)
+    # Sort by method count descending
+    sorted_classes = sorted(
+        classes_with_metrics,
+        key=lambda n: n.metrics.get("method_count", 0),
+        reverse=True
+    )[:limit]
 
     return ToolResponse(
         success=True,
         data={
-            "patterns": [
+            "classes": [
                 {
-                    "pattern": p.pattern.value,
-                    "node_id": p.node_id,
-                    "confidence": round(p.confidence, 2),
-                    "related_nodes": p.related_nodes,
-                    "evidence": p.evidence,
+                    "node_id": n.id,
+                    "name": n.name,
+                    "method_count": n.metrics.get("method_count", 0),
+                    "lines": n.metrics.get("lines", 0),
+                    "dependency_count": n.metrics.get("dependency_count", 0),
+                    "percentile_rank": n.metrics.get("percentile_rank", 0),
                 }
-                for p in patterns
+                for n in sorted_classes
             ],
-            "count": len(patterns),
-            "by_type": {
-                pattern_type: sum(1 for p in patterns if p.pattern.value == pattern_type)
-                for pattern_type in {p.pattern.value for p in patterns}
-            },
-        },
+            "count": len(sorted_classes),
+        }
     )
+
+
+def handle_compare_classes(params: dict, ctx: LensContext) -> ToolResponse:
+    """Compare metrics between multiple classes.
+
+    Args:
+        node_ids: List of class node IDs to compare
+
+    Returns metrics side-by-side for easy comparison.
+    """
+    node_ids = params.get("node_ids", [])
+    if not node_ids or len(node_ids) < 2:
+        return ToolResponse(
+            success=False,
+            error="At least 2 node_ids required for comparison"
+        )
+
+    comparisons = []
+    for node_id in node_ids:
+        node = database.get_node(node_id, ctx.graph_db)
+        if not node:
+            comparisons.append({"node_id": node_id, "error": "Not found"})
+            continue
+        if node.type != NodeType.CLASS:
+            comparisons.append({
+                "node_id": node_id,
+                "error": f"Not a class ({node.type.value})"
+            })
+            continue
+
+        analysis = get_class_analysis_from_stored(node)
+        comparisons.append(analysis)
+
+    return ToolResponse(success=True, data={"comparisons": comparisons})
 
 
 def handle_components(params: dict, ctx: LensContext) -> ToolResponse:
@@ -146,7 +188,6 @@ def handle_components(params: dict, ctx: LensContext) -> ToolResponse:
                     "id": c.id,
                     "name": c.name,
                     "path": c.path,
-                    "pattern": c.pattern.value if c.pattern else None,
                     "cohesion": c.cohesion,
                     "modules": c.modules,
                     "classes": c.classes,
@@ -165,101 +206,3 @@ def handle_components(params: dict, ctx: LensContext) -> ToolResponse:
             ),
         },
     )
-
-
-def handle_explain_architecture(params: dict, ctx: LensContext) -> ToolResponse:
-    """Explain why a class/function has its current architecture.
-
-    For classes flagged as "God Objects" or similar, explains whether
-    the pattern is intentional (Facade, Service) or needs refactoring.
-    """
-    node_id = params.get("node_id")
-    if not node_id:
-        return ToolResponse(success=False, error="node_id is required")
-
-    node = database.get_node(node_id, ctx.graph_db)
-    if not node:
-        return ToolResponse(success=False, error=f"Node not found: {node_id}")
-
-    nodes, edges = database.load_graph(ctx.graph_db)
-    project_root = Path(ctx.project_root)
-
-    # Run pattern detection
-    patterns = detect_all_patterns(nodes, edges)
-    node_patterns = [p for p in patterns if p.node_id == node_id]
-
-    # Get component info
-    components = detect_components(nodes, edges, project_root)
-    node_component = None
-    for comp in components:
-        if node_id in comp.classes or node_id in comp.modules:
-            node_component = comp
-            break
-
-    # Count methods/functions
-    method_count = sum(
-        1
-        for n in nodes
-        if n.type.value == "method" and n.id.startswith(node_id + ".")
-    )
-
-    # Analyze
-    explanation: dict = {
-        "node_id": node_id,
-        "type": node.type.value,
-        "methods": method_count,
-    }
-
-    if node_patterns:
-        pattern = node_patterns[0]
-        explanation["pattern"] = {
-            "type": pattern.pattern.value,
-            "confidence": round(pattern.confidence, 2),
-            "evidence": pattern.evidence,
-            "related_nodes": pattern.related_nodes[:10],
-        }
-
-        # Pattern-specific explanation
-        if pattern.pattern.value == "facade":
-            explanation["analysis"] = (
-                f"This is a FACADE pattern. It delegates to {len(pattern.related_nodes)} "
-                f"other classes. The high method count ({method_count}) is justified "
-                f"because each method is a thin wrapper providing a unified API."
-            )
-            explanation["recommendation"] = "KEEP - architecture is intentional"
-        elif pattern.pattern.value == "strategy":
-            explanation["analysis"] = (
-                f"This is a STRATEGY interface with {len(pattern.related_nodes)} "
-                f"implementations. The base class defines the contract."
-            )
-            explanation["recommendation"] = "KEEP - implements Strategy pattern"
-        elif pattern.pattern.value == "service":
-            explanation["analysis"] = (
-                f"This is a SERVICE class that orchestrates business logic. "
-                f"It coordinates multiple dependencies."
-            )
-            explanation["recommendation"] = "KEEP - standard service pattern"
-        else:
-            explanation["recommendation"] = f"Uses {pattern.pattern.value} pattern"
-    else:
-        # No pattern detected
-        if method_count > 20:
-            explanation["analysis"] = (
-                f"This class has {method_count} methods but no recognized pattern. "
-                f"Consider whether it has too many responsibilities."
-            )
-            explanation["recommendation"] = (
-                "REVIEW - possible God Object. Consider splitting into smaller classes."
-            )
-        else:
-            explanation["analysis"] = "Standard class with no special architectural pattern."
-            explanation["recommendation"] = "OK - no issues detected"
-
-    if node_component:
-        explanation["component"] = {
-            "name": node_component.name,
-            "path": node_component.path,
-            "cohesion": node_component.cohesion,
-        }
-
-    return ToolResponse(success=True, data=explanation)
