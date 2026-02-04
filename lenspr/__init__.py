@@ -140,14 +140,14 @@ def get_system_prompt() -> str:
 
     g = ctx.get_graph()
     from lenspr.graph import get_structure
-    structure = get_structure(g)
+    result = get_structure(g)
 
     # Format structure as readable text
-    structure_text = _format_structure(structure)
+    structure_text = _format_structure(result["structure"])
 
     node_count = g.number_of_nodes()
     edge_count = g.number_of_edges()
-    file_count = len(structure)
+    file_count = result["pagination"]["total_files"]
 
     return prompt_template.format(
         project_structure=structure_text,

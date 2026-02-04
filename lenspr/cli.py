@@ -293,12 +293,12 @@ def cmd_status(args: argparse.Namespace) -> None:
 
     ctx = lenspr.get_context()
     g = ctx.get_graph()
-    structure = get_structure(g)
+    result = get_structure(g)
 
     print(f"Project: {path}")
     print(f"  Nodes: {g.number_of_nodes()}")
     print(f"  Edges: {g.number_of_edges()}")
-    print(f"  Files: {len(structure)}")
+    print(f"  Files: {result['pagination']['total_files']}")
 
 
 def cmd_search(args: argparse.Namespace) -> None:
