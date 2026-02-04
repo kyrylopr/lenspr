@@ -370,7 +370,7 @@ Full architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
 | Metric | Value |
 |--------|-------|
-| Tests | 227 passed |
+| Tests | 237 passed |
 | Python Resolution | 96%+ |
 | TypeScript Resolution | 90%+ |
 | MCP Tools | 33 |

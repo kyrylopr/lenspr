@@ -14,6 +14,50 @@ from lenspr.stats import ParseStats, get_language_for_extension
 logger = logging.getLogger(__name__)
 
 
+def normalize_edge_targets(
+    nodes: list[Node], edges: list[Edge],
+) -> list[Edge]:
+    """Normalize edge targets to match actual node IDs via suffix matching.
+
+    When project root != package root, node IDs have a prefix that raw
+    import paths lack.  E.g. node ID is ``myproject.crawlers.func`` but
+    the import edge targets ``crawlers.func``.  This function resolves
+    the mismatch by matching suffixes.
+    """
+    node_ids: set[str] = {n.id for n in nodes}
+
+    # Build suffix index: suffix -> full_id (None if ambiguous)
+    suffix_index: dict[str, str | None] = {}
+    for nid in node_ids:
+        parts = nid.split(".")
+        # Start from 1 to skip the full ID (already in node_ids)
+        for i in range(1, len(parts)):
+            suffix = ".".join(parts[i:])
+            if suffix in suffix_index:
+                if suffix_index[suffix] != nid:
+                    suffix_index[suffix] = None  # ambiguous
+            else:
+                suffix_index[suffix] = nid
+
+    normalized = 0
+    for edge in edges:
+        if edge.to_node not in node_ids:
+            full_id = suffix_index.get(edge.to_node)
+            if full_id is not None:
+                edge.to_node = full_id
+                normalized += 1
+        if edge.from_node not in node_ids:
+            full_id = suffix_index.get(edge.from_node)
+            if full_id is not None:
+                edge.from_node = full_id
+                normalized += 1
+
+    if normalized:
+        logger.info("Normalized %d edge endpoints via suffix matching", normalized)
+
+    return edges
+
+
 class MultiParser(BaseParser):
     """
     Combines multiple language parsers into one.
@@ -215,6 +259,10 @@ class MultiParser(BaseParser):
             if edges:
                 resolved = parser.resolve_edges(edges, root_path)
                 all_edges.extend(resolved)
+
+        # Third pass: normalize edge targets to match actual node IDs
+        # Fixes mismatches when project root != package root
+        normalize_edge_targets(all_nodes, all_edges)
 
         # Update stats with resolved edges (recalculate resolution percentages)
         if stats:

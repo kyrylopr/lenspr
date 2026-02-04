@@ -16,7 +16,7 @@ from lenspr import graph as graph_ops
 from lenspr.architecture import compute_all_metrics
 from lenspr.models import Node, SyncResult
 from lenspr.parsers.base import ProgressCallback
-from lenspr.parsers.multi import MultiParser
+from lenspr.parsers.multi import MultiParser, normalize_edge_targets
 from lenspr.patcher import PatchBuffer
 from lenspr.stats import ParseStats
 
@@ -151,6 +151,9 @@ class LensContext:
                     )
                     all_nodes.extend(new_nodes)
                     all_edges.extend(new_edges)
+
+                # Normalize edge targets (fixes root != package root mismatch)
+                normalize_edge_targets(all_nodes, all_edges)
 
                 # Save
                 database.save_graph(all_nodes, all_edges, self.graph_db)
@@ -349,6 +352,9 @@ class LensContext:
                         )
                         all_nodes.extend(new_nodes)
                         all_edges.extend(new_edges)
+
+                # Normalize edge targets (fixes root != package root mismatch)
+                normalize_edge_targets(all_nodes, all_edges)
 
                 database.save_graph(all_nodes, all_edges, self.graph_db)
                 self.invalidate_graph()

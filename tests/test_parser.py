@@ -4,7 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from lenspr.models import EdgeType, NodeType
+from lenspr.models import Edge, EdgeConfidence, EdgeType, Node, NodeType
+from lenspr.parsers.multi import MultiParser, normalize_edge_targets
 from lenspr.parsers.python_parser import PythonParser
 
 FIXTURES = Path(__file__).parent / "fixtures" / "sample_project"
@@ -186,3 +187,222 @@ class TestRelativeImports:
             "benchmarks.storage.list_benchmarks" in t
             for t in targets
         ), f"Expected benchmarks.storage.list_benchmarks in targets, got: {targets}"
+
+
+class TestLazyImports:
+    """Test that imports inside function bodies (lazy imports) are tracked."""
+
+    def test_lazy_import_creates_edge_from_function(self, parser, tmp_path):
+        """Lazy import should create an IMPORTS edge from the function, not the module."""
+        # Create two files: one with a function, one that lazy-imports it
+        lib_file = tmp_path / "lib.py"
+        lib_file.write_text("def helper():\n    return 42\n")
+
+        caller_file = tmp_path / "caller.py"
+        caller_file.write_text(
+            "def my_func():\n"
+            "    from lib import helper\n"
+            "    return helper()\n"
+        )
+
+        nodes, edges = parser.parse_file(caller_file, tmp_path)
+
+        # Find IMPORTS edges
+        import_edges = [e for e in edges if e.type == EdgeType.IMPORTS]
+
+        # There should be an IMPORTS edge from the function (not the module)
+        func_import_edges = [
+            e for e in import_edges
+            if "my_func" in e.from_node and "helper" in e.to_node
+        ]
+        assert len(func_import_edges) >= 1, (
+            f"Expected IMPORTS edge from my_func to helper, got: "
+            f"{[(e.from_node, e.to_node) for e in import_edges]}"
+        )
+
+    def test_lazy_import_resolves_calls(self, parser, tmp_path):
+        """Calls to lazily imported names should be resolved via import table."""
+        caller_file = tmp_path / "caller.py"
+        caller_file.write_text(
+            "def my_func():\n"
+            "    from lib import helper\n"
+            "    return helper()\n"
+        )
+
+        nodes, edges = parser.parse_file(caller_file, tmp_path)
+
+        # Find CALLS edges from my_func
+        call_edges = [
+            e for e in edges
+            if e.type == EdgeType.CALLS and "my_func" in e.from_node
+        ]
+
+        # The call to helper() should resolve to lib.helper (not bare 'helper')
+        assert len(call_edges) >= 1, f"Expected CALLS edge from my_func, got none"
+        targets = [e.to_node for e in call_edges]
+        assert any(
+            "lib.helper" in t for t in targets
+        ), f"Expected lib.helper in call targets, got: {targets}"
+
+    def test_lazy_import_not_from_module(self, parser, tmp_path):
+        """Lazy imports should NOT create IMPORTS edges from the module."""
+        caller_file = tmp_path / "caller.py"
+        caller_file.write_text(
+            "def my_func():\n"
+            "    from lib import helper\n"
+            "    return helper()\n"
+        )
+
+        nodes, edges = parser.parse_file(caller_file, tmp_path)
+
+        import_edges = [e for e in edges if e.type == EdgeType.IMPORTS]
+        module_import_edges = [
+            e for e in import_edges
+            if e.from_node == "caller" and "helper" in e.to_node
+        ]
+        # Module-level import edges should not exist for lazy imports
+        # The edge should come from the function, not the module
+        for e in module_import_edges:
+            assert "my_func" in e.from_node, (
+                f"IMPORTS edge from module 'caller' instead of function: {e.from_node} -> {e.to_node}"
+            )
+
+
+def _make_node(node_id, name=None):
+    """Helper to create a minimal Node for normalization tests."""
+    return Node(
+        id=node_id,
+        type=NodeType.FUNCTION,
+        name=name or node_id.split(".")[-1],
+        qualified_name=node_id,
+        file_path="dummy.py",
+        start_line=1,
+        end_line=1,
+        source_code="pass",
+    )
+
+
+def _make_edge(from_node, to_node, edge_type=EdgeType.CALLS):
+    """Helper to create a minimal Edge for normalization tests."""
+    return Edge(
+        id="test",
+        from_node=from_node,
+        to_node=to_node,
+        type=edge_type,
+    )
+
+
+class TestEdgeNormalization:
+    """Test normalize_edge_targets for mismatched project/package roots."""
+
+    def test_normalizes_suffix_match(self):
+        """Edge target 'crawlers.func' should resolve to 'myproject.crawlers.func'."""
+        nodes = [
+            _make_node("myproject.crawlers.integration.fetch_data"),
+            _make_node("myproject.main.run"),
+        ]
+        edges = [
+            _make_edge("myproject.main.run", "crawlers.integration.fetch_data"),
+        ]
+
+        normalize_edge_targets(nodes, edges)
+        assert edges[0].to_node == "myproject.crawlers.integration.fetch_data"
+
+    def test_does_not_normalize_ambiguous(self):
+        """When suffix matches multiple nodes, leave edge unchanged."""
+        nodes = [
+            _make_node("pkg_a.utils.helper"),
+            _make_node("pkg_b.utils.helper"),
+        ]
+        edges = [
+            _make_edge("something", "utils.helper"),
+        ]
+
+        normalize_edge_targets(nodes, edges)
+        assert edges[0].to_node == "utils.helper"  # unchanged
+
+    def test_already_matched_unchanged(self):
+        """Edges that already match a node ID stay the same."""
+        nodes = [_make_node("myproject.utils.helper")]
+        edges = [
+            _make_edge("myproject.main", "myproject.utils.helper"),
+        ]
+
+        normalize_edge_targets(nodes, edges)
+        assert edges[0].to_node == "myproject.utils.helper"
+
+    def test_from_node_normalization(self):
+        """from_node should also be normalized if mismatched."""
+        nodes = [
+            _make_node("myproject.main.run"),
+            _make_node("myproject.utils.helper"),
+        ]
+        edges = [
+            _make_edge("main.run", "myproject.utils.helper"),
+        ]
+
+        normalize_edge_targets(nodes, edges)
+        assert edges[0].from_node == "myproject.main.run"
+
+    def test_external_edges_untouched(self):
+        """Edges to external modules (no matching node) stay unchanged."""
+        nodes = [_make_node("myproject.main")]
+        edges = [
+            _make_edge("myproject.main", "os.path.join"),
+        ]
+
+        normalize_edge_targets(nodes, edges)
+        assert edges[0].to_node == "os.path.join"
+
+    def test_cross_file_with_subdirectory(self, tmp_path):
+        """Integration: parse from parent dir, edges should still connect."""
+        # parent_dir/mypackage/a.py  and  parent_dir/mypackage/b.py
+        pkg = tmp_path / "mypackage"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text("")
+        (pkg / "a.py").write_text("def helper():\n    return 42\n")
+        (pkg / "b.py").write_text(
+            "from mypackage.a import helper\n\n"
+            "def caller():\n"
+            "    return helper()\n"
+        )
+
+        mp = MultiParser()
+        nodes, edges, _ = mp.parse_project(tmp_path)  # root = parent_dir
+
+        node_ids = {n.id for n in nodes}
+        assert "mypackage.a.helper" in node_ids
+
+        # Import and call edges should point to the real node ID
+        edges_to_helper = [
+            e for e in edges
+            if e.to_node == "mypackage.a.helper"
+        ]
+        assert len(edges_to_helper) >= 1, (
+            f"Expected edge to mypackage.a.helper, got targets: "
+            f"{[e.to_node for e in edges if 'helper' in e.to_node]}"
+        )
+
+    def test_lazy_import_cross_file_with_subdirectory(self, tmp_path):
+        """Integration: lazy import from parent dir also connects."""
+        pkg = tmp_path / "mypackage"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text("")
+        (pkg / "a.py").write_text("def helper():\n    return 42\n")
+        (pkg / "b.py").write_text(
+            "def caller():\n"
+            "    from mypackage.a import helper\n"
+            "    return helper()\n"
+        )
+
+        mp = MultiParser()
+        nodes, edges, _ = mp.parse_project(tmp_path)
+
+        edges_to_helper = [
+            e for e in edges
+            if e.to_node == "mypackage.a.helper"
+        ]
+        assert len(edges_to_helper) >= 1, (
+            f"Expected edge to mypackage.a.helper from lazy import, got targets: "
+            f"{[e.to_node for e in edges if 'helper' in e.to_node]}"
+        )
