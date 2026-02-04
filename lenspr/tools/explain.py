@@ -93,7 +93,7 @@ def _get_callers_context(
     node_id: str, graph: Any, ctx: LensContext, limit: int = 5
 ) -> list[dict]:
     """Get caller context with relevant source snippets."""
-    callers = []
+    callers: list[dict] = []
     if node_id not in graph:
         return callers
 
@@ -119,7 +119,7 @@ def _get_callees_context(
     node_id: str, graph: Any, ctx: LensContext, limit: int = 5
 ) -> list[dict]:
     """Get callee context to understand dependencies."""
-    callees = []
+    callees: list[dict] = []
     if node_id not in graph:
         return callees
 
