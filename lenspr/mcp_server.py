@@ -483,6 +483,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
         Args:
             max_depth: 0=files only, 1=with classes/functions, 2=with methods.
             mode: "full" for all details, "summary" for counts only (default).
+                  "compact" for totals only (best for large projects).
             limit: Max files to return (for pagination).
             offset: Skip first N files.
             path_prefix: Filter to files starting with this path.

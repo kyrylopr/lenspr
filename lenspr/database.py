@@ -453,7 +453,18 @@ def get_project_metrics(db_path: Path) -> dict:
             )
         """)
         rows = conn.execute("SELECT key, value FROM project_metrics").fetchall()
-        return {row["key"]: json.loads(row["value"]) for row in rows}
+        result = {}
+        for row in rows:
+            val = row["value"]
+            # Handle both JSON strings and raw values
+            if isinstance(val, str):
+                try:
+                    result[row["key"]] = json.loads(val)
+                except json.JSONDecodeError:
+                    result[row["key"]] = val
+            else:
+                result[row["key"]] = val
+        return result
 
 
 def update_node_metrics(node_id: str, metrics: dict, db_path: Path) -> bool:

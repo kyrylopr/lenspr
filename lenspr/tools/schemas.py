@@ -170,7 +170,8 @@ LENS_TOOLS: list[dict[str, Any]] = [
         "name": "lens_get_structure",
         "description": (
             "Get compact overview of project structure. "
-            "Use mode='summary' for large projects (returns counts instead of details)."
+            "Use mode='compact' for large projects (returns totals only, no file list). "
+            "Use mode='summary' for medium projects (counts per file)."
         ),
         "input_schema": {
             "type": "object",
@@ -184,9 +185,10 @@ LENS_TOOLS: list[dict[str, Any]] = [
                 },
                 "mode": {
                     "type": "string",
-                    "enum": ["full", "summary"],
+                    "enum": ["full", "summary", "compact"],
                     "description": (
-                        "full=all details, summary=counts only. Default: summary."
+                        "full=all details, summary=counts per file, "
+                        "compact=totals only (best for large projects). Default: summary."
                     ),
                 },
                 "limit": {

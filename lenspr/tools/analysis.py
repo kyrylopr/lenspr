@@ -428,6 +428,7 @@ def handle_dead_code(params: dict, ctx: LensContext) -> ToolResponse:
             name = data.get("name", "")
             node_type = data.get("type", "")
             file_path = data.get("file_path", "")
+            source = data.get("source_code", "")
 
             # === ALWAYS entry points (unconditional) ===
 
@@ -506,7 +507,6 @@ def handle_dead_code(params: dict, ctx: LensContext) -> ToolResponse:
 
             # 13. Functions with web framework decorators in source
             if node_type == "function":
-                source = data.get("source_code", "")
                 # Look for common web framework decorator patterns
                 if any(
                     pattern in source
@@ -525,9 +525,79 @@ def handle_dead_code(params: dict, ctx: LensContext) -> ToolResponse:
             if node_type == "function" and "frontend" in file_path:
                 entry_set.add(nid)
 
+            # === Database migrations (Alembic, Django, etc.) ===
+
+            # 14. Alembic migration functions
+            if name in ("upgrade", "downgrade", "run_migrations_online",
+                        "run_migrations_offline"):
+                entry_set.add(nid)
+
+            # 14b. Alembic env.py functions
+            if "alembic" in file_path or file_path.endswith("env.py"):
+                if node_type == "function":
+                    entry_set.add(nid)
+
+            # 14c. Migration version files (alembic/versions/*.py)
+            if "/versions/" in file_path or "/migrations/" in file_path:
+                if node_type == "function":
+                    entry_set.add(nid)
+
+            # === Task queues (Celery, RQ, etc.) ===
+
+            # 15. Celery tasks
+            if node_type == "function" and any(
+                pattern in source
+                for pattern in [
+                    "@celery.task", "@app.task", "@shared_task",
+                    "@celery_app.task", "celery.Task",
+                ]
+            ):
+                entry_set.add(nid)
+
+            # 15b. RQ tasks
+            if node_type == "function" and "@job" in source:
+                entry_set.add(nid)
+
+            # === Pytest fixtures ===
+
+            # 16. Pytest fixtures (called dynamically by pytest)
+            if node_type == "function" and "@pytest.fixture" in source:
+                entry_set.add(nid)
+
+            # 16b. conftest.py functions are usually fixtures
+            if file_path.endswith("conftest.py") and node_type == "function":
+                entry_set.add(nid)
+
+            # === Django patterns ===
+
+            # 17. Django management commands
+            if "/management/commands/" in file_path:
+                entry_set.add(nid)
+
+            # 17b. Django signals
+            if node_type == "function" and any(
+                pattern in source
+                for pattern in ["@receiver", "pre_save", "post_save",
+                                "pre_delete", "post_delete"]
+            ):
+                entry_set.add(nid)
+
+            # 17c. Django admin
+            if "admin.py" in file_path and node_type in ("class", "function"):
+                entry_set.add(nid)
+
+            # === SQLAlchemy events ===
+
+            # 18. SQLAlchemy event listeners
+            if node_type == "function" and any(
+                pattern in source
+                for pattern in ["@event.listens_for", "event.listen"]
+            ):
+                entry_set.add(nid)
+
             # === Methods that are called via protocols/conventions ===
 
-            # 14. Dataclass/class special methods
+            # 19. Dataclass/class special methods
             if node_type == "method" and name in (
                 "__init__", "__post_init__", "__new__", "__del__",
                 "__repr__", "__str__", "__hash__", "__eq__", "__ne__",
@@ -539,32 +609,52 @@ def handle_dead_code(params: dict, ctx: LensContext) -> ToolResponse:
             ):
                 entry_set.add(nid)
 
-            # 15. Property methods (is_*, has_*, get_*, set_*)
+            # 20. Property methods (is_*, has_*, get_*, set_*)
             if node_type == "method" and (
                 name.startswith("is_") or name.startswith("has_") or
                 name.startswith("get_") or name.startswith("set_")
             ):
                 entry_set.add(nid)
 
-            # 16. Private methods starting with underscore (internal use)
+            # 21. Private methods starting with underscore (internal use)
             if node_type == "method" and name.startswith("_") and not name.startswith("__"):
                 entry_set.add(nid)
 
             # === Parser/visitor patterns ===
 
-            # 17. AST visitor methods (visit_*, generic_visit)
+            # 22. AST visitor methods (visit_*, generic_visit)
             if name.startswith("visit_") or name == "generic_visit":
                 entry_set.add(nid)
 
             # === Helper functions that are used internally ===
 
-            # 18. Detection/analysis helpers (often called via getattr or dict)
+            # 23. Detection/analysis helpers (often called via getattr or dict)
             if name.startswith("_detect_") or name.startswith("_compute_"):
                 entry_set.add(nid)
 
-            # 19. Enum classes (their values are accessed)
+            # 24. Enum classes (their values are accessed)
             enum_suffixes = ("Enum", "Role", "Type", "Confidence", "Source")
             if node_type == "class" and name.endswith(enum_suffixes):
+                entry_set.add(nid)
+
+            # === Pydantic/dataclass validators ===
+
+            # 25. Pydantic validators
+            if node_type == "method" and any(
+                pattern in source
+                for pattern in ["@validator", "@field_validator",
+                                "@root_validator", "@model_validator"]
+            ):
+                entry_set.add(nid)
+
+            # === Click/Typer CLI commands ===
+
+            # 26. Click/Typer commands
+            if node_type == "function" and any(
+                pattern in source
+                for pattern in ["@click.command", "@click.group",
+                                "@app.command", "@typer.command"]
+            ):
                 entry_set.add(nid)
 
         # Check for decorated functions

@@ -1,4 +1,4 @@
-.PHONY: install install-all dev test test-cov lint lint-fix format typecheck check clean build setup serve demo health doctor annotate annotate-all annotate-node annotate-file benchmark check-deps architecture metrics components largest class-metrics
+.PHONY: install install-all dev test test-cov lint lint-fix format typecheck check clean build setup serve demo health doctor annotate annotate-all annotate-node annotate-file benchmark check-deps architecture metrics components largest class-metrics dead-code
 
 # ============================================================================
 # INSTALLATION
@@ -221,6 +221,10 @@ largest:
 class-metrics:
 	@lenspr architecture . --explain $(NODE)
 
+# Find potentially dead code
+dead-code:
+	@python3 -c "import lenspr; lenspr.init('.'); r=lenspr.handle_tool('lens_dead_code',{}); d=r['data']; print(f'Dead code found: {d[\"count\"]} nodes'); [print(f'  {f}: {len(nodes)} items') for f, nodes in sorted(d['by_file'].items())[:10]]"
+
 # ============================================================================
 # BENCHMARKS
 # ============================================================================
@@ -291,9 +295,10 @@ help:
 	@echo "  make languages    Show supported languages"
 	@echo "  make annotations  Show annotation coverage"
 	@echo ""
-	@echo "Architecture:"
+	@echo "Architecture & Analysis:"
 	@echo "  make architecture   Show project metrics + largest classes"
 	@echo "  make metrics        Show project-wide statistics"
 	@echo "  make components     Show component cohesion"
 	@echo "  make largest        Show largest classes (N=...)"
 	@echo "  make class-metrics  Show class metrics (NODE=...)"
+	@echo "  make dead-code      Find potentially dead code"

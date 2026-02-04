@@ -165,7 +165,7 @@ results = lenspr.handle_tool("lens_search", {
 | `lens_search` | Search by name, code content, or docstring |
 | `lens_grep` | Regex search with graph context |
 | `lens_find_usages` | All callers, importers, inheritors |
-| `lens_get_structure` | Project overview with pagination |
+| `lens_get_structure` | Project overview (use `mode="compact"` for large projects) |
 
 ### Analysis & Safety
 | Tool | Description |
@@ -173,7 +173,7 @@ results = lenspr.handle_tool("lens_search", {
 | `lens_check_impact` | **Always call before modifying** — shows severity |
 | `lens_validate_change` | Dry-run validation without applying |
 | `lens_health` | Graph quality: nodes, edges, confidence % |
-| `lens_dead_code` | Find unreachable code |
+| `lens_dead_code` | Find unreachable code (auto-detects framework entry points) |
 | `lens_dependencies` | External packages used |
 
 ### Modification
@@ -393,6 +393,21 @@ Full architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 Run yourself: `make benchmark`
 
 </details>
+
+## Dead Code Detection
+
+`lens_dead_code` automatically recognizes framework entry points to reduce false positives:
+
+| Framework | Recognized Patterns |
+|-----------|---------------------|
+| **Alembic** | `upgrade`, `downgrade`, `run_migrations_*`, `versions/*.py` |
+| **Celery** | `@celery.task`, `@app.task`, `@shared_task` |
+| **Pytest** | `@pytest.fixture`, `conftest.py` functions |
+| **Django** | `/management/commands/`, `@receiver`, `admin.py` |
+| **FastAPI/Flask** | `@app.route`, `@router.get`, route files |
+| **Click/Typer** | `@click.command`, `@app.command` |
+| **Pydantic** | `@validator`, `@field_validator` |
+| **SQLAlchemy** | `@event.listens_for` |
 
 ## Known Limitations
 

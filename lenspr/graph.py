@@ -194,7 +194,8 @@ def get_structure(
 
     Args:
         max_depth: 0=file names only, 1=with classes/functions, 2=with methods
-        mode: "full" (names+signatures) or "summary" (counts only)
+        mode: "full" (names+signatures), "summary" (counts per file),
+              "compact" (totals only, no file list - best for large projects)
         limit: Max files to return (default 100)
         offset: Skip first N files (default 0)
         path_prefix: Filter to files starting with this path
@@ -206,6 +207,12 @@ def get_structure(
     # Single pass: group all nodes by file and type (O(n))
     files: dict[str, dict] = {}
     methods_by_class: dict[str, list] = defaultdict(list)
+
+    # Totals for compact mode
+    total_classes = 0
+    total_functions = 0
+    total_methods = 0
+    total_blocks = 0
 
     for nid, data in G.nodes(data=True):
         node_type = data.get("type", "")
@@ -227,6 +234,7 @@ def get_structure(
                 "name": data.get("name", ""),
                 "signature": data.get("signature", ""),
             })
+            total_methods += 1
             continue
 
         # Initialize file structure if needed
@@ -251,6 +259,7 @@ def get_structure(
                 "methods": [],  # Will be populated below
             })
             files[file_path]["_class_count"] += 1
+            total_classes += 1
         elif node_type == "function":
             files[file_path]["functions"].append({
                 "id": nid,
@@ -258,12 +267,14 @@ def get_structure(
                 "signature": data.get("signature", ""),
             })
             files[file_path]["_function_count"] += 1
+            total_functions += 1
         elif node_type == "block":
             files[file_path]["blocks"].append({
                 "id": nid,
                 "name": data.get("name", ""),
             })
             files[file_path]["_block_count"] += 1
+            total_blocks += 1
 
     # Attach methods to their classes (O(1) per class)
     for file_path, file_data in files.items():
@@ -276,6 +287,27 @@ def get_structure(
     # Sort files and apply pagination
     sorted_files = sorted(files.keys())
     total_files = len(sorted_files)
+
+    # Compact mode: return only totals, no file list
+    if mode == "compact":
+        # Group files by top-level directory
+        dirs: dict[str, int] = defaultdict(int)
+        for fp in sorted_files:
+            top_dir = fp.split("/")[0] if "/" in fp else "."
+            dirs[top_dir] += 1
+
+        return {
+            "totals": {
+                "files": total_files,
+                "classes": total_classes,
+                "functions": total_functions,
+                "methods": total_methods,
+                "blocks": total_blocks,
+            },
+            "directories": dict(sorted(dirs.items(), key=lambda x: -x[1])),
+            "hint": "Use path_prefix to filter, e.g. lens_get_structure(path_prefix='src/')",
+        }
+
     paginated_files = sorted_files[offset : offset + limit]
 
     # Build result based on mode
@@ -314,5 +346,10 @@ def get_structure(
             "offset": offset,
             "total_files": total_files,
             "has_more": offset + limit < total_files,
+        },
+        "totals": {
+            "classes": total_classes,
+            "functions": total_functions,
+            "methods": total_methods,
         },
     }
