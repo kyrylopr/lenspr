@@ -245,6 +245,24 @@ class TypeScriptResolver {
             if (ts.isIdentifier(tagName)) {
                 return this._resolveIdentifier(tagName, sourceFile);
             }
+            // Handle namespaced JSX like <Foo.Bar />
+            if (ts.isPropertyAccessExpression(tagName)) {
+                return this._resolvePropertyAccess(tagName, sourceFile);
+            }
+        }
+
+        // Phase 3: Handle class heritage (extends clause)
+        if (ts.isHeritageClause(node)) {
+            // For `extends BaseClass`, resolve the base class
+            if (node.token === ts.SyntaxKind.ExtendsKeyword && node.types && node.types.length > 0) {
+                const extendsExpr = node.types[0].expression;
+                return this._resolveNode(extendsExpr, sourceFile);
+            }
+        }
+
+        // Handle expression with type arguments (BaseClass<T>)
+        if (ts.isExpressionWithTypeArguments(node)) {
+            return this._resolveNode(node.expression, sourceFile);
         }
 
         return {
@@ -267,8 +285,11 @@ class TypeScriptResolver {
             };
         }
 
-        // Follow aliases (imports)
-        const resolvedSymbol = this._resolveSymbol(symbol);
+        // Check if this is a default import
+        const isDefault = this._isDefaultImport(node);
+
+        // Follow aliases (imports) with improved re-export chain following
+        const resolvedSymbol = this._followReexportChain(symbol);
         if (!resolvedSymbol) {
             return {
                 nodeId: name,
@@ -287,7 +308,15 @@ class TypeScriptResolver {
             };
         }
 
-        const declaration = declarations[0];
+        // For default imports, prefer the default export declaration
+        let declaration = declarations[0];
+        if (isDefault && declarations.length > 1) {
+            const defaultDecl = declarations.find(d => this._isDefaultExportDeclaration(d));
+            if (defaultDecl) {
+                declaration = defaultDecl;
+            }
+        }
+
         const declarationFile = declaration.getSourceFile();
 
         // Check if it's from an external package
@@ -321,6 +350,43 @@ class TypeScriptResolver {
         };
     }
 
+    /**
+     * Check if this identifier is from a default import.
+     * e.g., `import Button from './Button'`
+     */
+    _isDefaultImport(node) {
+        let parent = node.parent;
+        while (parent) {
+            if (ts.isImportClause(parent)) {
+                // This is `import X from '...'` where X is the default
+                return parent.name === node;
+            }
+            parent = parent.parent;
+        }
+        return false;
+    }
+
+    /**
+     * Check if a declaration is a default export.
+     */
+    _isDefaultExportDeclaration(declaration) {
+        // Check for `export default`
+        if (declaration.modifiers) {
+            const hasExport = declaration.modifiers.some(m => m.kind === ts.SyntaxKind.ExportKeyword);
+            const hasDefault = declaration.modifiers.some(m => m.kind === ts.SyntaxKind.DefaultKeyword);
+            if (hasExport && hasDefault) {
+                return true;
+            }
+        }
+
+        // Check if it's an export assignment (export default X or export = X)
+        if (ts.isExportAssignment(declaration)) {
+            return !declaration.isExportEquals; // ES6 default, not CommonJS
+        }
+
+        return false;
+    }
+
     _resolvePropertyAccess(node, sourceFile) {
         const propertyName = node.name.text;
 
@@ -328,10 +394,10 @@ class TypeScriptResolver {
         const expressionType = this.typeChecker.getTypeAtLocation(node.expression);
         const symbol = expressionType.getSymbol();
 
-        // Try to resolve the property
+        // Try to resolve the property via symbol lookup first
         const propSymbol = this.typeChecker.getSymbolAtLocation(node.name);
         if (propSymbol) {
-            const resolved = this._resolveSymbol(propSymbol);
+            const resolved = this._followReexportChain(propSymbol);
             if (resolved) {
                 const declarations = resolved.getDeclarations();
                 if (declarations && declarations.length > 0) {
@@ -347,13 +413,53 @@ class TypeScriptResolver {
                         };
                     }
 
-                    // Build node ID
-                    const nodeId = this._buildNodeId(declaration, propertyName);
-                    return {
-                        nodeId,
-                        confidence: Confidence.RESOLVED
-                    };
+                    if (!declarationFile.isDeclarationFile) {
+                        // Build node ID
+                        const nodeId = this._buildNodeId(declaration, propertyName);
+                        return {
+                            nodeId,
+                            confidence: Confidence.RESOLVED
+                        };
+                    }
                 }
+            }
+        }
+
+        // Phase 4: Try to resolve via apparent properties (type enumeration)
+        if (expressionType) {
+            try {
+                const apparentProps = this.typeChecker.getApparentProperties(expressionType);
+                const matchingProp = apparentProps.find(p => p.name === propertyName);
+
+                if (matchingProp) {
+                    const resolved = this._followReexportChain(matchingProp);
+                    if (resolved) {
+                        const declarations = resolved.getDeclarations();
+                        if (declarations && declarations.length > 0) {
+                            const declaration = declarations[0];
+                            const declarationFile = declaration.getSourceFile();
+
+                            // Check if external
+                            if (declarationFile.fileName.includes('node_modules')) {
+                                const packageName = this._extractPackageName(declarationFile.fileName);
+                                return {
+                                    nodeId: `${packageName}.${propertyName}`,
+                                    confidence: Confidence.EXTERNAL
+                                };
+                            }
+
+                            if (!declarationFile.isDeclarationFile) {
+                                const nodeId = this._buildNodeId(declaration, propertyName);
+                                return {
+                                    nodeId,
+                                    confidence: Confidence.RESOLVED
+                                };
+                            }
+                        }
+                    }
+                }
+            } catch (e) {
+                // getApparentProperties can fail for some types
             }
         }
 
@@ -374,27 +480,82 @@ class TypeScriptResolver {
         };
     }
 
-    _resolveSymbol(symbol) {
-        // Follow alias chains
+    /**
+     * Follow re-export chains to find the actual declaration.
+     * Handles: export { X } from './module', export * from './module', etc.
+     * @param {ts.Symbol} symbol - The symbol to resolve
+     * @param {number} maxDepth - Maximum chain depth to prevent infinite loops
+     * @returns {ts.Symbol|null} The resolved symbol
+     */
+    _followReexportChain(symbol, maxDepth = 15) {
         let current = symbol;
+        let depth = 0;
         const seen = new Set();
 
-        while (current) {
-            if (seen.has(current)) break;
-            seen.add(current);
+        while (current && depth < maxDepth) {
+            // Use symbol name + declaration location as unique ID
+            const symbolKey = this._getSymbolKey(current);
+            if (seen.has(symbolKey)) {
+                // Circular reference detected
+                break;
+            }
+            seen.add(symbolKey);
 
+            // Check if this is an alias (import or re-export)
             if (current.flags & ts.SymbolFlags.Alias) {
                 try {
-                    current = this.typeChecker.getAliasedSymbol(current);
+                    const aliased = this.typeChecker.getAliasedSymbol(current);
+                    if (aliased && aliased !== current) {
+                        current = aliased;
+                        depth++;
+                        continue;
+                    }
+                } catch (e) {
+                    // getAliasedSymbol can throw for some edge cases
+                    break;
+                }
+            }
+
+            // Check for export value (module.exports = X)
+            if (current.flags & ts.SymbolFlags.ExportValue) {
+                try {
+                    const exported = this.typeChecker.getExportSymbolOfSymbol?.(current);
+                    if (exported && exported !== current) {
+                        current = exported;
+                        depth++;
+                        continue;
+                    }
                 } catch (e) {
                     break;
                 }
-            } else {
-                break;
             }
+
+            // No more chain to follow
+            break;
         }
 
         return current;
+    }
+
+    /**
+     * Get a unique key for a symbol to detect circular references.
+     */
+    _getSymbolKey(symbol) {
+        const declarations = symbol.getDeclarations?.();
+        if (declarations && declarations.length > 0) {
+            const decl = declarations[0];
+            const sf = decl.getSourceFile();
+            return `${symbol.name}@${sf.fileName}:${decl.getStart()}`;
+        }
+        return `${symbol.name}@unknown`;
+    }
+
+    /**
+     * Legacy method for backwards compatibility.
+     * @deprecated Use _followReexportChain instead
+     */
+    _resolveSymbol(symbol) {
+        return this._followReexportChain(symbol);
     }
 
     _extractPackageName(filePath) {

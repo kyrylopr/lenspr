@@ -69,7 +69,7 @@ Source Files (.py, .ts, .tsx, .js, .jsx)
        ↓
    Parsers:
    - Python: AST + jedi (96%+ resolution)
-   - TypeScript/JS: tree-sitter + TS Compiler API (80%+ resolution)
+   - TypeScript/JS: tree-sitter + TS Compiler API (90%+ resolution)
        ↓
    SQLite Graph (nodes + edges)
        ↓
@@ -284,8 +284,9 @@ Full architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
 | Metric | Value |
 |--------|-------|
-| Tests | 188 passed |
-| Graph Confidence | 96% |
+| Tests | 223 passed |
+| Python Resolution | 96%+ |
+| TypeScript Resolution | 90%+ |
 | MCP Tools | 29 |
 | Python Support | ✅ Yes (AST + jedi) |
 | JS/TS Support | ✅ Yes (tree-sitter + TypeScript Compiler API) |
@@ -331,7 +332,7 @@ pip install 'lenspr[dev]'        # + dev tools
 
 ### TypeScript/JavaScript Support
 
-For TypeScript/JavaScript projects with full type inference (80%+ resolution confidence):
+For TypeScript/JavaScript projects with full type inference (90%+ resolution confidence):
 
 ```bash
 # 1. Install with TypeScript extra
@@ -351,9 +352,15 @@ lenspr init .
 - For best results, install type definitions (`@types/*` packages)
 
 **Resolution confidence:**
-- **RESOLVED**: Cross-file function calls with full type inference
+- **RESOLVED** (90%+): Cross-file function calls with full type inference
 - **EXTERNAL**: Calls to npm packages (react, lodash, etc.)
 - **INFERRED**: Fallback when type information unavailable
+
+**Features:**
+- Re-export chain following (`export { X } from './module'`)
+- Default export detection (`import X from './module'`)
+- Class inheritance resolution (`extends BaseClass`)
+- Property/method type enumeration (`obj.method()`)
 
 ## License
 

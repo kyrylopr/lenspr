@@ -368,3 +368,157 @@ class TestRealWorldPatterns:
         # Should have import edges for re-exports
         import_edges = [e for e in edges if e.type.value == "imports"]
         assert len(import_edges) >= 3
+
+
+class TestReexportChainResolution:
+    """Tests for re-export chain resolution (Phase 1)."""
+
+    @pytest.fixture
+    def reexport_project(self, tmp_path: Path) -> Path:
+        """Create a project with re-export chains."""
+        src = tmp_path / "src"
+        src.mkdir()
+
+        # Original implementation
+        (src / "Button.tsx").write_text(
+            "export function Button() { return <button />; }\n"
+        )
+
+        # Re-export via barrel
+        (src / "components" / "index.ts").parent.mkdir(parents=True, exist_ok=True)
+        (src / "components" / "index.ts").write_text(
+            "export { Button } from '../Button';\n"
+        )
+
+        # Double re-export
+        (src / "index.ts").write_text("export { Button } from './components';\n")
+
+        # Consumer
+        (src / "App.tsx").write_text(
+            "import { Button } from './index';\n"
+            "export function App() { return <Button />; }\n"
+        )
+
+        (tmp_path / "tsconfig.json").write_text('{"compilerOptions": {"jsx": "react"}}')
+        return tmp_path
+
+    def test_single_reexport(self, reexport_project: Path) -> None:
+        """Test single-level re-export resolution."""
+        from lenspr.parsers.typescript_parser import TypeScriptParser
+
+        parser = TypeScriptParser()
+        parser.set_project_root(reexport_project)
+
+        src = reexport_project / "src" / "components" / "index.ts"
+        nodes, edges = parser.parse_file(src, reexport_project)
+
+        # Should have import edge to Button
+        import_edges = [e for e in edges if e.type.value == "imports"]
+        assert len(import_edges) >= 1
+
+
+class TestDefaultExportResolution:
+    """Tests for default export resolution (Phase 2)."""
+
+    @pytest.fixture
+    def default_export_project(self, tmp_path: Path) -> Path:
+        """Create a project with default exports."""
+        src = tmp_path / "src"
+        src.mkdir()
+
+        # Default export function
+        (src / "utils.ts").write_text(
+            "export default function formatDate(d: Date) { return d.toString(); }\n"
+            "export function parseDate(s: string) { return new Date(s); }\n"
+        )
+
+        # Default export class
+        (src / "ApiClient.ts").write_text(
+            "export default class ApiClient {\n"
+            "    fetch() { return null; }\n"
+            "}\n"
+        )
+
+        # Consumer using default imports
+        (src / "App.ts").write_text(
+            "import formatDate from './utils';\n"
+            "import ApiClient from './ApiClient';\n"
+            "formatDate(new Date());\n"
+            "new ApiClient().fetch();\n"
+        )
+
+        (tmp_path / "tsconfig.json").write_text("{}")
+        return tmp_path
+
+    def test_default_export_function(self, default_export_project: Path) -> None:
+        """Test default export function parsing."""
+        from lenspr.parsers.typescript_parser import TypeScriptParser
+
+        parser = TypeScriptParser()
+        parser.set_project_root(default_export_project)
+
+        src = default_export_project / "src" / "utils.ts"
+        nodes, edges = parser.parse_file(src, default_export_project)
+
+        # Should have formatDate function marked as exported
+        func_nodes = [n for n in nodes if n.name == "formatDate"]
+        assert len(func_nodes) == 1
+        assert func_nodes[0].metadata.get("is_exported") is True
+
+    def test_default_export_class(self, default_export_project: Path) -> None:
+        """Test default export class parsing."""
+        from lenspr.parsers.typescript_parser import TypeScriptParser
+
+        parser = TypeScriptParser()
+        parser.set_project_root(default_export_project)
+
+        src = default_export_project / "src" / "ApiClient.ts"
+        nodes, edges = parser.parse_file(src, default_export_project)
+
+        # Should have ApiClient class marked as exported (both module and class nodes)
+        class_nodes = [n for n in nodes if n.name == "ApiClient" and n.type.value == "class"]
+        assert len(class_nodes) == 1
+        assert class_nodes[0].metadata.get("is_exported") is True
+
+
+class TestClassInheritanceResolution:
+    """Tests for class inheritance resolution (Phase 3)."""
+
+    @pytest.fixture
+    def inheritance_project(self, tmp_path: Path) -> Path:
+        """Create a project with class inheritance."""
+        src = tmp_path / "src"
+        src.mkdir()
+
+        # Base class
+        (src / "BaseService.ts").write_text(
+            "export class BaseService {\n"
+            "    protected init() {}\n"
+            "}\n"
+        )
+
+        # Derived class
+        (src / "UserService.ts").write_text(
+            "import { BaseService } from './BaseService';\n"
+            "export class UserService extends BaseService {\n"
+            "    getUser() { this.init(); return null; }\n"
+            "}\n"
+        )
+
+        (tmp_path / "tsconfig.json").write_text("{}")
+        return tmp_path
+
+    def test_inheritance_edge_created(self, inheritance_project: Path) -> None:
+        """Test that inheritance edge is created."""
+        from lenspr.parsers.typescript_parser import TypeScriptParser
+
+        parser = TypeScriptParser()
+        parser.set_project_root(inheritance_project)
+
+        src = inheritance_project / "src" / "UserService.ts"
+        nodes, edges = parser.parse_file(src, inheritance_project)
+
+        # Should have inheritance edge
+        inherits_edges = [e for e in edges if e.type.value == "inherits"]
+        assert len(inherits_edges) == 1
+        assert "BaseService" in inherits_edges[0].to_node
