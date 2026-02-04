@@ -418,7 +418,9 @@ def cmd_annotate(args: argparse.Namespace) -> None:
     elif args.file:
         # All nodes in a file
         all_nodes = database.get_nodes(ctx.graph_db, file_filter=args.file)
-        nodes_to_annotate = [n for n in all_nodes if n.type.value in ("function", "method", "class")]
+        nodes_to_annotate = [
+            n for n in all_nodes if n.type.value in ("function", "method", "class")
+        ]
 
     elif args.auto:
         # All unannotated nodes

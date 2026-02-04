@@ -83,7 +83,7 @@ def init(
     if lens_dir.exists() and not force:
         # Load existing context
         _ctx = LensContext(root, lens_dir)
-        
+
         # Auto-reinitialize if database is empty (previous failed init)
         g = _ctx.get_graph()
         if g.number_of_nodes() == 0:

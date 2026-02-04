@@ -691,8 +691,8 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
 
         Example:
             annotations=[
-                {"node_id": "app.utils.validate", "summary": "Validates email format by checking for @ symbol"},
-                {"node_id": "app.db.save", "summary": "Persists user data to the PostgreSQL database"}
+                {"node_id": "app.utils.validate", "summary": "Validates email"},
+                {"node_id": "app.db.save", "summary": "Persists user data"}
             ]
         """
         result = lenspr.handle_tool("lens_batch_save_annotations", {"annotations": annotations})

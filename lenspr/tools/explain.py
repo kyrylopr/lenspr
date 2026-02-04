@@ -320,7 +320,8 @@ def _infer_purpose(name: str, analysis: dict) -> str:
         return "Performs network operation"
     if "database_io" in analysis.get("side_effects", []):
         return "Performs database operation"
-    if "file_io" in analysis.get("side_effects", []) or "writes_file" in analysis.get("side_effects", []):
+    effects = analysis.get("side_effects", [])
+    if "file_io" in effects or "writes_file" in effects:
         return "Performs file operation"
 
     return "General purpose function"

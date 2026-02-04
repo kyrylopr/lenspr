@@ -227,7 +227,8 @@ def auto_annotate(
     Returns:
         Dict with role and side_effects (auto-detected if not provided)
     """
-    return {
-        "role": provided_role if provided_role else detect_role(name, node_type, source_code),
-        "side_effects": provided_side_effects if provided_side_effects is not None else detect_side_effects(name, source_code),
-    }
+    role = provided_role if provided_role else detect_role(name, node_type, source_code)
+    effects = provided_side_effects if provided_side_effects is not None else detect_side_effects(
+        name, source_code
+    )
+    return {"role": role, "side_effects": effects}

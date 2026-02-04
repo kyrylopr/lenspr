@@ -79,7 +79,7 @@ def handle_annotate(params: dict, ctx: LensContext) -> ToolResponse:
         hint=(
             "Analyze this code and call lens_save_annotation with only: "
             "summary (1-2 sentences describing what it does). "
-            "Role and side_effects are auto-detected from patterns - you don't need to provide them."
+            "Role and side_effects are auto-detected from patterns."
         ),
     )
 

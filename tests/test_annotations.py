@@ -287,9 +287,8 @@ class TestPendingAnnotationsQueue:
         from lenspr.mcp_server import (
             _add_pending_annotations,
             _get_and_clear_pending,
-            _pending_annotation_nodes,
         )
-        from lenspr.models import Node, NodeType
+        from lenspr.models import NodeType
 
         # Clear any existing
         _get_and_clear_pending()
