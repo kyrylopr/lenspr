@@ -265,7 +265,7 @@ class CodeGraphVisitor(ast.NodeVisitor):
             self.edges.append(
                 Edge(
                     id=_edge_id(),
-                    from_node=self.module_id,
+                    from_node=self._current_scope,
                     to_node=alias.name,
                     type=EdgeType.IMPORTS,
                     line_number=node.lineno,
@@ -306,7 +306,7 @@ class CodeGraphVisitor(ast.NodeVisitor):
                 self.edges.append(
                     Edge(
                         id=_edge_id(),
-                        from_node=self.module_id,
+                        from_node=self._current_scope,
                         to_node=target,
                         type=EdgeType.IMPORTS,
                         line_number=node.lineno,
@@ -479,6 +479,27 @@ class CodeGraphVisitor(ast.NodeVisitor):
 
     def _extract_calls(self, func_node: ast.AST, caller_id: str) -> None:
         """Extract function/method call edges from an AST subtree."""
+        # Pre-scan: collect lazy imports inside this function body
+        # so the import table is populated before resolving calls.
+        # Without this, 'from X import Y; Y()' inside a function would
+        # fail to resolve Y because the import table is updated too late
+        # (in generic_visit, which runs after _extract_calls).
+        for node in ast.walk(func_node):
+            if isinstance(node, ast.ImportFrom):
+                module = node.module or ""
+                if node.level > 0:
+                    parts = self.module_id.split(".")
+                    if len(parts) >= node.level:
+                        base = ".".join(parts[:-node.level]) if node.level < len(parts) else ""
+                        module = f"{base}.{module}" if base and module else (base or module)
+                for alias in node.names:
+                    if alias.name != "*":
+                        self.import_table.add_import(module, alias.name, alias.asname)
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    self.import_table.add_module_import(alias.name, alias.asname)
+
+        # Now extract calls with the fully populated import table
         for node in ast.walk(func_node):
             if not isinstance(node, ast.Call):
                 continue

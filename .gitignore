@@ -41,3 +41,6 @@ eval/.env
 eval/results/
 eval/results_v2/
 !eval/results/*.png
+
+# Claude Code (temporary files, plans)
+.claude/plans/

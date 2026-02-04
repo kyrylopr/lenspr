@@ -286,8 +286,19 @@ of code nodes and their relationships.
 
 1. **Before ANY modification**, call `lens_check_impact` to understand consequences
 2. After modifying, verify the change is syntactically valid
-3. Connections marked "unresolved" cannot be statically determined — warn the user
+3. Connections marked "unresolved" cannot be statically determined (dynamic dispatch, eval, getattr). Warn the user about these.
 4. Prefer small, focused changes over large rewrites
+5. When impact zone is large (>10 nodes), confirm with the user before proceeding
+
+## Known Limitations
+
+The graph is built from **static analysis**. It may miss:
+- **Dynamic dispatch**: `getattr()`, `importlib.import_module()`, `eval()`
+- **String-based references**: function names passed as strings to registries/routers
+- **Framework magic**: decorators that register routes/commands/signals (e.g. Flask, Django, Click)
+- **Monkey-patching**: runtime modifications to classes/modules
+
+When `lens_find_usages` or `lens_dead_code` reports 0 usages, **always verify with `lens_grep`** before recommending deletion. A function with 0 graph usages may still be used dynamically.
 
 ## Current Project Structure
 

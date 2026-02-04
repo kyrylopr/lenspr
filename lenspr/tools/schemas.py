@@ -380,7 +380,8 @@ LENS_TOOLS: list[dict[str, Any]] = [
         "name": "lens_find_usages",
         "description": (
             "Find all usages of a node across the codebase. "
-            "Returns callers, importers, and string references."
+            "Returns callers, importers, and string references. "
+            "Supports batch mode: pass node_ids (list) to check multiple nodes in one call."
         ),
         "input_schema": {
             "type": "object",
@@ -389,12 +390,16 @@ LENS_TOOLS: list[dict[str, Any]] = [
                     "type": "string",
                     "description": "The node to find usages of.",
                 },
+                "node_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Multiple nodes to find usages of (batch mode). Overrides node_id.",
+                },
                 "include_tests": {
                     "type": "boolean",
                     "description": "Include usages from test files. Default: true.",
                 },
             },
-            "required": ["node_id"],
         },
     },
     # -- Semantic Annotation Tools --

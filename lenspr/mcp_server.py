@@ -638,19 +638,26 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
         return json.dumps(result, indent=2)
 
     @mcp.tool()
-    def lens_find_usages(node_id: str, include_tests: bool = True) -> str:
+    def lens_find_usages(
+        node_id: str = "", include_tests: bool = True,
+        node_ids: list[str] | None = None,
+    ) -> str:
         """Find all usages of a node across the codebase.
 
         Returns callers, importers, and string references.
+        Supports batch mode: pass node_ids (list) to check multiple nodes in one call.
 
         Args:
             node_id: The node to find usages of.
             include_tests: Include usages from test files. Default: true.
+            node_ids: Multiple nodes to find usages of (batch mode). Overrides node_id.
         """
-        result = lenspr.handle_tool("lens_find_usages", {
-            "node_id": node_id,
-            "include_tests": include_tests,
-        })
+        params: dict = {"include_tests": include_tests}
+        if node_ids:
+            params["node_ids"] = node_ids
+        else:
+            params["node_id"] = node_id
+        result = lenspr.handle_tool("lens_find_usages", params)
         return json.dumps(result, indent=2)
 
     # -- Semantic Annotation Tools --

@@ -177,6 +177,8 @@ def handle_context(params: dict, ctx: LensContext) -> ToolResponse:
 
     # Callers (who depends on this node)
     callers: list[dict] = []
+    callers_truncated = False
+    max_related = 30  # Cap to prevent response size explosion
     if include_callers and node_id in nx_graph:
         visited: set[str] = set()
         frontier: list[tuple[str, str]] = [
@@ -185,6 +187,9 @@ def handle_context(params: dict, ctx: LensContext) -> ToolResponse:
         for _level in range(depth):
             next_frontier: list[tuple[str, str]] = []
             for pred_id, via in frontier:
+                if len(callers) >= max_related:
+                    callers_truncated = True
+                    break
                 if pred_id in visited:
                     continue
                 visited.add(pred_id)
@@ -211,10 +216,13 @@ def handle_context(params: dict, ctx: LensContext) -> ToolResponse:
                     next_frontier.extend(
                         (p, pred_id) for p in nx_graph.predecessors(pred_id)
                     )
+            if callers_truncated:
+                break
             frontier = next_frontier
 
     # Callees (what this node depends on)
     callees: list[dict] = []
+    callees_truncated = False
     if include_callees and node_id in nx_graph:
         visited_out: set[str] = set()
         frontier_out: list[tuple[str, str]] = [
@@ -223,6 +231,9 @@ def handle_context(params: dict, ctx: LensContext) -> ToolResponse:
         for _level in range(depth):
             next_frontier_out: list[tuple[str, str]] = []
             for succ_id, via in frontier_out:
+                if len(callees) >= max_related:
+                    callees_truncated = True
+                    break
                 if succ_id in visited_out:
                     continue
                 visited_out.add(succ_id)
@@ -249,6 +260,8 @@ def handle_context(params: dict, ctx: LensContext) -> ToolResponse:
                     next_frontier_out.extend(
                         (s, succ_id) for s in nx_graph.successors(succ_id)
                     )
+            if callees_truncated:
+                break
             frontier_out = next_frontier_out
 
     # Related tests
@@ -293,9 +306,21 @@ def handle_context(params: dict, ctx: LensContext) -> ToolResponse:
     if include_callers:
         result["callers"] = callers
         result["caller_count"] = len(callers)
+        if callers_truncated:
+            result["callers_truncated"] = True
+            result["callers_note"] = (
+                f"Showing first {max_related} callers. "
+                "Use lens_find_usages for the complete list."
+            )
     if include_callees:
         result["callees"] = callees
         result["callee_count"] = len(callees)
+        if callees_truncated:
+            result["callees_truncated"] = True
+            result["callees_note"] = (
+                f"Showing first {max_related} callees. "
+                "Use lens_get_connections for the complete list."
+            )
     if include_tests:
         result["tests"] = tests
         result["test_count"] = len(tests)

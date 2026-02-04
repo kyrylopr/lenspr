@@ -718,47 +718,42 @@ def handle_dead_code(params: dict, ctx: LensContext) -> ToolResponse:
             "entry_points_used": len(entry_points),
         },
         warnings=[
-            "Dead code detection has limitations: dynamically called code may be "
-            "reported as dead. Review before deleting."
+            "Verify with lens_grep before deleting. Possible false positives: "
+            "dynamic dispatch (getattr/eval), string-based imports, "
+            "and code used only via external entry points not in the graph."
         ] if dead_code else [],
     )
 
 
-def handle_find_usages(params: dict, ctx: LensContext) -> ToolResponse:
-    """Find all usages of a node across the codebase."""
-    ctx.ensure_synced()
-    node_id = params["node_id"]
-    include_tests = params.get("include_tests", True)
-
-    node = database.get_node(node_id, ctx.graph_db)
+def _find_usages_for_node(
+    node_id: str, nx_graph, db_path: str, include_tests: bool = True,
+) -> dict | None:
+    """Find usages for a single node. Returns dict or None if not found."""
+    node = database.get_node(node_id, db_path)
     if not node:
-        return ToolResponse(
-            success=False,
-            error=f"Node not found: {node_id}",
-        )
-
-    nx_graph = ctx.get_graph()
+        return None
 
     usages: list[dict] = []
-    for pred_id in nx_graph.predecessors(node_id):
-        pred_data = nx_graph.nodes.get(pred_id, {})
-        pred_file = pred_data.get("file_path", "")
-        pred_name = pred_data.get("name", "")
+    if node_id in nx_graph:
+        for pred_id in nx_graph.predecessors(node_id):
+            pred_data = nx_graph.nodes.get(pred_id, {})
+            pred_file = pred_data.get("file_path", "")
+            pred_name = pred_data.get("name", "")
 
-        if not include_tests:
-            if pred_name.startswith("test_") or "test_" in pred_file:
-                continue
+            if not include_tests:
+                if pred_name.startswith("test_") or "test_" in pred_file:
+                    continue
 
-        edge_data = nx_graph.edges.get((pred_id, node_id), {})
-        usages.append({
-            "id": pred_id,
-            "name": pred_name,
-            "type": pred_data.get("type", ""),
-            "file_path": pred_file,
-            "start_line": pred_data.get("start_line", 0),
-            "edge_type": edge_data.get("type", "unknown"),
-            "is_test": pred_name.startswith("test_") or "test_" in pred_file,
-        })
+            edge_data = nx_graph.edges.get((pred_id, node_id), {})
+            usages.append({
+                "id": pred_id,
+                "name": pred_name,
+                "type": pred_data.get("type", ""),
+                "file_path": pred_file,
+                "start_line": pred_data.get("start_line", 0),
+                "edge_type": edge_data.get("type", "unknown"),
+                "is_test": pred_name.startswith("test_") or "test_" in pred_file,
+            })
 
     callers = [u for u in usages if u["edge_type"] == "calls"]
     importers = [u for u in usages if u["edge_type"] == "imports"]
@@ -768,19 +763,71 @@ def handle_find_usages(params: dict, ctx: LensContext) -> ToolResponse:
         if u["edge_type"] not in ("calls", "imports", "inherits")
     ]
 
-    return ToolResponse(
-        success=True,
-        data={
-            "node_id": node_id,
-            "node_name": node.name,
-            "total_usages": len(usages),
-            "callers": callers,
-            "caller_count": len(callers),
-            "importers": importers,
-            "importer_count": len(importers),
-            "inheritors": inheritors,
-            "inheritor_count": len(inheritors),
-            "other": other,
-            "test_usages": len([u for u in usages if u["is_test"]]),
-        },
-    )
+    result = {
+        "node_id": node_id,
+        "node_name": node.name,
+        "total_usages": len(usages),
+        "callers": callers,
+        "caller_count": len(callers),
+        "importers": importers,
+        "importer_count": len(importers),
+        "inheritors": inheritors,
+        "inheritor_count": len(inheritors),
+        "other": other,
+        "test_usages": len([u for u in usages if u["is_test"]]),
+    }
+
+    if len(usages) == 0:
+        result["warning"] = (
+            "0 usages found in the graph. Before concluding this is dead code, "
+            "verify with lens_grep — dynamic dispatch (getattr/importlib), "
+            "string-based references, and framework entry points may not appear "
+            "in the static graph."
+        )
+
+    return result
+
+
+def handle_find_usages(params: dict, ctx: LensContext) -> ToolResponse:
+    """Find all usages of a node (or multiple nodes) across the codebase."""
+    ctx.ensure_synced()
+    include_tests = params.get("include_tests", True)
+    nx_graph = ctx.get_graph()
+
+    # Batch mode: node_ids parameter
+    node_ids = params.get("node_ids")
+    if node_ids:
+        results = []
+        not_found = []
+        for nid in node_ids:
+            result = _find_usages_for_node(nid, nx_graph, ctx.graph_db, include_tests)
+            if result:
+                results.append(result)
+            else:
+                not_found.append(nid)
+
+        return ToolResponse(
+            success=True,
+            data={
+                "results": results,
+                "count": len(results),
+                "not_found": not_found,
+            },
+        )
+
+    # Single mode: node_id parameter
+    node_id = params.get("node_id", "")
+    if not node_id:
+        return ToolResponse(
+            success=False,
+            error="Either node_id or node_ids is required.",
+        )
+
+    result = _find_usages_for_node(node_id, nx_graph, ctx.graph_db, include_tests)
+    if not result:
+        return ToolResponse(
+            success=False,
+            error=f"Node not found: {node_id}",
+        )
+
+    return ToolResponse(success=True, data=result)
