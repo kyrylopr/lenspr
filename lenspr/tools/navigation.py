@@ -318,8 +318,10 @@ def handle_grep(params: dict, ctx: LensContext) -> ToolResponse:
     import fnmatch
     import re
 
+    from lenspr.parsers import is_supported_file
+
     pattern_str = params["pattern"]
-    file_glob = params.get("file_glob", "*.py")
+    file_glob = params.get("file_glob")  # None = all supported languages
     max_results = params.get("max_results", 50)
 
     try:
@@ -344,10 +346,18 @@ def handle_grep(params: dict, ctx: LensContext) -> ToolResponse:
         if any(part in skip_dirs for part in file_path.parts):
             continue
         rel = str(file_path.relative_to(ctx.project_root))
-        if not fnmatch.fnmatch(rel, file_glob) and not fnmatch.fnmatch(
-            file_path.name, file_glob
-        ):
-            continue
+
+        # Filter by file type
+        if file_glob is None:
+            # Default: all supported languages
+            if not is_supported_file(str(file_path)):
+                continue
+        else:
+            # User-specified glob pattern
+            if not fnmatch.fnmatch(rel, file_glob) and not fnmatch.fnmatch(
+                file_path.name, file_glob
+            ):
+                continue
 
         try:
             content = file_path.read_text(encoding="utf-8")

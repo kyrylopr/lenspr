@@ -1,12 +1,51 @@
-.PHONY: install dev test test-cov lint lint-fix format typecheck check clean build setup serve demo health annotate annotate-all annotate-node annotate-file benchmark
+.PHONY: install install-all dev test test-cov lint lint-fix format typecheck check clean build setup serve demo health annotate annotate-all annotate-node annotate-file benchmark check-deps
 
-# Install package in production mode
+# ============================================================================
+# INSTALLATION
+# ============================================================================
+
+# Install package with Python support only
 install:
 	pip install -e .
 
-# Install with dev + mcp dependencies
+# Install with ALL features (Python + TypeScript + MCP + Watch) - RECOMMENDED
+install-all:
+	pip install -e ".[all]"
+	@echo ""
+	@echo "✓ LensPR installed with all features"
+	@echo ""
+	@$(MAKE) check-deps --no-print-directory
+
+# Install for development (all features + dev tools)
 dev:
-	pip install -e ".[dev,mcp]"
+	pip install -e ".[all-dev]"
+	@echo ""
+	@echo "✓ Development environment ready"
+	@echo ""
+	@$(MAKE) check-deps --no-print-directory
+
+# Check all dependencies and features
+check-deps:
+	@echo "Feature Status:"
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@python3 -c "import lenspr; print('  Python parser:     ✓')" 2>/dev/null || echo "  Python parser:     ✗"
+	@python3 -c "from lenspr.parsers import TYPESCRIPT_AVAILABLE; print('  TypeScript parser: ✓' if TYPESCRIPT_AVAILABLE else '  TypeScript parser: ✗ (pip install lenspr[typescript])')"
+	@python3 -c "import mcp; print('  MCP server:        ✓')" 2>/dev/null || echo "  MCP server:        ✗ (pip install lenspr[mcp])"
+	@python3 -c "import watchdog; print('  File watcher:      ✓')" 2>/dev/null || echo "  File watcher:      ✗ (pip install lenspr[watch])"
+	@echo ""
+	@echo "Node.js (for TypeScript type inference):"
+	@node --version 2>/dev/null && echo "  ✓ Node.js installed" || echo "  ✗ Node.js not found (install Node.js 18+ for full TypeScript support)"
+	@echo ""
+
+# Install TypeScript dependencies for Node.js resolver
+install-ts-deps:
+	@echo "Installing TypeScript dependencies..."
+	cd lenspr/helpers && npm install
+	@echo "✓ TypeScript dependencies installed"
+
+# ============================================================================
+# TESTING
+# ============================================================================
 
 # Run tests
 test:
@@ -15,6 +54,14 @@ test:
 # Run tests with coverage
 test-cov:
 	pytest tests/ -v --cov=lenspr --cov-report=term-missing
+
+# Run TypeScript parser tests specifically
+test-ts:
+	pytest tests/test_typescript_parser.py tests/test_ts_resolver.py -v
+
+# ============================================================================
+# LINTING & FORMATTING
+# ============================================================================
 
 # Lint with ruff
 lint:
@@ -35,6 +82,10 @@ typecheck:
 # Run all checks (lint + typecheck + test)
 check: lint typecheck test
 
+# ============================================================================
+# BUILD & PUBLISH
+# ============================================================================
+
 # Clean build artifacts and caches
 clean:
 	rm -rf dist/ build/ *.egg-info .pytest_cache .mypy_cache .ruff_cache
@@ -43,6 +94,10 @@ clean:
 # Clean LensPR graph data
 clean-lens:
 	rm -rf .lens/
+
+# Clean TypeScript resolver cache
+clean-ts-cache:
+	rm -f .lens/resolve_cache.db
 
 # Build package
 build: clean
@@ -56,6 +111,10 @@ publish: build
 publish-test: build
 	twine upload --repository testpypi dist/*
 
+# ============================================================================
+# LENSPR COMMANDS
+# ============================================================================
+
 # Configure MCP for Claude Code (creates .mcp.json)
 setup:
 	lenspr setup .
@@ -63,6 +122,22 @@ setup:
 # Start MCP server on current directory
 serve:
 	lenspr serve .
+
+# Initialize graph (auto-detects Python + TypeScript/JS files)
+init:
+	lenspr init .
+
+# Force re-initialize
+init-force:
+	lenspr init --force .
+
+# Sync graph with file changes
+sync:
+	lenspr sync .
+
+# Watch for file changes and auto-sync
+watch:
+	lenspr watch .
 
 # Demo: parse lenspr itself
 demo:
@@ -77,6 +152,14 @@ tree:
 # Show graph health report
 health:
 	@python3 -c "import lenspr; lenspr.init('.'); r=lenspr.handle_tool('lens_health',{}); d=r['data']; print(f'Nodes: {d[\"total_nodes\"]} | Edges: {d[\"total_edges\"]} | Confidence: {d[\"confidence_pct\"]}% | Docstrings: {d[\"docstring_pct\"]}%')"
+
+# Show supported languages
+languages:
+	@python3 -c "from lenspr.parsers import MultiParser; p=MultiParser(); print('Supported languages:', ', '.join(p.supported_languages)); print('Extensions:', ', '.join(p.get_file_extensions()))"
+
+# ============================================================================
+# ANNOTATIONS
+# ============================================================================
 
 # Show annotation coverage
 annotations:
@@ -105,6 +188,10 @@ annotate-nodes:
 # Annotate all nodes in a file: make annotate-file FILE=lenspr/cli.py
 annotate-file:
 	@lenspr annotate . --file $(FILE)
+
+# ============================================================================
+# BENCHMARKS
+# ============================================================================
 
 # Run benchmark (requires ANTHROPIC_API_KEY in eval/.env)
 benchmark:
@@ -138,3 +225,35 @@ benchmark-summary:
 	@echo "  - Iteration savings: 55%"
 	@echo "  - Success rate: +200%"
 	@echo "==============================================="
+
+# ============================================================================
+# HELP
+# ============================================================================
+
+help:
+	@echo "LensPR Makefile Commands"
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo ""
+	@echo "Installation:"
+	@echo "  make install      Install with Python support only"
+	@echo "  make install-all  Install with ALL features (recommended)"
+	@echo "  make dev          Install for development"
+	@echo "  make check-deps   Check installed features"
+	@echo ""
+	@echo "Graph Operations:"
+	@echo "  make init         Initialize graph (auto-detects languages)"
+	@echo "  make sync         Sync graph with file changes"
+	@echo "  make watch        Auto-sync on file changes"
+	@echo "  make setup        Configure MCP for Claude Code"
+	@echo "  make serve        Start MCP server"
+	@echo ""
+	@echo "Development:"
+	@echo "  make test         Run tests"
+	@echo "  make test-ts      Run TypeScript parser tests"
+	@echo "  make lint         Run linter"
+	@echo "  make check        Run all checks"
+	@echo ""
+	@echo "Info:"
+	@echo "  make health       Show graph health"
+	@echo "  make languages    Show supported languages"
+	@echo "  make annotations  Show annotation coverage"

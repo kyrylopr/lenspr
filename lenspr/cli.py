@@ -236,6 +236,7 @@ def cmd_watch(args: argparse.Namespace) -> None:
     import time
 
     import lenspr
+    from lenspr.parsers import is_supported_file
 
     path = str(Path(args.path).resolve())
     try:
@@ -248,16 +249,29 @@ def cmd_watch(args: argparse.Namespace) -> None:
         def __init__(self) -> None:
             self._pending = False
 
+        def _should_track(self, file_path: str) -> bool:
+            """Check if file should trigger a sync."""
+            # Skip common non-project directories
+            skip_parts = {
+                "node_modules", "__pycache__", ".git", ".venv", "venv",
+                ".mypy_cache", ".pytest_cache", ".ruff_cache", "dist", "build",
+                ".next", ".nuxt", "coverage", ".lens",
+            }
+            p = Path(file_path)
+            if any(part in skip_parts for part in p.parts):
+                return False
+            return is_supported_file(file_path)
+
         def on_modified(self, event: object) -> None:
-            if hasattr(event, "src_path") and event.src_path.endswith(".py"):  # type: ignore[union-attr]
+            if hasattr(event, "src_path") and self._should_track(event.src_path):  # type: ignore[union-attr]
                 self._pending = True
 
         def on_created(self, event: object) -> None:
-            if hasattr(event, "src_path") and event.src_path.endswith(".py"):  # type: ignore[union-attr]
+            if hasattr(event, "src_path") and self._should_track(event.src_path):  # type: ignore[union-attr]
                 self._pending = True
 
         def on_deleted(self, event: object) -> None:
-            if hasattr(event, "src_path") and event.src_path.endswith(".py"):  # type: ignore[union-attr]
+            if hasattr(event, "src_path") and self._should_track(event.src_path):  # type: ignore[union-attr]
                 self._pending = True
 
     handler = SyncHandler()
@@ -265,7 +279,11 @@ def cmd_watch(args: argparse.Namespace) -> None:
     observer.schedule(handler, path, recursive=True)
     observer.start()
 
-    print(f"Watching {path} for changes... (Ctrl+C to stop)")
+    # Show supported extensions
+    from lenspr.parsers import get_supported_extensions
+    exts = ", ".join(get_supported_extensions())
+    print(f"Watching {path} for changes ({exts})... (Ctrl+C to stop)")
+
     try:
         while True:
             time.sleep(1)

@@ -186,6 +186,8 @@ def handle_delete_node(params: dict, ctx: LensContext) -> ToolResponse:
 
 def handle_rename(params: dict, ctx: LensContext) -> ToolResponse:
     """Rename a function/class/method across the entire project."""
+    from lenspr.parsers import get_supported_extensions
+
     node_id = params["node_id"]
     new_name = params["new_name"]
 
@@ -227,23 +229,32 @@ def handle_rename(params: dict, ctx: LensContext) -> ToolResponse:
             files_modified.add(caller.file_path)
             refs_updated += caller_content.count(new_name)
 
-    # Scan for string references not auto-renamed
+    # Scan for string references not auto-renamed in all supported files
     needs_review: list[dict] = []
-    for py_file in ctx.project_root.rglob("*.py"):
-        rel = str(py_file.relative_to(ctx.project_root))
-        if rel in files_modified:
-            continue
-        try:
-            text = py_file.read_text(encoding="utf-8")
-        except Exception:
-            continue
-        for i, line in enumerate(text.splitlines(), 1):
-            if old_name in line:
-                needs_review.append({
-                    "file": rel,
-                    "line": i,
-                    "context": line.strip(),
-                })
+    extensions = get_supported_extensions()
+
+    for ext in extensions:
+        for src_file in ctx.project_root.rglob(f"*{ext}"):
+            rel = str(src_file.relative_to(ctx.project_root))
+            if rel in files_modified:
+                continue
+            # Skip common directories
+            if any(part in src_file.parts for part in (
+                "node_modules", "__pycache__", ".git", ".venv", "venv",
+                ".mypy_cache", ".pytest_cache", "dist", "build", ".lens"
+            )):
+                continue
+            try:
+                text = src_file.read_text(encoding="utf-8")
+            except Exception:
+                continue
+            for i, line in enumerate(text.splitlines(), 1):
+                if old_name in line:
+                    needs_review.append({
+                        "file": rel,
+                        "line": i,
+                        "context": line.strip(),
+                    })
 
     if needs_review:
         warnings.append(

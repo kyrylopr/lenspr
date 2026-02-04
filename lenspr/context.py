@@ -15,7 +15,7 @@ from lenspr import database
 from lenspr import graph as graph_ops
 from lenspr.models import Node, SyncResult
 from lenspr.parsers.base import ProgressCallback
-from lenspr.parsers.python_parser import PythonParser
+from lenspr.parsers.multi import MultiParser
 from lenspr.patcher import PatchBuffer
 
 logger = logging.getLogger(__name__)
@@ -42,7 +42,7 @@ class LensContext:
         self.patch_buffer = PatchBuffer()
 
         self._graph: nx.DiGraph | None = None
-        self._parser = PythonParser()
+        self._parser = MultiParser()
         self._lock = threading.Lock()
         self._lock_path = self.lens_dir / ".lock"
 

@@ -220,6 +220,8 @@ def handle_commit_scope(params: dict, ctx: LensContext) -> ToolResponse:
 
     Shows which functions/classes were modified in a commit.
     """
+    from lenspr.parsers import is_supported_file
+
     commit_hash = params["commit"]
 
     if not _is_git_repo(str(ctx.project_root)):
@@ -240,14 +242,15 @@ def handle_commit_scope(params: dict, ctx: LensContext) -> ToolResponse:
             error=f"Invalid commit: {commit_hash}",
         )
 
-    changed_files = [f for f in output.strip().split("\n") if f.endswith(".py")]
+    # Filter to supported source files
+    changed_files = [f for f in output.strip().split("\n") if is_supported_file(f)]
 
     if not changed_files:
         return ToolResponse(
             success=True,
             data={
                 "commit": commit_hash,
-                "message": "No Python files changed",
+                "message": "No source files changed",
                 "affected_nodes": [],
                 "count": 0,
             },
@@ -340,6 +343,8 @@ def handle_recent_changes(params: dict, ctx: LensContext) -> ToolResponse:
 
     Useful for understanding what's been modified recently.
     """
+    from lenspr.parsers import is_supported_file
+
     limit = params.get("limit", 5)
     file_filter = params.get("file_path")
 
@@ -359,7 +364,7 @@ def handle_recent_changes(params: dict, ctx: LensContext) -> ToolResponse:
 
     if file_filter:
         git_args.extend(["--", file_filter])
-    # Note: we don't filter by *.py here as git doesn't support glob in pathspec
+    # Note: we don't filter by extension here as git doesn't support glob in pathspec
     # Instead, we filter the files in the result
 
     success, output = _run_git(git_args, str(ctx.project_root))
@@ -387,7 +392,7 @@ def handle_recent_changes(params: dict, ctx: LensContext) -> ToolResponse:
                 "message": parts[3],
                 "files": [],
             }
-        elif line.strip() and line.endswith(".py"):
+        elif line.strip() and is_supported_file(line.strip()):
             if current_commit:
                 current_commit["files"].append(line.strip())
 

@@ -121,6 +121,23 @@ def _is_lenspr_file(file_path: str) -> bool:
     return "lenspr" in path.parts and file_path.endswith(".py")
 
 
+def _is_tracked_file(file_path: str) -> bool:
+    """Check if a file should be tracked by the graph."""
+    from lenspr.parsers import is_supported_file
+
+    # Skip common non-project directories
+    skip_parts = {
+        "node_modules", "__pycache__", ".git", ".venv", "venv",
+        ".mypy_cache", ".pytest_cache", ".ruff_cache", "dist", "build",
+        ".next", ".nuxt", "coverage", ".lens",
+    }
+    path = Path(file_path)
+    if any(part in skip_parts for part in path.parts):
+        return False
+
+    return is_supported_file(file_path)
+
+
 def _start_watcher(project_path: str, hot_reload: bool = False) -> None:
     """Start a background file watcher that auto-syncs on changes.
 
@@ -160,11 +177,11 @@ def _start_watchdog_watcher(
         def on_modified(self, event: object) -> None:
             if hasattr(event, "src_path"):
                 src_path = event.src_path  # type: ignore[union-attr]
-                if src_path.endswith(".py"):
+                if _is_tracked_file(src_path):
                     with self._lock:
                         self._pending_sync = True
                         self._changed_files.add(src_path)
-                        # Track if lenspr code changed
+                        # Track if lenspr code changed (for hot-reload)
                         if hot_reload and _is_lenspr_file(src_path):
                             self._pending_reload = True
 

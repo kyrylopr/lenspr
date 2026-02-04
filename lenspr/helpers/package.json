@@ -1,0 +1,16 @@
+{
+  "name": "lenspr-ts-resolver",
+  "version": "0.1.0",
+  "description": "TypeScript resolver using TypeScript Compiler API for LensPR",
+  "main": "ts_resolver.js",
+  "scripts": {
+    "test": "node test_resolver.js"
+  },
+  "dependencies": {
+    "typescript": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "private": true
+}

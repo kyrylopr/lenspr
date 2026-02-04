@@ -17,8 +17,7 @@ Instead of grep/read loops, Claude gets structured tools: one `lens_context` cal
 > **This is a learning project.** I'm experimenting with LLM-assisted code development.
 > Don't judge too harshly if something doesn't work!
 >
-> **Want to help?** I'm looking for contributors for JS/TS parser support.
-> [Open an issue](https://github.com/kyrylopr/lenspr/issues) to discuss!
+> **Want to help?** [Open an issue](https://github.com/kyrylopr/lenspr/issues) to discuss!
 
 ---
 
@@ -27,10 +26,10 @@ Instead of grep/read loops, Claude gets structured tools: one `lens_context` cal
 ### Step 1: Install
 
 ```bash
-# Recommended: using pipx (isolated, available globally)
-pipx install 'lenspr[mcp]'
+# Recommended: full installation with all features
+pip install 'lenspr[all]'
 
-# Or with pip (in your current environment)
+# Or minimal (Python + MCP only)
 pip install 'lenspr[mcp]'
 ```
 
@@ -38,7 +37,7 @@ pip install 'lenspr[mcp]'
 
 ```bash
 cd ./my_project
-lenspr init .                   # Parses all Python files, builds the graph
+lenspr init .                   # Parses Python + TypeScript/JS files, builds graph
 lenspr setup .                  # Creates .mcp.json config for Claude Code
 ```
 
@@ -66,9 +65,11 @@ lenspr impact . my.function     # Check what breaks if you change it
 ## How It Works
 
 ```
-Source Files (.py)
+Source Files (.py, .ts, .tsx, .js, .jsx)
        ↓
-   AST Parser (Python ast + jedi)
+   Parsers:
+   - Python: AST + jedi (96%+ resolution)
+   - TypeScript/JS: tree-sitter + TS Compiler API (80%+ resolution)
        ↓
    SQLite Graph (nodes + edges)
        ↓
@@ -77,7 +78,7 @@ Source Files (.py)
    Safe Modifications (3-level validation)
 ```
 
-LensPR parses Python into a directed graph:
+LensPR parses code into a directed graph:
 - **Nodes** = functions, classes, methods, modules
 - **Edges** = calls, imports, inheritance, uses
 
@@ -261,8 +262,13 @@ lenspr/
 ├── mcp_server.py        # MCP server (29 tools)
 ├── cli.py               # CLI entry point
 ├── parsers/
-│   ├── base.py          # BaseParser interface
-│   └── python_parser.py # Python AST + jedi
+│   ├── base.py              # BaseParser interface
+│   ├── python_parser.py     # Python AST + jedi
+│   ├── typescript_parser.py # TypeScript/JS tree-sitter
+│   ├── ts_resolver.py       # Python-based TS resolver (fallback)
+│   └── node_resolver.py     # Node.js TypeScript Compiler API
+├── helpers/
+│   └── ts_resolver.js       # Node.js resolver script
 └── tools/
     ├── navigation.py    # Search, list, context
     ├── analysis.py      # Impact, health, dead code
@@ -281,8 +287,8 @@ Full architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 | Tests | 188 passed |
 | Graph Confidence | 96% |
 | MCP Tools | 29 |
-| Python Support | ✅ Yes |
-| JS/TS Support | ❌ Not yet (help wanted!) |
+| Python Support | ✅ Yes (AST + jedi) |
+| JS/TS Support | ✅ Yes (tree-sitter + TypeScript Compiler API) |
 
 <details>
 <summary>Detailed benchmark results</summary>
@@ -302,25 +308,52 @@ Run yourself: `make benchmark`
 
 ## Known Limitations
 
-- **Python only** — JS/TS/Go/Rust parsers not implemented yet
-- **Dynamic code** — `getattr`, `eval()` can't be fully tracked
+- **Dynamic code** — `getattr`, `eval()` (Python), dynamic imports (JS) can't be fully tracked
 - **Large projects** — not tested on >10k files
+- **TypeScript requires Node.js** — Node.js 18+ needed for full type inference
 - **Alpha stage** — expect rough edges
 
 ## Contributing
 
 I especially welcome:
-- **JS/TS parser** — `BaseParser` interface is ready
+- **Other language parsers** — Go, Rust, Java (`BaseParser` interface is ready)
 - **Bug reports** — even "this doesn't work" is helpful
 - **Ideas** — what would make this useful for you?
 
 ## Installation Options
 
 ```bash
-pip install lenspr           # Core only
-pip install 'lenspr[mcp]'    # + MCP server for Claude
-pip install 'lenspr[dev]'    # + dev tools
+pip install lenspr               # Core only (Python parser)
+pip install 'lenspr[mcp]'        # + MCP server for Claude
+pip install 'lenspr[typescript]' # + TypeScript/JavaScript parser
+pip install 'lenspr[dev]'        # + dev tools
 ```
+
+### TypeScript/JavaScript Support
+
+For TypeScript/JavaScript projects with full type inference (80%+ resolution confidence):
+
+```bash
+# 1. Install with TypeScript extra
+pip install 'lenspr[typescript]'
+
+# 2. Ensure Node.js 18+ is installed
+node --version  # Should be v18.0.0 or higher
+
+# 3. Initialize on your TS/JS project
+cd ./my-react-app
+lenspr init .
+```
+
+**Requirements:**
+- Node.js 18+ (for TypeScript Compiler API)
+- Project should have `tsconfig.json` or `jsconfig.json`
+- For best results, install type definitions (`@types/*` packages)
+
+**Resolution confidence:**
+- **RESOLVED**: Cross-file function calls with full type inference
+- **EXTERNAL**: Calls to npm packages (react, lodash, etc.)
+- **INFERRED**: Fallback when type information unavailable
 
 ## License
 
