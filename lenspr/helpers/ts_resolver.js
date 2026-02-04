@@ -53,16 +53,8 @@ class TypeScriptResolver {
     }
 
     _initializeProgram() {
-        // Find tsconfig.json
-        const configPath = ts.findConfigFile(
-            this.projectRoot,
-            ts.sys.fileExists,
-            'tsconfig.json'
-        ) || ts.findConfigFile(
-            this.projectRoot,
-            ts.sys.fileExists,
-            'jsconfig.json'
-        );
+        // Find all config files (tsconfig.json, jsconfig.json) in project
+        const configPaths = this._findConfigFiles(this.projectRoot);
 
         let compilerOptions = {
             target: ts.ScriptTarget.ESNext,
@@ -79,7 +71,8 @@ class TypeScriptResolver {
 
         let fileNames = [];
 
-        if (configPath) {
+        // Process each config file found
+        for (const configPath of configPaths) {
             const configFile = ts.readConfigFile(configPath, ts.sys.readFile);
             if (!configFile.error) {
                 const parsed = ts.parseJsonConfigFileContent(
@@ -87,12 +80,17 @@ class TypeScriptResolver {
                     ts.sys,
                     path.dirname(configPath)
                 );
+                // Merge options (later configs override)
                 compilerOptions = { ...compilerOptions, ...parsed.options };
-                fileNames = parsed.fileNames;
+                // Collect all file names
+                fileNames.push(...parsed.fileNames);
             }
         }
 
-        // If no files from config, find them manually
+        // Deduplicate file names
+        fileNames = [...new Set(fileNames)];
+
+        // If no files from configs, find them manually
         if (fileNames.length === 0) {
             fileNames = this._findSourceFiles(this.projectRoot);
         }
@@ -112,6 +110,36 @@ class TypeScriptResolver {
                 }
             }
         }
+    }
+
+    _findConfigFiles(dir) {
+        const configs = [];
+        const configNames = ['tsconfig.json', 'jsconfig.json'];
+        const skipDirs = new Set([
+            'node_modules', '.git', 'dist', 'build', '.next',
+            'coverage', '.cache', '__pycache__', '.lens'
+        ]);
+
+        const walk = (currentDir) => {
+            try {
+                const entries = fs.readdirSync(currentDir, { withFileTypes: true });
+                for (const entry of entries) {
+                    const fullPath = path.join(currentDir, entry.name);
+                    if (entry.isDirectory()) {
+                        if (!skipDirs.has(entry.name) && !entry.name.startsWith('.')) {
+                            walk(fullPath);
+                        }
+                    } else if (entry.isFile() && configNames.includes(entry.name)) {
+                        configs.push(fullPath);
+                    }
+                }
+            } catch (e) {
+                // Skip directories we can't read
+            }
+        };
+
+        walk(dir);
+        return configs;
     }
 
     _findSourceFiles(dir) {

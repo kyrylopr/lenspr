@@ -62,6 +62,60 @@ class LensContext:
         """Clear cached NetworkX graph. Called after any mutation."""
         self._graph = None
 
+    def has_pending_changes(self) -> bool:
+        """Check if any files have changed since last sync."""
+        old_fingerprints = self._load_fingerprints()
+        if not old_fingerprints:
+            return False  # No fingerprints = no way to compare
+
+        extensions = set(self._parser.get_file_extensions())
+        skip_dirs = {
+            "__pycache__", ".git", ".lens", ".venv", "venv", "env",
+            "node_modules", ".mypy_cache", ".pytest_cache", ".ruff_cache",
+        }
+
+        for file_path in self.project_root.rglob("*"):
+            if not file_path.is_file():
+                continue
+            if any(part in skip_dirs for part in file_path.parts):
+                continue
+            if file_path.suffix not in extensions:
+                continue
+
+            rel = str(file_path.relative_to(self.project_root))
+            stat = file_path.stat()
+
+            if rel not in old_fingerprints:
+                return True  # New file
+            old = old_fingerprints[rel]
+            if stat.st_mtime != old.get("mtime") or stat.st_size != old.get("size"):
+                return True  # Changed file
+
+        return False
+
+    def ensure_synced(self) -> None:
+        """
+        Ensure graph is in sync with files. Call before read operations.
+
+        Raises:
+            RuntimeError: If sync fails (parser error, etc.)
+        """
+        if not self.has_pending_changes():
+            return
+
+        try:
+            result = self.incremental_sync()
+            total = len(result.added) + len(result.modified) + len(result.deleted)
+            if total > 0:
+                logger.info(
+                    "Auto-synced before read: +%d ~%d -%d",
+                    len(result.added), len(result.modified), len(result.deleted)
+                )
+        except Exception as e:
+            raise RuntimeError(
+                f"Graph sync failed. Cannot proceed with stale data: {e}"
+            ) from e
+
     def reparse_file(self, file_path: Path) -> None:
         """
         Reparse a single file and update the database.

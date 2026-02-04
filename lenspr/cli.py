@@ -19,6 +19,10 @@ def main() -> None:
     p_init = subparsers.add_parser("init", help="Initialize LensPR on a project")
     p_init.add_argument("path", nargs="?", default=".", help="Project root (default: cwd)")
     p_init.add_argument("--force", action="store_true", help="Reinitialize even if .lens/ exists")
+    p_init.add_argument(
+        "--install-deps", action="store_true",
+        help="Auto-install npm dependencies for JS/TS packages"
+    )
 
     # -- sync --
     p_sync = subparsers.add_parser("sync", help="Resync graph with filesystem changes")
@@ -141,14 +145,58 @@ def _cli_progress(current: int, total: int, file_path: str) -> None:
 
 def cmd_init(args: argparse.Namespace) -> None:
     import lenspr
+    from lenspr.monorepo import find_packages, install_dependencies
     from lenspr.stats import format_stats_report
 
-    path = str(Path(args.path).resolve())
+    path = Path(args.path).resolve()
     print(f"Initializing LensPR at {path}")
     print()
+
+    # Detect and setup JS/TS packages
+    monorepo = find_packages(path)
+    if monorepo.packages:
+        pkg_count = len(monorepo.packages)
+        missing_count = len(monorepo.missing_node_modules)
+
+        if monorepo.is_monorepo:
+            print(f"Detected monorepo with {pkg_count} JS/TS packages")
+        elif pkg_count == 1:
+            print(f"Detected JS/TS package: {monorepo.packages[0].name or monorepo.packages[0].path.name}")
+
+        if missing_count > 0:
+            if args.install_deps:
+                print(f"Installing dependencies for {missing_count} package(s)...")
+
+                def npm_progress(current: int, total: int, pkg_path: str) -> None:
+                    name = Path(pkg_path).name
+                    print(f"  [{current}/{total}] npm install in {name}...")
+
+                results = install_dependencies(
+                    monorepo.missing_node_modules,
+                    progress_callback=npm_progress,
+                )
+                success = sum(1 for v in results.values() if v)
+                if success < missing_count:
+                    print(f"  Warning: {missing_count - success} package(s) failed to install")
+                print()
+            else:
+                # Show hint about --install-deps
+                print(f"  ⚠ {missing_count} package(s) missing node_modules")
+                for pkg_path in monorepo.missing_node_modules[:3]:
+                    rel = pkg_path.relative_to(path) if pkg_path != path else Path(".")
+                    print(f"    - {rel}")
+                if missing_count > 3:
+                    print(f"    ... and {missing_count - 3} more")
+                print()
+                print("  Tip: Use --install-deps to auto-install, or run:")
+                for pkg_path in monorepo.missing_node_modules[:2]:
+                    rel = pkg_path.relative_to(path) if pkg_path != path else Path(".")
+                    print(f"    cd {rel} && npm install")
+                print()
+
     try:
         ctx, stats = lenspr.init(
-            path,
+            str(path),
             force=args.force,
             progress_callback=_cli_progress,
             collect_stats=True,

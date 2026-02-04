@@ -216,17 +216,41 @@ class MultiParser(BaseParser):
 
     def _collect_warnings(self, stats: ParseStats, root_path: Path) -> None:
         """Collect warnings based on project analysis."""
-        # Check for tsconfig.json
+        # Check for JS/TS projects (including monorepos)
         if "TypeScript" in stats.languages or "JavaScript" in stats.languages:
-            tsconfig = root_path / "tsconfig.json"
-            jsconfig = root_path / "jsconfig.json"
-            if not tsconfig.exists() and not jsconfig.exists():
+            from lenspr.monorepo import find_packages
+
+            monorepo = find_packages(root_path)
+
+            # Check for tsconfig/jsconfig
+            has_config = False
+            if monorepo.packages:
+                # Check in each package directory
+                for pkg in monorepo.packages:
+                    if (pkg.path / "tsconfig.json").exists() or (pkg.path / "jsconfig.json").exists():
+                        has_config = True
+                        break
+            else:
+                # Check at root
+                has_config = (root_path / "tsconfig.json").exists() or (root_path / "jsconfig.json").exists()
+
+            if not has_config:
                 stats.add_warning("No tsconfig.json or jsconfig.json found - TS resolution may be degraded")
 
             # Check for node_modules
-            node_modules = root_path / "node_modules"
-            if not node_modules.exists():
-                stats.add_warning("node_modules not found - run 'npm install' for better type resolution")
+            if monorepo.packages:
+                # Monorepo: check each package
+                missing = monorepo.missing_node_modules
+                if missing:
+                    if len(missing) == 1:
+                        rel = missing[0].relative_to(root_path) if missing[0] != root_path else Path(".")
+                        stats.add_warning(f"node_modules not found in {rel} - run 'npm install' or use --install-deps")
+                    else:
+                        stats.add_warning(f"node_modules missing in {len(missing)} packages - use --install-deps")
+            else:
+                # Single project
+                if not (root_path / "node_modules").exists():
+                    stats.add_warning("node_modules not found - run 'npm install' for better type resolution")
 
         # Check resolution quality per language
         for lang_name, lang_stats in stats.languages.items():

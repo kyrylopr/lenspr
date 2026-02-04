@@ -41,6 +41,12 @@ lenspr init .                   # Parses Python + TypeScript/JS files, builds gr
 lenspr setup .                  # Creates .mcp.json config for Claude Code
 ```
 
+> **Monorepo?** LensPR auto-detects package.json files in subdirectories.
+> Use `--install-deps` to auto-install npm dependencies:
+> ```bash
+> lenspr init . --install-deps   # Auto-runs npm install in each JS/TS package
+> ```
+
 > **Re-initializing?** Use `lenspr init . --force` or delete the `.lens/` folder first.
 
 ### Step 3: Restart VSCode
@@ -91,14 +97,18 @@ Claude gets structured tools to navigate and modify code safely.
 | **Impact Analysis** | Know what breaks before you change anything |
 | **29 MCP Tools** | Navigation, search, analysis, modification, git integration |
 | **3-Level Validation** | Syntax → Structure → Signature checks |
-| **Auto-Sync** | Graph updates automatically when files change |
+| **Atomic Modifications** | File changes roll back if graph sync fails |
+| **Auto-Sync** | Graph updates automatically (50ms poll + 200ms debounce) |
+| **Auto-Indentation** | Patches auto-adjust to match target indentation |
+| **Monorepo Support** | Auto-detects packages, --install-deps for npm install |
 | **Semantic Annotations** | Hybrid approach: Claude writes summaries, patterns detect roles |
 | **Git Integration** | Blame, history, commit scope analysis |
 
 ## All CLI Commands
 
 ```bash
-lenspr init <path>              # Build the code graph (shows language stats)
+lenspr init <path>              # Build the code graph (auto-detects monorepos)
+lenspr init <path> --install-deps  # Also runs npm install for JS/TS packages
 lenspr setup <path>             # Create .mcp.json for Claude Code
 lenspr status <path>            # Show graph stats (nodes, edges, confidence)
 lenspr doctor <path>            # Diagnose project configuration issues
@@ -189,9 +199,14 @@ The graph syncs automatically **when MCP server is running**.
 
 | Mode | Auto-Sync | How |
 |------|-----------|-----|
-| **Claude Code** | ✅ Yes | File watcher syncs on every .py change |
+| **Claude Code** | ✅ Yes | File watcher (50ms poll + 200ms debounce) |
 | **CLI commands** | ❌ No | Run `lenspr sync .` manually |
 | **`lenspr watch`** | ✅ Yes | Standalone watcher |
+
+**Reliability guarantees:**
+- Read operations (`lens_get_node`, `lens_search`, etc.) auto-sync before returning data
+- Write operations (`lens_update_node`, etc.) are **atomic** — if graph sync fails, file is rolled back
+- Patches auto-adjust indentation to match target location (methods in classes work correctly)
 
 ## Semantic Annotations
 
@@ -285,7 +300,7 @@ Full architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
 | Metric | Value |
 |--------|-------|
-| Tests | 224 passed |
+| Tests | 227 passed |
 | Python Resolution | 96%+ |
 | TypeScript Resolution | 90%+ |
 | MCP Tools | 29 |

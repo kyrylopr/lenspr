@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 
 def handle_check_impact(params: dict, ctx: LensContext) -> ToolResponse:
     """Analyze what would be affected by changing a node."""
+    ctx.ensure_synced()
     nx_graph = ctx.get_graph()
     node_id = params["node_id"]
     depth = params.get("depth", 2)
@@ -90,6 +91,7 @@ def handle_check_impact(params: dict, ctx: LensContext) -> ToolResponse:
 
 def handle_validate_change(params: dict, ctx: LensContext) -> ToolResponse:
     """Dry-run validation without applying changes."""
+    ctx.ensure_synced()
     node_id = params["node_id"]
     new_source = params["new_source"]
 
@@ -193,6 +195,7 @@ def handle_diff(params: dict, ctx: LensContext) -> ToolResponse:
 
 def handle_health(params: dict, ctx: LensContext) -> ToolResponse:
     """Generate health report for the code graph."""
+    ctx.ensure_synced()
     nx_graph = ctx.get_graph()
 
     project_nodes = 0
@@ -279,6 +282,8 @@ def handle_health(params: dict, ctx: LensContext) -> ToolResponse:
 
 def handle_dependencies(params: dict, ctx: LensContext) -> ToolResponse:
     """List all external dependencies (stdlib and third-party)."""
+    ctx.ensure_synced()
+
     import sys
     from collections import defaultdict
 
@@ -394,6 +399,7 @@ def handle_dependencies(params: dict, ctx: LensContext) -> ToolResponse:
 
 def handle_dead_code(params: dict, ctx: LensContext) -> ToolResponse:
     """Find potentially dead code not reachable from entry points."""
+    ctx.ensure_synced()
     nx_graph = ctx.get_graph()
 
     entry_points: list[str] = params.get("entry_points", [])
@@ -630,6 +636,7 @@ def handle_dead_code(params: dict, ctx: LensContext) -> ToolResponse:
 
 def handle_find_usages(params: dict, ctx: LensContext) -> ToolResponse:
     """Find all usages of a node across the codebase."""
+    ctx.ensure_synced()
     node_id = params["node_id"]
     include_tests = params.get("include_tests", True)
 

@@ -9,11 +9,59 @@ from pathlib import Path
 from lenspr.models import Node, Patch, PatchError
 
 
+def _get_indentation(line: str) -> str:
+    """Extract leading whitespace from a line."""
+    return line[: len(line) - len(line.lstrip())]
+
+
+def _adjust_indentation(new_source: str, target_indent: str) -> str:
+    """
+    Adjust indentation of new_source to match target_indent.
+
+    Detects the indentation of the first non-empty line in new_source,
+    then re-indents all lines to use target_indent instead.
+    """
+    lines = new_source.splitlines(keepends=True)
+    if not lines:
+        return new_source
+
+    # Find first non-empty line to detect source indentation
+    source_indent = ""
+    for line in lines:
+        stripped = line.lstrip()
+        if stripped and not stripped.startswith("#"):
+            source_indent = _get_indentation(line)
+            break
+
+    # If indentation already matches, return as-is
+    if source_indent == target_indent:
+        return new_source
+
+    # Re-indent all lines
+    result = []
+    for line in lines:
+        # Empty lines or whitespace-only lines
+        if not line.strip():
+            result.append(line)
+            continue
+
+        # Remove source indentation, add target indentation
+        if line.startswith(source_indent):
+            result.append(target_indent + line[len(source_indent) :])
+        else:
+            # Line has less indentation than expected (e.g., decorators)
+            # Just add the target indent
+            result.append(target_indent + line.lstrip())
+
+    return "".join(result)
+
+
 def apply_patch(file_path: Path, patch: Patch) -> str:
     """
     Apply a single patch to a file.
 
     Replaces lines start_line:end_line with new_source.
+    Automatically adjusts indentation to match the original code.
     Returns the new file content.
     """
     content = file_path.read_text(encoding="utf-8")
@@ -22,8 +70,12 @@ def apply_patch(file_path: Path, patch: Patch) -> str:
     before = lines[: patch.start_line - 1]
     after = lines[patch.end_line :]
 
-    # Ensure new_source ends with newline
-    new_source = patch.new_source
+    # Detect target indentation from original first line
+    original_first_line = lines[patch.start_line - 1] if patch.start_line <= len(lines) else ""
+    target_indent = _get_indentation(original_first_line)
+
+    # Adjust indentation and ensure newline
+    new_source = _adjust_indentation(patch.new_source, target_indent)
     if not new_source.endswith("\n"):
         new_source += "\n"
     new_lines = new_source.splitlines(keepends=True)
@@ -65,7 +117,12 @@ def apply_patches(file_path: Path, patches: list[Patch]) -> str:
         before = lines[: patch.start_line - 1]
         after = lines[patch.end_line :]
 
-        new_source = patch.new_source
+        # Detect target indentation from original first line
+        original_first_line = lines[patch.start_line - 1] if patch.start_line <= len(lines) else ""
+        target_indent = _get_indentation(original_first_line)
+
+        # Adjust indentation and ensure newline
+        new_source = _adjust_indentation(patch.new_source, target_indent)
         if not new_source.endswith("\n"):
             new_source += "\n"
         new_lines = new_source.splitlines(keepends=True)

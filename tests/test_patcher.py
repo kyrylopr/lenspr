@@ -103,3 +103,61 @@ class TestRemoveLines:
         assert "def bar" not in result
         assert "def foo" in result
         assert "def baz" in result
+
+
+class TestIndentationAdjustment:
+    """Test automatic indentation adjustment for methods inside classes."""
+
+    @pytest.fixture
+    def class_file(self, tmp_path):
+        """File with a class containing methods."""
+        f = tmp_path / "myclass.py"
+        f.write_text(
+            "class MyClass:\n"
+            "    def method_one(self):\n"
+            "        return 1\n"
+            "\n"
+            "    def method_two(self):\n"
+            "        return 2\n"
+        )
+        return f
+
+    def test_patch_method_without_indentation(self, class_file):
+        """Patching a method with unindented source should auto-indent."""
+        # New source has NO leading indentation (common mistake)
+        new_source = "def method_one(self):\n    return 42"
+        patch = Patch(start_line=2, end_line=3, new_source=new_source)
+        result = apply_patch(class_file, patch)
+
+        # Should be properly indented inside the class
+        assert "    def method_one(self):" in result
+        assert "        return 42" in result
+        # Other method unchanged
+        assert "    def method_two(self):" in result
+
+    def test_patch_method_with_correct_indentation(self, class_file):
+        """Patching with correct indentation should work unchanged."""
+        new_source = "    def method_one(self):\n        return 99"
+        patch = Patch(start_line=2, end_line=3, new_source=new_source)
+        result = apply_patch(class_file, patch)
+
+        assert "    def method_one(self):" in result
+        assert "        return 99" in result
+
+    def test_patch_preserves_relative_indentation(self, class_file):
+        """Nested blocks should preserve their relative indentation."""
+        new_source = (
+            "def method_one(self):\n"
+            "    if True:\n"
+            "        return 42\n"
+            "    return 0"
+        )
+        patch = Patch(start_line=2, end_line=3, new_source=new_source)
+        result = apply_patch(class_file, patch)
+
+        # Base indent (4 spaces for class method)
+        assert "    def method_one(self):" in result
+        # Nested if (8 spaces)
+        assert "        if True:" in result
+        # Double nested (12 spaces)
+        assert "            return 42" in result

@@ -65,7 +65,10 @@ def handle_update_node(params: dict, ctx: LensContext) -> ToolResponse:
     file_path = ctx.project_root / node.file_path
     ctx.patch_buffer.add(file_path, node, new_source)
 
-    # Apply immediately
+    # Save old content for rollback
+    old_content = file_path.read_text(encoding="utf-8")
+
+    # Apply patch to file
     try:
         ctx.patch_buffer.flush()
     except PatchError as e:
@@ -74,7 +77,21 @@ def handle_update_node(params: dict, ctx: LensContext) -> ToolResponse:
             success=False, error=str(e), warnings=all_warnings, data={"impact": impact}
         )
 
-    # Record history
+    # ATOMIC: Sync graph - if this fails, rollback file
+    try:
+        ctx.reparse_file(file_path)
+    except Exception as e:
+        # Rollback: restore old file content
+        file_path.write_text(old_content, encoding="utf-8")
+        return ToolResponse(
+            success=False,
+            error=f"Graph sync failed, file rolled back: {e}",
+            hint="This is likely a parser bug. Please report it.",
+            warnings=all_warnings,
+            data={"impact": impact},
+        )
+
+    # Record history (only after successful sync)
     from lenspr.tracker import record_change
 
     new_hash = hashlib.sha256(new_source.encode()).hexdigest()
@@ -89,9 +106,6 @@ def handle_update_node(params: dict, ctx: LensContext) -> ToolResponse:
         description=f"Updated {node.name}",
         db_path=ctx.history_db,
     )
-
-    # Reparse file
-    ctx.reparse_file(file_path)
 
     return ToolResponse(
         success=True,
@@ -140,10 +154,23 @@ def handle_add_node(params: dict, ctx: LensContext) -> ToolResponse:
         content = file_path.read_text(encoding="utf-8")
         after_line = len(content.splitlines())
 
+    # Save old content for rollback
+    old_content = file_path.read_text(encoding="utf-8")
+
     new_content = insert_code(file_path, source_code, after_line)
     file_path.write_text(new_content, encoding="utf-8")
 
-    ctx.reparse_file(file_path)
+    # ATOMIC: Sync graph - if this fails, rollback file
+    try:
+        ctx.reparse_file(file_path)
+    except Exception as e:
+        # Rollback: restore old file content
+        file_path.write_text(old_content, encoding="utf-8")
+        return ToolResponse(
+            success=False,
+            error=f"Graph sync failed, file rolled back: {e}",
+            hint="This is likely a parser bug. Please report it.",
+        )
 
     return ToolResponse(
         success=True,
@@ -160,10 +187,26 @@ def handle_delete_node(params: dict, ctx: LensContext) -> ToolResponse:
         return ToolResponse(success=False, error=f"Node not found: {node_id}")
 
     file_path = ctx.project_root / node.file_path
+
+    # Save old content for rollback
+    old_content = file_path.read_text(encoding="utf-8")
+
     new_content = remove_lines(file_path, node.start_line, node.end_line)
     file_path.write_text(new_content, encoding="utf-8")
 
-    # Record deletion
+    # ATOMIC: Sync graph - if this fails, rollback file
+    try:
+        ctx.reparse_file(file_path)
+    except Exception as e:
+        # Rollback: restore old file content
+        file_path.write_text(old_content, encoding="utf-8")
+        return ToolResponse(
+            success=False,
+            error=f"Graph sync failed, file rolled back: {e}",
+            hint="This is likely a parser bug. Please report it.",
+        )
+
+    # Record deletion (only after successful sync)
     from lenspr.tracker import record_change
 
     record_change(
@@ -179,7 +222,6 @@ def handle_delete_node(params: dict, ctx: LensContext) -> ToolResponse:
     )
 
     database.delete_node(node_id, ctx.graph_db)
-    ctx.reparse_file(file_path)
 
     return ToolResponse(success=True, data={"deleted": node_id})
 

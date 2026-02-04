@@ -952,7 +952,7 @@ class _TreeSitterVisitor:
                     if part.type == "identifier":
                         component_name = self._get_text(part)
                         # PascalCase = custom component, lowercase = HTML
-                        if component_name[0].isupper():
+                        if component_name and component_name[0].isupper():
                             target = self._imports.get(component_name, component_name)
                             self.edges.append(
                                 Edge(
@@ -979,7 +979,7 @@ class _TreeSitterVisitor:
         for child in node.children:
             if child.type == "identifier":
                 component_name = self._get_text(child)
-                if component_name[0].isupper():
+                if component_name and component_name[0].isupper():
                     target = self._imports.get(component_name, component_name)
                     self.edges.append(
                         Edge(

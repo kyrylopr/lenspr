@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 
 def handle_list_nodes(params: dict, ctx: LensContext) -> ToolResponse:
     """List all nodes, optionally filtered by type, file, or name."""
+    ctx.ensure_synced()
     nodes = database.get_nodes(
         ctx.graph_db,
         type_filter=params.get("type"),
@@ -41,6 +42,7 @@ def handle_list_nodes(params: dict, ctx: LensContext) -> ToolResponse:
 
 def handle_get_node(params: dict, ctx: LensContext) -> ToolResponse:
     """Get full details of a specific node including its source code."""
+    ctx.ensure_synced()
     node = database.get_node(params["node_id"], ctx.graph_db)
     if not node:
         return ToolResponse(
@@ -67,6 +69,7 @@ def handle_get_node(params: dict, ctx: LensContext) -> ToolResponse:
 
 def handle_get_connections(params: dict, ctx: LensContext) -> ToolResponse:
     """Get all connections (edges) for a node."""
+    ctx.ensure_synced()
     direction = params.get("direction", "both")
     edges = database.get_edges(params["node_id"], ctx.graph_db, direction)
     return ToolResponse(
@@ -91,6 +94,7 @@ def handle_get_connections(params: dict, ctx: LensContext) -> ToolResponse:
 
 def handle_search(params: dict, ctx: LensContext) -> ToolResponse:
     """Search nodes by name or content."""
+    ctx.ensure_synced()
     search_in = params.get("search_in", "all")
     nodes = database.search_nodes(params["query"], ctx.graph_db, search_in)
     return ToolResponse(
@@ -113,6 +117,7 @@ def handle_search(params: dict, ctx: LensContext) -> ToolResponse:
 
 def handle_get_structure(params: dict, ctx: LensContext) -> ToolResponse:
     """Get compact overview of project structure."""
+    ctx.ensure_synced()
     nx_graph = ctx.get_graph()
     result = graph.get_structure(
         nx_graph,
@@ -127,6 +132,7 @@ def handle_get_structure(params: dict, ctx: LensContext) -> ToolResponse:
 
 def handle_context(params: dict, ctx: LensContext) -> ToolResponse:
     """Get full context for a node in one call."""
+    ctx.ensure_synced()
     node_id = params["node_id"]
     include_callers = params.get("include_callers", True)
     include_callees = params.get("include_callees", True)
@@ -315,6 +321,8 @@ def handle_context(params: dict, ctx: LensContext) -> ToolResponse:
 
 def handle_grep(params: dict, ctx: LensContext) -> ToolResponse:
     """Search for a text pattern across all project files."""
+    ctx.ensure_synced()
+
     import fnmatch
     import re
 

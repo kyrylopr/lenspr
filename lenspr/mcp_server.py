@@ -167,11 +167,16 @@ def _start_watchdog_watcher(
     """Watchdog-based file watcher running in a daemon thread."""
     import lenspr
 
+    # Debounce settings
+    POLL_INTERVAL_MS = 50  # Check every 50ms
+    DEBOUNCE_MS = 200  # Wait 200ms of no changes before syncing
+
     class _SyncHandler(handler_cls):  # type: ignore[misc]
         def __init__(self) -> None:
             self._pending_sync = False
             self._pending_reload = False
             self._changed_files: set[str] = set()
+            self._last_change_time: float = 0
             self._lock = threading.Lock()
 
         def on_modified(self, event: object) -> None:
@@ -181,6 +186,7 @@ def _start_watchdog_watcher(
                     with self._lock:
                         self._pending_sync = True
                         self._changed_files.add(src_path)
+                        self._last_change_time = time.time()
                         # Track if lenspr code changed (for hot-reload)
                         if hot_reload and _is_lenspr_file(src_path):
                             self._pending_reload = True
@@ -199,17 +205,20 @@ def _start_watchdog_watcher(
 
     def _sync_loop() -> None:
         while True:
-            time.sleep(1)  # Faster response (was 2s)
+            time.sleep(POLL_INTERVAL_MS / 1000)  # 50ms poll interval
             should_sync = False
             should_reload = False
             changed: set[str] = set()
 
             with handler._lock:
                 if handler._pending_sync:
-                    handler._pending_sync = False
-                    should_sync = True
-                    changed = handler._changed_files.copy()
-                    handler._changed_files.clear()
+                    # Debounce: only sync if no changes for DEBOUNCE_MS
+                    time_since_last = (time.time() - handler._last_change_time) * 1000
+                    if time_since_last >= DEBOUNCE_MS:
+                        handler._pending_sync = False
+                        should_sync = True
+                        changed = handler._changed_files.copy()
+                        handler._changed_files.clear()
                 if handler._pending_reload:
                     handler._pending_reload = False
                     should_reload = True
@@ -257,7 +266,7 @@ def _start_polling_watcher(project_path: str, hot_reload: bool = False) -> None:
 
     def _poll_loop() -> None:
         while True:
-            time.sleep(3)  # Faster polling (was 5s)
+            time.sleep(1)  # Poll every 1 second (reduced from 3s)
             try:
                 # Hot-reload lenspr modules if enabled
                 if hot_reload:
@@ -285,7 +294,7 @@ def _start_polling_watcher(project_path: str, hot_reload: bool = False) -> None:
     t.start()
     mode = "hot-reload" if hot_reload else "standard"
     logger.info(
-        "Polling file watcher started (%s mode) for: %s (every 3s)",
+        "Polling file watcher started (%s mode) for: %s (every 1s)",
         mode, project_path
     )
 
