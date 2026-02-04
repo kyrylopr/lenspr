@@ -31,12 +31,17 @@ class TestInit:
         result = run_cli("init", str(sample_project))
         assert result.returncode == 0
         assert (sample_project / ".lens").exists()
-        assert "Done!" in result.stdout
+        assert "Graph created successfully!" in result.stdout
 
     def test_init_shows_node_count(self, sample_project: Path) -> None:
         result = run_cli("init", str(sample_project))
-        assert "Nodes:" in result.stdout
-        assert "Edges:" in result.stdout
+        assert "Total nodes:" in result.stdout
+        assert "Total edges:" in result.stdout
+
+    def test_init_shows_language_stats(self, sample_project: Path) -> None:
+        result = run_cli("init", str(sample_project))
+        assert "Python" in result.stdout
+        assert "Found source files:" in result.stdout
 
     def test_init_force(self, sample_project: Path) -> None:
         run_cli("init", str(sample_project))

@@ -1,4 +1,4 @@
-.PHONY: install install-all dev test test-cov lint lint-fix format typecheck check clean build setup serve demo health annotate annotate-all annotate-node annotate-file benchmark check-deps
+.PHONY: install install-all dev test test-cov lint lint-fix format typecheck check clean build setup serve demo health doctor annotate annotate-all annotate-node annotate-file benchmark check-deps
 
 # ============================================================================
 # INSTALLATION
@@ -153,6 +153,10 @@ tree:
 health:
 	@python3 -c "import lenspr; lenspr.init('.'); r=lenspr.handle_tool('lens_health',{}); d=r['data']; print(f'Nodes: {d[\"total_nodes\"]} | Edges: {d[\"total_edges\"]} | Confidence: {d[\"confidence_pct\"]}% | Docstrings: {d[\"docstring_pct\"]}%')"
 
+# Run project diagnostics
+doctor:
+	lenspr doctor .
+
 # Show supported languages
 languages:
 	@python3 -c "from lenspr.parsers import MultiParser; p=MultiParser(); print('Supported languages:', ', '.join(p.supported_languages)); print('Extensions:', ', '.join(p.get_file_extensions()))"
@@ -253,7 +257,8 @@ help:
 	@echo "  make lint         Run linter"
 	@echo "  make check        Run all checks"
 	@echo ""
-	@echo "Info:"
+	@echo "Diagnostics:"
 	@echo "  make health       Show graph health"
+	@echo "  make doctor       Run project diagnostics"
 	@echo "  make languages    Show supported languages"
 	@echo "  make annotations  Show annotation coverage"

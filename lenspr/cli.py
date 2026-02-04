@@ -70,6 +70,13 @@ def main() -> None:
         help="Also update global Claude Desktop config"
     )
 
+    # -- doctor --
+    p_doctor = subparsers.add_parser(
+        "doctor",
+        help="Check project configuration and diagnose issues"
+    )
+    p_doctor.add_argument("path", nargs="?", default=".", help="Project root (default: cwd)")
+
     # -- annotate --
     p_annotate = subparsers.add_parser(
         "annotate",
@@ -112,6 +119,7 @@ def main() -> None:
         "watch": cmd_watch,
         "serve": cmd_serve,
         "setup": cmd_setup,
+        "doctor": cmd_doctor,
         "annotate": cmd_annotate,
     }
     handlers[args.command](args)
@@ -133,23 +141,52 @@ def _cli_progress(current: int, total: int, file_path: str) -> None:
 
 def cmd_init(args: argparse.Namespace) -> None:
     import lenspr
+    from lenspr.stats import format_stats_report
 
     path = str(Path(args.path).resolve())
     print(f"Initializing LensPR at {path}")
+    print()
     try:
-        lenspr.init(path, force=args.force, progress_callback=_cli_progress)
+        ctx, stats = lenspr.init(
+            path,
+            force=args.force,
+            progress_callback=_cli_progress,
+            collect_stats=True,
+        )
     except lenspr.LensError as e:
         print(f"\nError: {e}", file=sys.stderr)
         sys.exit(1)
 
-    ctx = lenspr.get_context()
+    print()  # After progress line
+
+    # Show detailed stats if available
+    if stats:
+        print(format_stats_report(stats))
+
+    # Final summary
     g = ctx.get_graph()
-    print("Done!")
-    print(f"  Nodes: {g.number_of_nodes()}")
-    print(f"  Edges: {g.number_of_edges()}")
+    db_size = (ctx.lens_dir / "graph.db").stat().st_size / 1024  # KB
+    if db_size > 1024:
+        db_size_str = f"{db_size / 1024:.1f} MB"
+    else:
+        db_size_str = f"{db_size:.0f} KB"
+
+    print("=" * 50)
+    print("Graph created successfully!")
     print()
-    print("Next: Generate semantic annotations for better code understanding.")
-    print("      In Claude Code, ask: \"Annotate my codebase\"")
+    print(f"  Total nodes:  {g.number_of_nodes()}")
+    print(f"  Total edges:  {g.number_of_edges()}")
+    if stats:
+        print(f"  Confidence:   {stats.overall_resolution_pct:.0f}%")
+        print(f"  Parse time:   {stats.total_time_ms / 1000:.1f}s")
+    print(f"  Database:     .lens/graph.db ({db_size_str})")
+    print("=" * 50)
+    print()
+    print("Next steps:")
+    print("  lenspr setup .     # Configure for Claude Code")
+    print("  lenspr status .    # View detailed stats")
+    print()
+    print("In Claude Code, ask: \"Annotate my codebase\" for semantic annotations")
 
 
 def cmd_sync(args: argparse.Namespace) -> None:
@@ -157,7 +194,7 @@ def cmd_sync(args: argparse.Namespace) -> None:
 
     path = str(Path(args.path).resolve())
     try:
-        lenspr.init(path)
+        lenspr.init(path)  # Returns tuple now, but we don't need stats here
         result = lenspr.sync(full=args.full)
     except lenspr.LensError as e:
         print(f"Error: {e}", file=sys.stderr)
@@ -400,6 +437,15 @@ def cmd_setup(args: argparse.Namespace) -> None:
         print("  The lens_* tools will be available after restart.")
 
 
+def cmd_doctor(args: argparse.Namespace) -> None:
+    """Check project configuration and diagnose issues."""
+    from lenspr.doctor import format_doctor_report, run_doctor
+
+    path = Path(args.path).resolve()
+    report = run_doctor(path)
+    print(format_doctor_report(report))
+
+
 def cmd_annotate(args: argparse.Namespace) -> None:
     """Show annotation coverage or auto-annotate nodes."""
     import lenspr
@@ -408,7 +454,7 @@ def cmd_annotate(args: argparse.Namespace) -> None:
 
     path = str(Path(args.path).resolve())
     try:
-        ctx = lenspr.init(path)
+        ctx, _ = lenspr.init(path)
     except lenspr.LensError as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)

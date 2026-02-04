@@ -98,9 +98,10 @@ Claude gets structured tools to navigate and modify code safely.
 ## All CLI Commands
 
 ```bash
-lenspr init <path>              # Build the code graph
+lenspr init <path>              # Build the code graph (shows language stats)
 lenspr setup <path>             # Create .mcp.json for Claude Code
 lenspr status <path>            # Show graph stats (nodes, edges, confidence)
+lenspr doctor <path>            # Diagnose project configuration issues
 lenspr search <path> "query"    # Search functions/classes by name
 lenspr impact <path> <node_id>  # Check what breaks if you change a node
 lenspr sync <path>              # Resync after file changes
@@ -284,10 +285,11 @@ Full architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
 | Metric | Value |
 |--------|-------|
-| Tests | 223 passed |
+| Tests | 224 passed |
 | Python Resolution | 96%+ |
 | TypeScript Resolution | 90%+ |
 | MCP Tools | 29 |
+| CLI Commands | 10 |
 | Python Support | ✅ Yes (AST + jedi) |
 | JS/TS Support | ✅ Yes (tree-sitter + TypeScript Compiler API) |
 

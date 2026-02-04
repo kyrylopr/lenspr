@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 
 from lenspr.models import Edge, EdgeConfidence, Node, Resolution
 from lenspr.parsers.base import BaseParser, ProgressCallback
 from lenspr.parsers.python_parser import PythonParser
+from lenspr.stats import ParseStats, get_language_for_extension
 
 logger = logging.getLogger(__name__)
 
@@ -84,14 +86,29 @@ class MultiParser(BaseParser):
         self,
         root_path: Path,
         progress_callback: ProgressCallback | None = None,
-    ) -> tuple[list[Node], list[Edge]]:
-        """Parse project using all available parsers."""
+        collect_stats: bool = False,
+    ) -> tuple[list[Node], list[Edge], ParseStats | None]:
+        """Parse project using all available parsers.
+
+        Args:
+            root_path: Project root directory.
+            progress_callback: Optional callback(current, total, file_path) for progress.
+            collect_stats: If True, return detailed parsing statistics.
+
+        Returns:
+            Tuple of (nodes, edges, stats). Stats is None if collect_stats=False.
+        """
+        start_time = time.time()
+
         # Set project root for jedi and other tools
         self.set_project_root(root_path)
 
         all_nodes: list[Node] = []
         all_edges: list[Edge] = []
         extensions = set(self.get_file_extensions())
+
+        # Initialize stats if collecting
+        stats = ParseStats(project_root=root_path) if collect_stats else None
 
         skip_dirs = {
             "__pycache__",
@@ -112,7 +129,11 @@ class MultiParser(BaseParser):
             "lib",
             ".next",  # Next.js
             ".nuxt",  # Nuxt.js
+            ".output",  # Nuxt 3
             "coverage",
+            "htmlcov",
+            ".nyc_output",
+            "out",  # Next.js static export
         }
 
         venv_suffixes = ("-env", "-venv", "_env", "_venv")
@@ -125,16 +146,38 @@ class MultiParser(BaseParser):
                     return True
             return False
 
-        # Collect files
+        # Collect files and track skipped directories
         files_to_parse: list[Path] = []
+        skipped_counts: dict[str, int] = {}
+
         for file_path in sorted(root_path.rglob("*")):
             if not file_path.is_file():
                 continue
-            if should_skip_path(file_path):
+
+            # Check if in skipped directory
+            skip_reason = None
+            for part in file_path.relative_to(root_path).parts:
+                if part in skip_dirs:
+                    skip_reason = part
+                    break
+                if any(part.endswith(suffix) for suffix in venv_suffixes):
+                    skip_reason = part
+                    break
+
+            if skip_reason:
+                if file_path.suffix.lower() in extensions:
+                    skipped_counts[skip_reason] = skipped_counts.get(skip_reason, 0) + 1
                 continue
+
             if file_path.suffix.lower() not in extensions:
                 continue
+
             files_to_parse.append(file_path)
+
+        # Track skipped dirs in stats
+        if stats:
+            for dir_name, count in skipped_counts.items():
+                stats.add_skipped_dir(dir_name, count)
 
         total = len(files_to_parse)
 
@@ -142,14 +185,60 @@ class MultiParser(BaseParser):
             if progress_callback:
                 progress_callback(i + 1, total, str(file_path))
 
+            ext = file_path.suffix.lower()
+            language, ext_display = get_language_for_extension(ext)
+
             try:
                 nodes, edges = self.parse_file(file_path, root_path)
                 all_nodes.extend(nodes)
                 all_edges.extend(edges)
+
+                # Collect stats
+                if stats:
+                    stats.add_file(file_path, language, ext_display)
+                    stats.add_nodes(nodes, language, ext_display)
+                    stats.add_edges(edges, language, ext_display)
+
             except Exception as e:
                 logger.warning("Failed to parse %s: %s", file_path, e)
+                if stats:
+                    stats.add_file(file_path, language, ext_display)
+                    stats.add_parse_error(language, str(file_path), str(e))
 
-        return all_nodes, all_edges
+        # Finalize stats
+        if stats:
+            stats.total_time_ms = (time.time() - start_time) * 1000
+
+            # Add warnings based on analysis
+            self._collect_warnings(stats, root_path)
+
+        return all_nodes, all_edges, stats
+
+    def _collect_warnings(self, stats: ParseStats, root_path: Path) -> None:
+        """Collect warnings based on project analysis."""
+        # Check for tsconfig.json
+        if "TypeScript" in stats.languages or "JavaScript" in stats.languages:
+            tsconfig = root_path / "tsconfig.json"
+            jsconfig = root_path / "jsconfig.json"
+            if not tsconfig.exists() and not jsconfig.exists():
+                stats.add_warning("No tsconfig.json or jsconfig.json found - TS resolution may be degraded")
+
+            # Check for node_modules
+            node_modules = root_path / "node_modules"
+            if not node_modules.exists():
+                stats.add_warning("node_modules not found - run 'npm install' for better type resolution")
+
+        # Check resolution quality per language
+        for lang_name, lang_stats in stats.languages.items():
+            if lang_stats.total_edges > 0:
+                pct = lang_stats.resolution_pct
+                if pct < 80:
+                    stats.add_warning(f"{lang_name} resolution is {pct:.0f}% (below 80% target)")
+
+        # Check for parse errors
+        total_errors = sum(len(lang.parse_errors) for lang in stats.languages.values())
+        if total_errors > 0:
+            stats.add_warning(f"{total_errors} files had parse errors")
 
     @property
     def supported_languages(self) -> list[str]:

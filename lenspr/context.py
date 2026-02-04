@@ -14,6 +14,7 @@ import networkx as nx
 from lenspr import database
 from lenspr import graph as graph_ops
 from lenspr.models import Node, SyncResult
+from lenspr.stats import ParseStats
 from lenspr.parsers.base import ProgressCallback
 from lenspr.parsers.multi import MultiParser
 from lenspr.patcher import PatchBuffer
@@ -103,23 +104,29 @@ class LensContext:
                 fcntl.flock(lock_file, fcntl.LOCK_UN)
 
     def full_sync(
-        self, progress_callback: ProgressCallback | None = None
-    ) -> SyncResult:
+        self,
+        progress_callback: ProgressCallback | None = None,
+        collect_stats: bool = False,
+    ) -> tuple[SyncResult, ParseStats | None]:
         """
         Full reparse of the project + hash-based diff.
 
         Args:
             progress_callback: Optional callback(current, total, file_path) for progress.
+            collect_stats: If True, collect and return detailed parsing statistics.
 
-        Returns SyncResult describing what changed.
+        Returns:
+            Tuple of (SyncResult, ParseStats | None).
         Thread-safe and process-safe via locking.
         """
         with self._lock:
-            return self._full_sync_locked(progress_callback)
+            return self._full_sync_locked(progress_callback, collect_stats)
 
     def _full_sync_locked(
-        self, progress_callback: ProgressCallback | None = None
-    ) -> SyncResult:
+        self,
+        progress_callback: ProgressCallback | None = None,
+        collect_stats: bool = False,
+    ) -> tuple[SyncResult, ParseStats | None]:
         with open(self._lock_path, "w") as lock_file:
             fcntl.flock(lock_file, fcntl.LOCK_EX)
             try:
@@ -128,8 +135,8 @@ class LensContext:
                 old_index = {n.id: n for n in old_nodes}
 
                 # Full reparse
-                new_nodes, new_edges = self._parser.parse_project(
-                    self.project_root, progress_callback
+                new_nodes, new_edges, stats = self._parser.parse_project(
+                    self.project_root, progress_callback, collect_stats
                 )
 
                 # Deduplicate nodes by ID (keep last occurrence)
@@ -165,7 +172,7 @@ class LensContext:
                 # Update config
                 self._update_config()
 
-                return SyncResult(added=added, modified=modified, deleted=deleted)
+                return SyncResult(added=added, modified=modified, deleted=deleted), stats
             finally:
                 fcntl.flock(lock_file, fcntl.LOCK_UN)
 

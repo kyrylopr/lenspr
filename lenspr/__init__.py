@@ -39,6 +39,7 @@ from lenspr.models import (
     ToolResponse as ToolResponse,
 )
 from lenspr.parsers.base import ProgressCallback
+from lenspr.stats import ParseStats
 
 __version__ = "0.1.0"
 
@@ -58,7 +59,8 @@ def init(
     project_path: str,
     force: bool = False,
     progress_callback: ProgressCallback | None = None,
-) -> LensContext:
+    collect_stats: bool = False,
+) -> tuple[LensContext, ParseStats | None]:
     """
     Initialize LensPR on a project.
 
@@ -68,9 +70,10 @@ def init(
         project_path: Path to the Python project root.
         force: If True, reinitialize even if .lens/ already exists.
         progress_callback: Optional callback(current, total, file_path) for progress.
+        collect_stats: If True, collect and return detailed parsing statistics.
 
     Returns:
-        LensContext instance.
+        Tuple of (LensContext, ParseStats | None).
     """
     global _ctx
 
@@ -89,7 +92,7 @@ def init(
         if g.number_of_nodes() == 0:
             force = True  # Fall through to reinitialize
         else:
-            return _ctx
+            return _ctx, None
 
     # Initialize fresh
     from lenspr.database import init_database
@@ -110,9 +113,9 @@ def init(
 
     # Create context and do initial parse
     _ctx = LensContext(root, lens_dir)
-    _ctx.full_sync(progress_callback)
+    _, stats = _ctx.full_sync(progress_callback, collect_stats)
 
-    return _ctx
+    return _ctx, stats
 
 
 def sync(full: bool = False) -> SyncResult:
@@ -124,7 +127,8 @@ def sync(full: bool = False) -> SyncResult:
     """
     ctx = _require_ctx()
     if full:
-        return ctx.full_sync()
+        result, _ = ctx.full_sync()
+        return result
     return ctx.incremental_sync()
 
 
