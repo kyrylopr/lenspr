@@ -105,6 +105,7 @@ class MultiParser(BaseParser):
 
         all_nodes: list[Node] = []
         all_edges: list[Edge] = []
+        edges_by_parser: dict[BaseParser, list[Edge]] = {p: [] for p in self._parsers}
         extensions = set(self.get_file_extensions())
 
         # Initialize stats if collecting
@@ -189,11 +190,15 @@ class MultiParser(BaseParser):
             language, ext_display = get_language_for_extension(ext)
 
             try:
-                nodes, edges = self.parse_file(file_path, root_path)
-                all_nodes.extend(nodes)
-                all_edges.extend(edges)
+                parser = self.get_parser_for_file(file_path)
+                if parser is None:
+                    continue
 
-                # Collect stats
+                nodes, edges = parser.parse_file(file_path, root_path)
+                all_nodes.extend(nodes)
+                edges_by_parser[parser].extend(edges)
+
+                # Collect stats (before resolution - stats track raw parsed edges)
                 if stats:
                     stats.add_file(file_path, language, ext_display)
                     stats.add_nodes(nodes, language, ext_display)
@@ -204,6 +209,16 @@ class MultiParser(BaseParser):
                 if stats:
                     stats.add_file(file_path, language, ext_display)
                     stats.add_parse_error(language, str(file_path), str(e))
+
+        # Second pass: resolve edges using each parser's cross-file resolution
+        for parser, edges in edges_by_parser.items():
+            if edges:
+                resolved = parser.resolve_edges(edges, root_path)
+                all_edges.extend(resolved)
+
+        # Update stats with resolved edges (recalculate resolution percentages)
+        if stats:
+            stats.recalculate_resolution(all_edges)
 
         # Finalize stats
         if stats:
@@ -235,7 +250,7 @@ class MultiParser(BaseParser):
                 has_config = (root_path / "tsconfig.json").exists() or (root_path / "jsconfig.json").exists()
 
             if not has_config:
-                stats.add_warning("No tsconfig.json or jsconfig.json found - TS resolution may be degraded")
+                stats.add_warning("No tsconfig.json or jsconfig.json found - create one for 80%+ JS resolution")
 
             # Check for node_modules
             if monorepo.packages:

@@ -137,3 +137,21 @@ class BaseParser(ABC):
                 logger.warning("Failed to parse %s: %s", file_path, e)
 
         return all_nodes, all_edges
+
+    def resolve_edges(self, edges: list[Edge], root_path: Path) -> list[Edge]:
+        """
+        Post-parse edge resolution for cross-file references.
+
+        Called after all files are parsed. Override in language parsers
+        that need cross-file type information (e.g., TypeScript).
+
+        Default implementation returns edges unchanged.
+
+        Args:
+            edges: List of edges to resolve.
+            root_path: Project root for context.
+
+        Returns:
+            List of resolved edges.
+        """
+        return edges

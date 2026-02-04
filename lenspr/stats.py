@@ -125,6 +125,33 @@ class ParseStats:
         if language in self.languages:
             self.languages[language].parse_errors.append(f"{file_path}: {error}")
 
+    def recalculate_resolution(self, edges: list[Edge]) -> None:
+        """Recalculate edge statistics after resolution.
+
+        Called after cross-file resolution to update confidence counts
+        with resolved edges (which may have changed from INFERRED to RESOLVED).
+        """
+        # Clear existing edge counts
+        for lang_stats in self.languages.values():
+            lang_stats.edge_counts.clear()
+
+        # Re-add edges with their resolved confidence
+        for edge in edges:
+            # Determine language from edge file path (stored in metadata)
+            file_path = edge.metadata.get("file") if edge.metadata else None
+            if not file_path:
+                # Try to infer from source node id (e.g., src.utils.helper -> src/utils)
+                file_path = edge.from_node.replace(".", "/")
+
+            # Determine language from extension
+            ext = Path(file_path).suffix.lower() if file_path else ""
+            language, _ = get_language_for_extension(ext)
+
+            if language in self.languages:
+                lang_stats = self.languages[language]
+                confidence = edge.confidence.value
+                lang_stats.edge_counts[confidence] = lang_stats.edge_counts.get(confidence, 0) + 1
+
 
 def get_language_for_extension(ext: str) -> tuple[str, str]:
     """Get language name and normalized extension for file extension.

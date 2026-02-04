@@ -47,6 +47,14 @@ lenspr setup .                  # Creates .mcp.json config for Claude Code
 > lenspr init . --install-deps   # Auto-runs npm install in each JS/TS package
 > ```
 
+> **JS/TS projects need `jsconfig.json`** for good resolution (80%+).
+> If you don't have one, create a minimal config:
+> ```bash
+> cat > jsconfig.json << 'EOF'
+> {"compilerOptions":{"baseUrl":".","jsx":"react-jsx"},"include":["src/**/*"]}
+> EOF
+> ```
+
 > **Re-initializing?** Use `lenspr init . --force` or delete the `.lens/` folder first.
 
 ### Step 3: Restart VSCode

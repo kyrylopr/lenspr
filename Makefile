@@ -36,6 +36,10 @@ check-deps:
 	@echo "Node.js (for TypeScript type inference):"
 	@node --version 2>/dev/null && echo "  ✓ Node.js installed" || echo "  ✗ Node.js not found (install Node.js 18+ for full TypeScript support)"
 	@echo ""
+	@echo "JS/TS Projects:"
+	@echo "  For 80%+ resolution, ensure jsconfig.json or tsconfig.json exists"
+	@echo "  Create minimal: echo '{\"compilerOptions\":{\"baseUrl\":\".\"},\"include\":[\"src/**/*\"]}' > jsconfig.json"
+	@echo ""
 
 # Install TypeScript dependencies for Node.js resolver
 install-ts-deps:

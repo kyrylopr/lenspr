@@ -227,6 +227,17 @@ class TypeScriptParser(BaseParser):
 
         return all_nodes, resolved_edges
 
+    def resolve_edges(self, edges: list[Edge], root_path: Path) -> list[Edge]:
+        """Post-parse edge resolution using Node.js TypeScript resolver.
+
+        Called by MultiParser after all files are parsed.
+        Uses TypeScript Compiler API for full cross-file type inference.
+        """
+        # Ensure resolver is initialized
+        if self._project_root != root_path:
+            self.set_project_root(root_path)
+        return self._resolve_edges(edges)
+
     def _resolve_edges(self, edges: list[Edge]) -> list[Edge]:
         """Resolve edges using Node.js resolver (preferred) or Python resolver.
 
