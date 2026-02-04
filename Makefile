@@ -1,4 +1,4 @@
-.PHONY: install install-all dev test test-cov lint lint-fix format typecheck check clean build setup serve demo health doctor annotate annotate-all annotate-node annotate-file benchmark check-deps
+.PHONY: install install-all dev test test-cov lint lint-fix format typecheck check clean build setup serve demo health doctor annotate annotate-all annotate-node annotate-file benchmark check-deps architecture patterns components explain-arch
 
 # ============================================================================
 # INSTALLATION
@@ -198,6 +198,26 @@ annotate-file:
 	@lenspr annotate . --file $(FILE)
 
 # ============================================================================
+# ARCHITECTURE ANALYSIS
+# ============================================================================
+
+# Full architecture analysis (patterns + components)
+architecture:
+	@lenspr architecture .
+
+# Show detected patterns only (Facade, Strategy, Factory, etc.)
+patterns:
+	@lenspr architecture . --patterns
+
+# Show component cohesion metrics
+components:
+	@lenspr architecture . --components
+
+# Explain architecture of a class: make explain-arch NODE=app.MyClass
+explain-arch:
+	@lenspr architecture . --explain $(NODE)
+
+# ============================================================================
 # BENCHMARKS
 # ============================================================================
 
@@ -266,3 +286,9 @@ help:
 	@echo "  make doctor       Run project diagnostics"
 	@echo "  make languages    Show supported languages"
 	@echo "  make annotations  Show annotation coverage"
+	@echo ""
+	@echo "Architecture:"
+	@echo "  make architecture   Full architecture analysis"
+	@echo "  make patterns       Show detected patterns"
+	@echo "  make components     Show component cohesion"
+	@echo "  make explain-arch   Explain class architecture (NODE=...)"

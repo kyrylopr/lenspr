@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from lenspr.models import Edge, EdgeConfidence, Node, NodeType
+from lenspr.models import Edge, Node
 
 
 @dataclass
@@ -177,7 +177,8 @@ def format_stats_report(stats: ParseStats) -> str:
     lines.append("Found source files:")
     for lang_name, lang_stats in sorted(stats.languages.items()):
         ext_display = lang_stats.extension
-        lines.append(f"  {lang_name} ({ext_display}):".ljust(28) + f"{lang_stats.file_count:>6} files")
+        label = f"  {lang_name} ({ext_display}):".ljust(28)
+        lines.append(f"{label}{lang_stats.file_count:>6} files")
     lines.append("  " + "-" * 35)
     lines.append(f"  {'Total:'.ljust(24)}{stats.total_files:>6} files")
 

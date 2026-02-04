@@ -25,6 +25,12 @@ from lenspr.tools.annotation import (
 from lenspr.tools.explain import (
     handle_explain,
 )
+from lenspr.tools.arch import (
+    handle_architecture,
+    handle_components,
+    handle_explain_architecture,
+    handle_patterns,
+)
 from lenspr.tools.git import (
     handle_blame,
     handle_commit_scope,
@@ -91,6 +97,11 @@ __all__ = [
     "handle_node_history",
     "handle_commit_scope",
     "handle_recent_changes",
+    # Architecture
+    "handle_architecture",
+    "handle_patterns",
+    "handle_components",
+    "handle_explain_architecture",
 ]
 
 
@@ -128,6 +139,11 @@ _HANDLER_MAP: dict[str, tuple[str, str]] = {
     "lens_recent_changes": ("lenspr.tools.git", "handle_recent_changes"),
     # Explain
     "lens_explain": ("lenspr.tools.explain", "handle_explain"),
+    # Architecture
+    "lens_architecture": ("lenspr.tools.arch", "handle_architecture"),
+    "lens_patterns": ("lenspr.tools.arch", "handle_patterns"),
+    "lens_components": ("lenspr.tools.arch", "handle_components"),
+    "lens_explain_architecture": ("lenspr.tools.arch", "handle_explain_architecture"),
 }
 
 # Hot-reload mode: when True, handlers are resolved dynamically each call

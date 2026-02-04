@@ -597,4 +597,116 @@ LENS_TOOLS: list[dict[str, Any]] = [
             "required": ["node_id"],
         },
     },
+    # Batch save annotations
+    {
+        "name": "lens_batch_save_annotations",
+        "description": (
+            "Save multiple annotations at once. ONE confirmation for many nodes. "
+            "You only need to provide summary for each node. Role and side_effects "
+            "are auto-detected from patterns (no hallucination risk)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "annotations": {
+                    "type": "array",
+                    "description": (
+                        "Array of annotation objects, each with node_id and summary."
+                    ),
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "node_id": {"type": "string"},
+                            "summary": {"type": "string"},
+                            "role": {"type": "string"},
+                            "side_effects": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                            },
+                        },
+                        "required": ["node_id", "summary"],
+                    },
+                },
+            },
+            "required": ["annotations"],
+        },
+    },
+    # -- Architecture Analysis Tools --
+    {
+        "name": "lens_architecture",
+        "description": (
+            "Analyze codebase architecture: detect patterns (Facade, Strategy, Factory), "
+            "identify components with cohesion metrics, and get architectural recommendations. "
+            "Use this to understand high-level code organization."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+    {
+        "name": "lens_patterns",
+        "description": (
+            "Detect architectural patterns in the codebase. "
+            "Patterns: Facade, Strategy, Factory, Singleton, Decorator, Repository, Service. "
+            "Returns pattern type, primary node, confidence score, and evidence."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "pattern": {
+                    "type": "string",
+                    "enum": [
+                        "facade", "strategy", "factory", "singleton",
+                        "decorator", "repository", "service"
+                    ],
+                    "description": "Filter by specific pattern type.",
+                },
+                "min_confidence": {
+                    "type": "number",
+                    "description": "Minimum confidence threshold (0.0-1.0). Default: 0.5.",
+                },
+            },
+        },
+    },
+    {
+        "name": "lens_components",
+        "description": (
+            "Analyze components (directory-based modules) with cohesion metrics. "
+            "Components are directories containing related code. Returns cohesion score, "
+            "public API nodes, and internal nodes."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Filter to components under this path.",
+                },
+                "min_cohesion": {
+                    "type": "number",
+                    "description": "Minimum cohesion threshold (0.0-1.0). Default: 0.0.",
+                },
+            },
+        },
+    },
+    {
+        "name": "lens_explain_architecture",
+        "description": (
+            "Explain why a class/function has its current architecture. "
+            "For classes flagged as 'God Objects', explains whether the pattern is "
+            "intentional (Facade, Service) or needs refactoring. "
+            "USE THIS before suggesting to split large classes."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "node_id": {
+                    "type": "string",
+                    "description": "The class or function to analyze.",
+                },
+            },
+            "required": ["node_id"],
+        },
+    },
 ]

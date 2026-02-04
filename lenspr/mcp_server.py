@@ -168,8 +168,8 @@ def _start_watchdog_watcher(
     import lenspr
 
     # Debounce settings
-    POLL_INTERVAL_MS = 50  # Check every 50ms
-    DEBOUNCE_MS = 200  # Wait 200ms of no changes before syncing
+    poll_interval_ms = 50  # Check every 50ms
+    debounce_ms = 200  # Wait 200ms of no changes before syncing
 
     class _SyncHandler(handler_cls):  # type: ignore[misc]
         def __init__(self) -> None:
@@ -205,16 +205,16 @@ def _start_watchdog_watcher(
 
     def _sync_loop() -> None:
         while True:
-            time.sleep(POLL_INTERVAL_MS / 1000)  # 50ms poll interval
+            time.sleep(poll_interval_ms / 1000)  # 50ms poll interval
             should_sync = False
             should_reload = False
             changed: set[str] = set()
 
             with handler._lock:
                 if handler._pending_sync:
-                    # Debounce: only sync if no changes for DEBOUNCE_MS
+                    # Debounce: only sync if no changes for debounce_ms
                     time_since_last = (time.time() - handler._last_change_time) * 1000
-                    if time_since_last >= DEBOUNCE_MS:
+                    if time_since_last >= debounce_ms:
                         handler._pending_sync = False
                         should_sync = True
                         changed = handler._changed_files.copy()

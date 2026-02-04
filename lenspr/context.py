@@ -14,10 +14,10 @@ import networkx as nx
 from lenspr import database
 from lenspr import graph as graph_ops
 from lenspr.models import Node, SyncResult
-from lenspr.stats import ParseStats
 from lenspr.parsers.base import ProgressCallback
 from lenspr.parsers.multi import MultiParser
 from lenspr.patcher import PatchBuffer
+from lenspr.stats import ParseStats
 
 logger = logging.getLogger(__name__)
 

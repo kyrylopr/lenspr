@@ -108,6 +108,29 @@ def main() -> None:
         help="Overwrite existing annotations"
     )
 
+    # -- architecture --
+    p_arch = subparsers.add_parser(
+        "architecture",
+        help="Analyze codebase architecture: patterns, components, cohesion"
+    )
+    p_arch.add_argument("path", nargs="?", default=".", help="Project root (default: cwd)")
+    p_arch.add_argument(
+        "--patterns", action="store_true",
+        help="Show only detected patterns"
+    )
+    p_arch.add_argument(
+        "--components", action="store_true",
+        help="Show only components with cohesion metrics"
+    )
+    p_arch.add_argument(
+        "--explain", metavar="NODE_ID",
+        help="Explain architecture of a specific class/function"
+    )
+    p_arch.add_argument(
+        "--json", action="store_true",
+        help="Output as JSON"
+    )
+
     args = parser.parse_args()
 
     if args.command is None:
@@ -125,6 +148,7 @@ def main() -> None:
         "setup": cmd_setup,
         "doctor": cmd_doctor,
         "annotate": cmd_annotate,
+        "architecture": cmd_architecture,
     }
     handlers[args.command](args)
 
@@ -161,7 +185,8 @@ def cmd_init(args: argparse.Namespace) -> None:
         if monorepo.is_monorepo:
             print(f"Detected monorepo with {pkg_count} JS/TS packages")
         elif pkg_count == 1:
-            print(f"Detected JS/TS package: {monorepo.packages[0].name or monorepo.packages[0].path.name}")
+            pkg = monorepo.packages[0]
+            print(f"Detected JS/TS package: {pkg.name or pkg.path.name}")
 
         if missing_count > 0:
             if args.install_deps:
@@ -604,6 +629,121 @@ def cmd_annotate(args: argparse.Namespace) -> None:
     print('  Ask: "Annotate my codebase" or "Аннотируй все функции"')
     print()
     print("=" * 60)
+
+
+def cmd_architecture(args: argparse.Namespace) -> None:
+    """Analyze codebase architecture: patterns, components, cohesion."""
+    import lenspr
+    from lenspr import database
+    from lenspr.architecture import (
+        analyze_architecture,
+        format_architecture_report,
+    )
+
+    path = Path(args.path).resolve()
+    try:
+        ctx, _ = lenspr.init(str(path))
+    except lenspr.LensError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    nodes, edges = database.load_graph(ctx.graph_db)
+
+    # Handle --explain flag
+    if args.explain:
+        from lenspr.tools.arch import handle_explain_architecture
+
+        result = handle_explain_architecture({"node_id": args.explain}, ctx)
+        if not result.success:
+            print(f"Error: {result.error}", file=sys.stderr)
+            sys.exit(1)
+
+        data = result.data or {}
+        if args.json:
+            print(json.dumps(data, indent=2))
+        else:
+            print(f"\n{'=' * 60}")
+            print(f"ARCHITECTURE ANALYSIS: {args.explain}")
+            print(f"{'=' * 60}\n")
+
+            print(f"Type: {data.get('type', 'unknown')}")
+            print(f"Methods: {data.get('methods', 0)}")
+            print()
+
+            if "pattern" in data:
+                p = data["pattern"]
+                print(f"Detected Pattern: {p.get('type', 'none').upper()}")
+                print(f"Confidence: {p.get('confidence', 0):.0%}")
+                for ev in p.get("evidence", []):
+                    print(f"  • {ev}")
+                print()
+
+            print(f"Analysis: {data.get('analysis', 'N/A')}")
+            print()
+            print(f"Recommendation: {data.get('recommendation', 'N/A')}")
+            print()
+
+            if "component" in data:
+                c = data["component"]
+                print(f"Component: {c.get('name')} (cohesion: {c.get('cohesion', 0):.0%})")
+
+        return
+
+    # Run full analysis
+    report = analyze_architecture(nodes, edges, path)
+
+    if args.json:
+        print(json.dumps(report.to_dict(), indent=2))
+        return
+
+    # Handle --patterns or --components filters
+    if args.patterns:
+        print(f"\n{'=' * 60}")
+        print("DETECTED PATTERNS")
+        print(f"{'=' * 60}\n")
+
+        if not report.patterns:
+            print("  No architectural patterns detected.")
+        else:
+            for p in sorted(report.patterns, key=lambda x: -x.confidence):
+                print(f"  {p.pattern.value.upper()}: {p.node_id}")
+                print(f"    Confidence: {p.confidence:.0%}")
+                for ev in p.evidence:
+                    print(f"    • {ev}")
+                print()
+
+        print(f"Total: {len(report.patterns)} patterns")
+        return
+
+    if args.components:
+        print(f"\n{'=' * 60}")
+        print("COMPONENTS")
+        print(f"{'=' * 60}\n")
+
+        if not report.components:
+            print("  No components detected.")
+        else:
+            for c in sorted(report.components, key=lambda x: -x.cohesion):
+                pattern_str = f" [{c.pattern.value}]" if c.pattern else ""
+                print(f"  {c.name}{pattern_str}")
+                print(f"    Path: {c.path}")
+                print(f"    Cohesion: {c.cohesion:.0%}")
+                print(f"    Classes: {len(c.classes)}, Public API: {len(c.public_api)}")
+                print()
+
+        avg_cohesion = (
+            sum(c.cohesion for c in report.components) / len(report.components)
+            if report.components
+            else 0
+        )
+        print(f"Total: {len(report.components)} components, avg cohesion: {avg_cohesion:.0%}")
+        return
+
+    # Default: full report
+    print(f"\n{'=' * 60}")
+    print("ARCHITECTURE ANALYSIS")
+    print(f"{'=' * 60}\n")
+    print(format_architecture_report(report))
 
 
 def _update_global_claude_config(project_path: str, lenspr_bin: str) -> None:

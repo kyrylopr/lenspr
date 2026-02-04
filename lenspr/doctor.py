@@ -147,6 +147,7 @@ def _check_tree_sitter(report: DoctorReport) -> None:
     """Check if tree-sitter is installed."""
     try:
         import tree_sitter  # noqa: F401
+
         from lenspr.parsers import TYPESCRIPT_AVAILABLE
 
         if TYPESCRIPT_AVAILABLE:

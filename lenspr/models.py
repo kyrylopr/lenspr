@@ -27,6 +27,11 @@ class EdgeType(Enum):
     USES = "uses"
     DECORATES = "decorates"
     CONTAINS = "contains"  # Parent function/class contains nested definition
+    # Architectural edge types
+    DELEGATES_TO = "delegates_to"  # Facade delegates to implementation
+    WRAPS = "wraps"  # Wrapper/decorator pattern
+    IMPLEMENTS = "implements"  # Implements interface/protocol
+    COMPOSED_OF = "composed_of"  # Class contains instances of other classes
 
 
 class EdgeConfidence(Enum):
@@ -59,6 +64,94 @@ class NodeRole(Enum):
     UTILITY = "utility"  # Generic helper
     FACTORY = "factory"  # Creates objects
     ACCESSOR = "accessor"  # Gets/sets properties
+
+
+class ArchPattern(Enum):
+    """Architectural patterns detected in code."""
+
+    FACADE = "facade"  # Simplifies interface to complex subsystem
+    STRATEGY = "strategy"  # Interchangeable algorithms/behaviors
+    FACTORY = "factory"  # Object creation abstraction
+    SINGLETON = "singleton"  # Single instance pattern
+    ADAPTER = "adapter"  # Interface compatibility wrapper
+    DECORATOR = "decorator"  # Dynamic behavior extension
+    OBSERVER = "observer"  # Event subscription pattern
+    REPOSITORY = "repository"  # Data access abstraction
+    SERVICE = "service"  # Business logic encapsulation
+    COORDINATOR = "coordinator"  # Orchestrates multiple services
+
+
+@dataclass
+class Component:
+    """A high-level architectural component (group of related modules)."""
+
+    id: str  # e.g. "crawlers", "api.handlers"
+    name: str  # Human-readable name
+    path: str  # Directory path relative to project root
+    pattern: ArchPattern | None = None  # Detected or declared pattern
+    description: str = ""
+    modules: list[str] = field(default_factory=list)  # Module node IDs
+    classes: list[str] = field(default_factory=list)  # Class node IDs
+    public_api: list[str] = field(default_factory=list)  # Externally-used nodes
+    internal_nodes: list[str] = field(default_factory=list)  # Internal-only nodes
+    delegates_to: list[str] = field(default_factory=list)  # Component IDs this delegates to
+    implements: list[str] = field(default_factory=list)  # Interface/protocol IDs
+
+    # Metrics
+    internal_edges: int = 0  # Edges within component
+    external_edges: int = 0  # Edges to other components
+    cohesion: float = 0.0  # internal / (internal + external)
+
+    def to_dict(self) -> dict:
+        """Serialize to dictionary."""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "path": self.path,
+            "pattern": self.pattern.value if self.pattern else None,
+            "description": self.description,
+            "modules": self.modules,
+            "classes": self.classes,
+            "public_api": self.public_api,
+            "internal_nodes": self.internal_nodes,
+            "delegates_to": self.delegates_to,
+            "implements": self.implements,
+            "internal_edges": self.internal_edges,
+            "external_edges": self.external_edges,
+            "cohesion": self.cohesion,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Component":
+        """Deserialize from dictionary."""
+        pattern_val = data.get("pattern")
+        return cls(
+            id=data["id"],
+            name=data["name"],
+            path=data["path"],
+            pattern=ArchPattern(pattern_val) if pattern_val else None,
+            description=data.get("description", ""),
+            modules=data.get("modules", []),
+            classes=data.get("classes", []),
+            public_api=data.get("public_api", []),
+            internal_nodes=data.get("internal_nodes", []),
+            delegates_to=data.get("delegates_to", []),
+            implements=data.get("implements", []),
+            internal_edges=data.get("internal_edges", 0),
+            external_edges=data.get("external_edges", 0),
+            cohesion=data.get("cohesion", 0.0),
+        )
+
+
+@dataclass
+class PatternMatch:
+    """A detected architectural pattern instance."""
+
+    pattern: ArchPattern
+    node_id: str  # Primary node (e.g., facade class)
+    confidence: float  # 0.0-1.0
+    related_nodes: list[str] = field(default_factory=list)  # Strategy implementations, etc.
+    evidence: list[str] = field(default_factory=list)  # Why this pattern was detected
 
 
 @dataclass

@@ -103,7 +103,8 @@ Claude gets structured tools to navigate and modify code safely.
 | Feature | Description |
 |---------|-------------|
 | **Impact Analysis** | Know what breaks before you change anything |
-| **29 MCP Tools** | Navigation, search, analysis, modification, git integration |
+| **Architecture Analysis** | Detect patterns (Facade, Strategy, Factory), analyze components |
+| **33 MCP Tools** | Navigation, search, analysis, modification, git, architecture |
 | **3-Level Validation** | Syntax → Structure → Signature checks |
 | **Atomic Modifications** | File changes roll back if graph sync fails |
 | **Auto-Sync** | Graph updates automatically (50ms poll + 200ms debounce) |
@@ -126,6 +127,7 @@ lenspr sync <path>              # Resync after file changes
 lenspr serve <path>             # Start MCP server manually
 lenspr watch <path>             # Auto-sync on file changes
 lenspr annotate <path>          # Show annotation coverage
+lenspr architecture <path>      # Analyze patterns and components
 ```
 
 ## Python API
@@ -198,6 +200,14 @@ results = lenspr.handle_tool("lens_search", {
 | `lens_save_annotation` | Save summary (role auto-detected) |
 | `lens_batch_save_annotations` | Annotate multiple nodes at once |
 | `lens_annotation_stats` | Coverage statistics |
+
+### Architecture Analysis
+| Tool | Description |
+|------|-------------|
+| `lens_architecture` | Full analysis: patterns, components, cohesion |
+| `lens_patterns` | Detect patterns (Facade, Strategy, Factory, etc.) |
+| `lens_components` | Analyze component cohesion and boundaries |
+| `lens_explain_architecture` | Explain why a class has its structure |
 
 Full reference: [docs/TOOLS.md](docs/TOOLS.md)
 
@@ -272,7 +282,47 @@ For full annotations with summaries:
 
 Claude will call `lens_annotate_batch` → analyze code → call `lens_batch_save_annotations`.
 
-## Architecture
+## Architecture Analysis
+
+LensPR can detect architectural patterns and analyze component structure:
+
+### Detected Patterns
+
+| Pattern | Detection Criteria |
+|---------|-------------------|
+| **Facade** | Class delegates to 3+ other classes |
+| **Strategy** | Interface/base class with 2+ implementations |
+| **Factory** | Function creating different types based on conditions |
+| **Singleton** | Class with `_instance` and `get_instance()` |
+| **Repository** | Class with CRUD-like methods (get, save, delete) |
+| **Service** | Class with Service/Manager/Handler in name |
+| **Decorator** | Class wrapping another object |
+
+### CLI Commands
+
+```bash
+lenspr architecture .                    # Full analysis
+lenspr architecture . --patterns         # Show only patterns
+lenspr architecture . --components       # Show only components
+lenspr architecture . --explain MyClass  # Explain why class has its structure
+lenspr architecture . --json             # Output as JSON
+```
+
+### Why This Matters
+
+Before architecture analysis, LensPR would flag large classes as "God Objects". Now it understands:
+
+```
+# Old behavior
+⚠️ AdaptiveCrawler has 50 methods - consider splitting
+
+# New behavior
+✓ AdaptiveCrawler: FACADE pattern
+  Delegates to: ShopifyCrawler, WooCommerceCrawler, GenericCrawler
+  Recommendation: KEEP - architecture is intentional
+```
+
+## Project Structure
 
 ```
 lenspr/
@@ -283,7 +333,8 @@ lenspr/
 ├── graph.py             # NetworkX algorithms
 ├── patcher.py           # File patching
 ├── validator.py         # 3-level validation
-├── mcp_server.py        # MCP server (29 tools)
+├── architecture.py      # Pattern detection, component analysis
+├── mcp_server.py        # MCP server (33 tools)
 ├── cli.py               # CLI entry point
 ├── parsers/
 │   ├── base.py              # BaseParser interface
@@ -298,6 +349,7 @@ lenspr/
     ├── analysis.py      # Impact, health, dead code
     ├── modification.py  # Update, add, delete, rename
     ├── annotation.py    # Semantic annotations
+    ├── arch.py          # Architecture analysis tools
     ├── git.py           # Blame, history
     └── patterns.py      # Role/side_effects detection
 ```
@@ -311,8 +363,8 @@ Full architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 | Tests | 227 passed |
 | Python Resolution | 96%+ |
 | TypeScript Resolution | 90%+ |
-| MCP Tools | 29 |
-| CLI Commands | 10 |
+| MCP Tools | 33 |
+| CLI Commands | 11 |
 | Python Support | ✅ Yes (AST + jedi) |
 | JS/TS Support | ✅ Yes (tree-sitter + TypeScript Compiler API) |
 
