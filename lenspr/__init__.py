@@ -140,7 +140,7 @@ def get_system_prompt() -> str:
 
     g = ctx.get_graph()
     from lenspr.graph import get_structure
-    result = get_structure(g)
+    result = get_structure(g, max_depth=1)
 
     # Format structure as readable text
     structure_text = _format_structure(result["structure"])

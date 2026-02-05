@@ -93,6 +93,7 @@ _LENSPR_MODULES = [
     "lenspr.tools.annotation",
     "lenspr.tools.explain",
     "lenspr.tools.git",
+    "lenspr.tools.arch",
     "lenspr.tools",
     "lenspr.claude_tools",
     "lenspr.context",
@@ -846,6 +847,69 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
             "include_examples": include_examples,
         })
         return json.dumps(result, indent=2)
+
+    # -- Architecture Metrics Tools --
+
+    @mcp.tool()
+    def lens_class_metrics(node_id: str) -> str:
+        """Get pre-computed metrics for a class: method count, lines,
+        public/private methods, dependencies, internal calls, method prefixes,
+        and percentile rank compared to other classes.
+        Metrics are computed during init/sync - this is O(1) read.
+
+        Args:
+            node_id: The class node ID to get metrics for.
+        """
+        return _tool_result("lens_class_metrics", {"node_id": node_id})
+
+    @mcp.tool()
+    def lens_project_metrics() -> str:
+        """Get project-wide class metrics: total classes, avg/median/min/max methods,
+        and percentiles (p90, p95). Use this to understand the distribution
+        before interpreting individual class metrics.
+        """
+        return _tool_result("lens_project_metrics", {})
+
+    @mcp.tool()
+    def lens_largest_classes(limit: int = 10) -> str:
+        """Get classes sorted by method count (descending).
+        Returns the N largest classes with their metrics.
+        Use this to identify potentially complex classes for review.
+
+        Args:
+            limit: Max classes to return. Default: 10.
+        """
+        return _tool_result("lens_largest_classes", {"limit": limit})
+
+    @mcp.tool()
+    def lens_compare_classes(node_ids: list[str]) -> str:
+        """Compare metrics between multiple classes.
+        Returns metrics side-by-side for easy comparison.
+
+        Args:
+            node_ids: List of class node IDs to compare.
+        """
+        return _tool_result("lens_compare_classes", {"node_ids": node_ids})
+
+    @mcp.tool()
+    def lens_components(
+        path: str | None = None,
+        min_cohesion: float = 0.0,
+    ) -> str:
+        """Analyze components (directory-based modules) with cohesion metrics.
+        Components are directories containing related code. Returns cohesion score
+        (internal edges / total edges), public API nodes, and internal nodes.
+
+        Args:
+            path: Filter to components under this path.
+            min_cohesion: Minimum cohesion threshold (0.0-1.0). Default: 0.0.
+        """
+        params: dict = {}
+        if path is not None:
+            params["path"] = path
+        if min_cohesion > 0:
+            params["min_cohesion"] = min_cohesion
+        return _tool_result("lens_components", params)
 
     logger.info("Starting LensPR MCP server for: %s", project_path)
     mcp.run(transport="stdio")

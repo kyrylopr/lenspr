@@ -158,10 +158,6 @@ def find_path(G: nx.DiGraph, from_id: str, to_id: str) -> list[str]:
         return []
 
 
-def get_subgraph(G: nx.DiGraph, node_ids: set[str]) -> nx.DiGraph:
-    """Extract subgraph containing only specified nodes and edges between them."""
-    subgraph: nx.DiGraph = G.subgraph(node_ids).copy()  # type: ignore[assignment]
-    return subgraph
 
 
 def detect_circular_imports(G: nx.DiGraph) -> list[list[str]]:

@@ -132,11 +132,6 @@ def apply_patches(file_path: Path, patches: list[Patch]) -> str:
     return "".join(lines)
 
 
-def compute_line_delta(patch: Patch) -> int:
-    """Compute how many lines a patch adds or removes."""
-    old_count = patch.end_line - patch.start_line + 1
-    new_count = len(patch.new_source.splitlines())
-    return new_count - old_count
 
 
 class PatchBuffer:

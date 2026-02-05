@@ -165,21 +165,3 @@ def install_dependencies(
     return results
 
 
-def get_node_modules_paths(root_path: Path) -> list[Path]:
-    """Get all node_modules directories in the project.
-
-    Args:
-        root_path: Project root directory.
-
-    Returns:
-        List of paths to node_modules directories.
-    """
-    info = find_packages(root_path)
-    paths = []
-
-    for pkg in info.packages:
-        node_modules = pkg.path / "node_modules"
-        if node_modules.exists():
-            paths.append(node_modules)
-
-    return paths

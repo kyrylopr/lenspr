@@ -104,25 +104,3 @@ def get_history(
         conn.close()
 
 
-def rollback(change_id: int, db_path: Path) -> str | None:
-    """
-    Revert a specific change by restoring old_source.
-
-    Returns the old_source if found, None otherwise.
-    Note: This only returns the source — the caller is responsible
-    for actually applying the rollback to the file and graph.
-    """
-    conn = sqlite3.connect(str(db_path))
-    conn.row_factory = sqlite3.Row
-    try:
-        row = conn.execute(
-            "SELECT * FROM changes WHERE id = ?", (change_id,)
-        ).fetchone()
-
-        if not row:
-            return None
-
-        result: str | None = row["old_source"]
-        return result
-    finally:
-        conn.close()

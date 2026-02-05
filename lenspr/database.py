@@ -209,8 +209,8 @@ def get_nodes(
         query += " AND type = ?"
         params.append(type_filter)
     if file_filter:
-        query += " AND file_path = ?"
-        params.append(file_filter)
+        query += " AND file_path LIKE ?"
+        params.append(f"{file_filter}%")
     if name_filter:
         query += " AND name LIKE ?"
         params.append(f"%{name_filter}%")
@@ -389,33 +389,8 @@ def search_nodes(query: str, db_path: Path, search_in: str = "all") -> list[Node
 
 # -- Resolution cache --
 
-def cache_resolution(
-    file_path: str, line: int, column: int, node_id: str | None,
-    confidence: str, db_path: Path
-) -> None:
-    """Cache a name resolution result."""
-    with _connect(db_path) as conn:
-        conn.execute(
-            """INSERT OR REPLACE INTO resolutions
-            (file_path, line, column, node_id, confidence)
-            VALUES (?, ?, ?, ?, ?)""",
-            (file_path, line, column, node_id, confidence),
-        )
 
 
-def get_cached_resolution(
-    file_path: str, line: int, column: int, db_path: Path
-) -> tuple[str | None, str] | None:
-    """Get a cached resolution result. Returns (node_id, confidence) or None."""
-    with _connect(db_path) as conn:
-        row = conn.execute(
-            "SELECT node_id, confidence FROM resolutions "
-            "WHERE file_path = ? AND line = ? AND column = ?",
-            (file_path, line, column),
-        ).fetchone()
-        if row:
-            return row["node_id"], row["confidence"]
-    return None
 
 
 # -- Project metrics --
