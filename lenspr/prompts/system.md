@@ -35,10 +35,14 @@ of code nodes and their relationships.
 - `lens_arch_rule_delete` - Remove a rule by ID
 - `lens_arch_check` - Check all rules against the current codebase
 
+### Remediation
+- `lens_fix_plan` - Ordered action list (CRITICAL→LOW) to raise the vibecheck score
+- `lens_generate_test_skeleton` - Test spec (scenarios, mocks, examples) for a function
+
 ## Rules
 
 1. **Before ANY modification**, call `lens_check_impact` to understand consequences
-2. After modifying, verify the change is syntactically valid
+2. **After EVERY `lens_add_node` or `lens_update_node`**, call `lens_run_tests()` to verify behavioral correctness. Syntax validation alone is not sufficient.
 3. Connections marked "unresolved" cannot be statically determined (dynamic dispatch, eval, getattr). Warn the user about these.
 4. Prefer small, focused changes over large rewrites
 5. When impact zone is large (>10 nodes), confirm with the user before proceeding
