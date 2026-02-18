@@ -23,6 +23,16 @@ This includes:
 □ Am I searching? → lens_grep or lens_search (not Grep)
 ```
 
+### Mandatory Checklist After Every Code Change:
+
+```
+□ After lens_add_node or lens_update_node → ALWAYS run lens_run_tests()
+□ Syntax validation ≠ behavioral correctness — tests are the only real check
+□ Do not proceed to the next change until the current one is verified
+```
+
+**Why:** `lens_add_node` returns `success: true` even if the logic is broken. Syntax is validated, but wrong variable names, broken imports, or incorrect logic will only be caught by tests. Skipping this is the "competence illusion" — the tool says OK, but the code may not be.
+
 ### Why This Is Non-Negotiable:
 
 You have a **proven pattern** of:
