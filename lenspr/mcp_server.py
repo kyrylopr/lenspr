@@ -1121,5 +1121,44 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
         """
         return _tool_result("lens_vibecheck", {})
 
+    @mcp.tool()
+    def lens_fix_plan(
+        target_grade: str = "B",
+        max_items: int = 20,
+        focus: str | None = None,
+    ) -> str:
+        """Generate an ordered, actionable remediation plan to improve the vibecheck score.
+
+        Returns a prioritized list of concrete actions (CRITICAL → LOW) with
+        action_type, target_node_id, reason, priority, and expected_score_impact.
+
+        Work through actions in priority order. After each batch of fixes,
+        run lens_vibecheck() to track progress. Use lens_generate_test_skeleton()
+        before writing any test.
+
+        Args:
+            target_grade: Grade to aim for (A/B/C/D). Default: B.
+            max_items: Max actions to return. Default: 20.
+            focus: Narrow to one category: tests | docs | arch | dead_code | nfr.
+        """
+        params: dict = {"target_grade": target_grade, "max_items": max_items}
+        if focus is not None:
+            params["focus"] = focus
+        return _tool_result("lens_fix_plan", params)
+
+    @mcp.tool()
+    def lens_generate_test_skeleton(node_id: str) -> str:
+        """Generate a structured test specification for a function using graph context.
+
+        Uses callers (real usage examples), callees (what to mock), and the
+        function's signature to produce a test spec with scenarios, setup hints,
+        and mock candidates. Does NOT write test code — returns an intelligence
+        spec the AI agent uses to write targeted, realistic tests.
+
+        Args:
+            node_id: The node to generate a test spec for.
+        """
+        return _tool_result("lens_generate_test_skeleton", {"node_id": node_id})
+
     logger.info("Starting LensPR MCP server for: %s", project_path)
     mcp.run(transport="stdio")

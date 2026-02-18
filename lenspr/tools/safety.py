@@ -26,6 +26,8 @@ __all__ = [
     "handle_arch_rule_delete",
     "handle_arch_check",
     "handle_vibecheck",
+    "handle_fix_plan",
+    "handle_generate_test_skeleton",
     "check_arch_violations",
 ]
 
@@ -837,3 +839,315 @@ def handle_vibecheck(params: dict, ctx: LensContext) -> ToolResponse:
             ),
         },
     )
+
+def handle_fix_plan(params: dict, ctx: LensContext) -> ToolResponse:
+    """Generate an ordered, actionable remediation plan to improve the vibecheck score.
+
+    Returns a prioritized list of concrete actions, each with action_type,
+    target_node_id, reason, priority, and expected_score_impact.
+
+    Work through actions in priority order. Run lens_vibecheck() after each
+    batch to track progress. Use lens_generate_test_skeleton(node_id) for
+    test writing guidance.
+    """
+    target_grade = params.get("target_grade", "B")
+    max_items = int(params.get("max_items", 20))
+    focus = params.get("focus")  # optional: "tests" | "docs" | "arch" | "dead_code"
+
+    ctx.ensure_synced()
+    nx_graph = ctx.get_graph()
+    all_nodes = database.get_nodes(ctx.graph_db)
+
+    # Production functions only
+    func_nodes = [
+        n for n in all_nodes
+        if n.type.value in ("function", "method")
+        and "test" not in (n.file_path or "").lower()
+        and not n.name.startswith("test_")
+        and not (n.file_path or "").startswith("eval/")
+    ]
+    total_funcs = len(func_nodes)
+
+    # Score impact per unit
+    pts_per_test = round(25 / total_funcs, 3) if total_funcs else 0
+    pts_per_doc = round(10 / total_funcs, 3) if total_funcs else 0
+    pts_per_dead = round(20 / total_funcs, 3) if total_funcs else 0
+
+    actions: list[dict] = []
+
+    # --- 1. Arch violations (highest impact: 3 pts/violation, LOW effort) ---
+    if not focus or focus == "arch":
+        violations_resp = handle_arch_check({}, ctx)
+        if violations_resp.success and violations_resp.data:
+            for v in violations_resp.data.get("violations", []):
+                actions.append({
+                    "action_type": "fix_arch_violation",
+                    "target_node_id": v.get("node_id", ""),
+                    "target_name": v.get("node_name", ""),
+                    "file": v.get("file", ""),
+                    "reason": v.get("description", "Architecture rule violated"),
+                    "priority": "CRITICAL",
+                    "expected_score_impact": 3.0,
+                    "hint": f"Rule violated: {v.get('rule_description', '')}",
+                })
+
+    # --- 2. NFR: IO without error handling (HIGH severity, affects reliability) ---
+    if not focus or focus == "nfr":
+        for node in func_nodes:
+            src = node.source_code or ""
+            has_io = any(marker in src for marker in _IO_MARKERS)
+            if has_io and "try:" not in src:
+                # Count callers (higher = more urgent)
+                caller_count = sum(
+                    1 for pred_id in nx_graph.predecessors(node.id)
+                    if not (nx_graph.nodes.get(pred_id, {}).get("file_path") or "").startswith("tests/")
+                )
+                actions.append({
+                    "action_type": "add_error_handling",
+                    "target_node_id": node.id,
+                    "target_name": node.name,
+                    "file": node.file_path,
+                    "reason": f"IO/network/DB operations without try/except ({caller_count} callers)",
+                    "priority": "HIGH" if caller_count > 2 else "MEDIUM",
+                    "expected_score_impact": 0.0,  # NFR doesn't affect vibecheck score directly
+                    "hint": "Wrap IO operations in try/except; log errors with logger.error()",
+                })
+
+    # --- 3. Test coverage: uncovered functions sorted by caller count ---
+    if not focus or focus == "tests":
+        for node in func_nodes:
+            has_test = any(
+                nx_graph.nodes.get(pred_id, {}).get("name", "").startswith("test_")
+                or "test" in (nx_graph.nodes.get(pred_id, {}).get("file_path") or "").lower()
+                for pred_id in nx_graph.predecessors(node.id)
+            )
+            if not has_test:
+                prod_callers = sum(
+                    1 for pred_id in nx_graph.predecessors(node.id)
+                    if "test" not in (nx_graph.nodes.get(pred_id, {}).get("file_path") or "").lower()
+                )
+                actions.append({
+                    "action_type": "add_tests",
+                    "target_node_id": node.id,
+                    "target_name": node.name,
+                    "file": node.file_path,
+                    "reason": f"No test coverage ({prod_callers} production callers)",
+                    "priority": "HIGH" if prod_callers > 5 else "MEDIUM" if prod_callers > 1 else "LOW",
+                    "expected_score_impact": pts_per_test,
+                    "hint": f"lens_generate_test_skeleton('{node.id}')",
+                })
+
+    # --- 4. Dead code: truly unused functions ---
+    if not focus or focus == "dead_code":
+        from lenspr.tools.analysis import handle_dead_code as _hdc  # noqa: PLC0415
+        dead_resp = _hdc({}, ctx)
+        if dead_resp.success and dead_resp.data:
+            dead_ids = [
+                d for d in dead_resp.data.get("dead_code", [])
+                if not d.startswith("eval.") and "test" not in d.lower()
+            ]
+            for dead_id in dead_ids:
+                node_data = nx_graph.nodes.get(dead_id, {})
+                actions.append({
+                    "action_type": "delete_dead_code",
+                    "target_node_id": dead_id,
+                    "target_name": node_data.get("name", dead_id),
+                    "file": node_data.get("file_path", ""),
+                    "reason": "No callers found in call graph",
+                    "priority": "LOW",
+                    "expected_score_impact": pts_per_dead,
+                    "hint": f"Verify first: lens_find_usages('{dead_id}'). May be called via dynamic dispatch.",
+                })
+
+    # --- 5. Missing docstrings (LOW effort, small but real impact) ---
+    if not focus or focus == "docs":
+        for node in func_nodes:
+            if not node.docstring and not node.summary:
+                actions.append({
+                    "action_type": "add_docstring",
+                    "target_node_id": node.id,
+                    "target_name": node.name,
+                    "file": node.file_path,
+                    "reason": "Function has no docstring",
+                    "priority": "LOW",
+                    "expected_score_impact": pts_per_doc,
+                    "hint": "Add a single-line docstring describing what the function does",
+                })
+
+    # Sort: CRITICAL > HIGH > MEDIUM > LOW, then by score impact descending
+    _order = {"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1}
+    actions.sort(
+        key=lambda a: (_order.get(a["priority"], 0), a["expected_score_impact"]),
+        reverse=True,
+    )
+    actions = actions[:max_items]
+
+    total_impact = round(sum(a["expected_score_impact"] for a in actions), 1)
+
+    # Current grade context
+    _grade_targets = {"A": 90, "B": 75, "C": 60, "D": 45}
+    target_pts = _grade_targets.get(target_grade.upper(), 75)
+
+    return ToolResponse(
+        success=True,
+        data={
+            "actions": actions,
+            "count": len(actions),
+            "target_grade": target_grade.upper(),
+            "estimated_score_gain": total_impact,
+            "summary": (
+                f"{len(actions)} actions identified. "
+                f"Estimated +{total_impact} pts toward grade {target_grade.upper()} (needs {target_pts}/100)."
+            ),
+            "protocol": (
+                "1. Work through actions in priority order (CRITICAL first). "
+                "2. For add_tests: call lens_generate_test_skeleton(node_id) first. "
+                "3. Apply changes via lens_update_node or lens_patch_node. "
+                "4. Run lens_run_tests() to verify. "
+                "5. After each batch of 5-10 fixes, call lens_vibecheck() to track progress."
+            ),
+        },
+    )
+
+def handle_generate_test_skeleton(params: dict, ctx: LensContext) -> ToolResponse:
+    """Generate a structured test specification for a function using graph context.
+
+    Uses callers (real usage examples), callees (what to mock), and the
+    function's signature to build a test spec. Does NOT write test code —
+    returns an intelligence spec the AI agent uses to write targeted tests.
+
+    The spec includes: scenarios, setup_hints, example_callers, mocks_needed.
+    """
+    node_id = params.get("node_id")
+    if not node_id:
+        return ToolResponse(success=False, error="node_id is required")
+
+    ctx.ensure_synced()
+    node = database.get_node(node_id, ctx.graph_db)
+    if node is None:
+        return ToolResponse(success=False, error=f"Node not found: {node_id}")
+
+    nx_graph = ctx.get_graph()
+    source = node.source_code or ""
+    name = node.name
+    sig = node.signature or name
+    docstring = node.docstring or ""
+
+    # --- Callers: real usage examples ---
+    caller_ids = list(nx_graph.predecessors(node_id))
+    example_callers: list[dict] = []
+    for cid in caller_ids[:5]:  # cap at 5
+        caller_node = database.get_node(cid, ctx.graph_db)
+        if caller_node and caller_node.source_code:
+            # Extract lines that contain the call
+            call_lines = [
+                line.strip()
+                for line in caller_node.source_code.splitlines()
+                if name in line and not line.strip().startswith("#")
+            ][:3]
+            if call_lines:
+                example_callers.append({
+                    "caller_id": cid,
+                    "caller_name": caller_node.name,
+                    "call_examples": call_lines,
+                })
+
+    # --- Callees: what the function calls (mock candidates) ---
+    callee_ids = list(nx_graph.successors(node_id))
+    mocks_needed: list[dict] = []
+    for cid in callee_ids[:10]:
+        callee_node = database.get_node(cid, ctx.graph_db)
+        if callee_node:
+            file_path = callee_node.file_path or ""
+            # External / IO / DB callees are mock candidates
+            is_io = any(m in (callee_node.source_code or "") for m in _IO_MARKERS)
+            is_external = not file_path.startswith(str(ctx.project_root))
+            if is_io or is_external or "open(" in source or callee_node.name in ("open", "connect"):
+                mocks_needed.append({
+                    "callee_id": cid,
+                    "callee_name": callee_node.name,
+                    "reason": "IO/network/DB" if is_io else "external dependency",
+                })
+
+    # --- Infer test scenarios from source code ---
+    scenarios: list[dict] = []
+
+    # Happy path — always needed
+    scenarios.append({
+        "name": f"test_{name}_happy_path",
+        "description": f"Verify {name} returns the expected result for valid input",
+        "kind": "happy_path",
+    })
+
+    # Detect conditional branches
+    branch_count = source.count("\n    if ") + source.count("\n        if ")
+    for i in range(min(branch_count, 3)):
+        scenarios.append({
+            "name": f"test_{name}_branch_{i + 1}",
+            "description": f"Cover branch #{i + 1} (conditional logic detected in source)",
+            "kind": "branch",
+        })
+
+    # Detect error paths
+    if "raise " in source or "except " in source:
+        scenarios.append({
+            "name": f"test_{name}_raises_on_invalid_input",
+            "description": f"Verify {name} raises the appropriate exception for bad input",
+            "kind": "error_path",
+        })
+
+    # Detect loops / empty input
+    if "for " in source or "while " in source:
+        scenarios.append({
+            "name": f"test_{name}_empty_input",
+            "description": f"Verify {name} handles empty collections gracefully",
+            "kind": "edge_case",
+        })
+
+    # Detect None / optional handling
+    if "is None" in source or "if not " in source:
+        scenarios.append({
+            "name": f"test_{name}_none_input",
+            "description": f"Verify {name} handles None or falsy input correctly",
+            "kind": "edge_case",
+        })
+
+    # --- Setup hints ---
+    setup_hints: list[str] = []
+    if mocks_needed:
+        callee_names = ", ".join(m["callee_name"] for m in mocks_needed)
+        setup_hints.append(f"Mock external dependencies: {callee_names}")
+    if "database" in source.lower() or "db" in source.lower():
+        setup_hints.append("Use an in-memory or temporary database fixture")
+    if "ctx" in source or "LensContext" in source:
+        setup_hints.append("Provide a LensContext fixture (see tests/conftest.py patterns)")
+    if not setup_hints:
+        setup_hints.append("No external dependencies detected — straightforward unit test")
+
+    # --- Module to place the test in ---
+    file_path = node.file_path or ""
+    suggested_test_file = file_path.replace("lenspr/", "tests/test_").replace("/", "_")
+    if not suggested_test_file.endswith(".py"):
+        suggested_test_file += ".py"
+
+    return ToolResponse(
+        success=True,
+        data={
+            "node_id": node_id,
+            "function_name": name,
+            "signature": sig,
+            "docstring": docstring,
+            "suggested_test_file": suggested_test_file,
+            "scenarios": scenarios,
+            "setup_hints": setup_hints,
+            "example_callers": example_callers,
+            "mocks_needed": mocks_needed,
+            "hint": (
+                f"Write {len(scenarios)} test functions in {suggested_test_file}. "
+                "Use example_callers for realistic input values. "
+                "Mock everything in mocks_needed."
+            ),
+        },
+    )
+
+

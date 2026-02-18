@@ -141,6 +141,8 @@ __all__ = [
     "handle_arch_rule_delete",
     "handle_arch_check",
     "handle_vibecheck",
+    "handle_fix_plan",
+    "handle_generate_test_skeleton",
 ]
 
 
@@ -201,6 +203,8 @@ _HANDLER_MAP: dict[str, tuple[str, str]] = {
     "lens_arch_rule_delete": ("lenspr.tools.safety", "handle_arch_rule_delete"),
     "lens_arch_check": ("lenspr.tools.safety", "handle_arch_check"),
     "lens_vibecheck": ("lenspr.tools.safety", "handle_vibecheck"),
+    "lens_fix_plan": ("lenspr.tools.safety", "handle_fix_plan"),
+    "lens_generate_test_skeleton": ("lenspr.tools.safety", "handle_generate_test_skeleton"),
 }
 
 # Hot-reload mode: when True, handlers are resolved dynamically each call
