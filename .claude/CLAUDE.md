@@ -26,12 +26,20 @@ This includes:
 ### Mandatory Checklist After Every Code Change:
 
 ```
-□ After lens_add_node or lens_update_node → ALWAYS run lens_run_tests()
-□ Syntax validation ≠ behavioral correctness — tests are the only real check
-□ Do not proceed to the next change until the current one is verified
+□ After lens_add_node or lens_update_node → run lens_run_tests()
+□ Syntax validation ≠ behavioral correctness
+□ Do not proceed to the next change until tests pass
+□ For NEW functions: also run lens_generate_test_skeleton(node_id) and write tests
 ```
 
-**Why:** `lens_add_node` returns `success: true` even if the logic is broken. Syntax is validated, but wrong variable names, broken imports, or incorrect logic will only be caught by tests. Skipping this is the "competence illusion" — the tool says OK, but the code may not be.
+**What `lens_run_tests()` actually catches:** import-time crashes (NameError, missing symbols, broken references between modules). Python resolves imports at load time — `pytest` will fail at collection if the new code references a non-existent function.
+
+**What `lens_run_tests()` does NOT catch:** behavioral bugs in the new code itself. Logic errors, wrong return values, unhandled edge cases — none of this is verified without tests that specifically call the new function.
+
+**Full verification loop for new code:**
+1. `lens_run_tests()` → no import crashes, no regressions in already-covered code
+2. `lens_generate_test_skeleton(node_id)` → test spec (scenarios, mocks, usage examples)
+3. Write tests based on the spec → behavioral correctness confirmed
 
 ### Why This Is Non-Negotiable:
 

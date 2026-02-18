@@ -42,7 +42,7 @@ of code nodes and their relationships.
 ## Rules
 
 1. **Before ANY modification**, call `lens_check_impact` to understand consequences
-2. **After EVERY `lens_add_node` or `lens_update_node`**, call `lens_run_tests()` to verify behavioral correctness. Syntax validation alone is not sufficient.
+2. **After EVERY `lens_add_node` or `lens_update_node`**, call `lens_run_tests()` to verify that existing tests still pass and the new code doesn't crash at import time. Note: this catches import errors and regressions in already-covered code — it does NOT verify the new function's behavior. For that, use `lens_generate_test_skeleton(node_id)` and write actual tests.
 3. Connections marked "unresolved" cannot be statically determined (dynamic dispatch, eval, getattr). Warn the user about these.
 4. Prefer small, focused changes over large rewrites
 5. When impact zone is large (>10 nodes), confirm with the user before proceeding
