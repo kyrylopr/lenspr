@@ -94,7 +94,7 @@ Your code (.py, .ts, .tsx, .js, .jsx)
   SQLite database (local, never leaves your machine)
        │
        ▼
-  38 MCP tools for your AI assistant
+  41 MCP tools for your AI assistant
        │
        ▼
   File watcher auto-syncs on every save
@@ -133,12 +133,16 @@ Run yourself: `make benchmark`
 |---------|-------------|
 | **Impact Analysis** | Shows severity (LOW → CRITICAL) before any change |
 | **One-Call Context** | Source + callers + callees + tests in a single request |
+| **Surgical Edits** | `lens_patch_node` for targeted find/replace — no full rewrites needed |
+| **Test Runner** | `lens_run_tests` runs pytest and returns structured pass/fail results |
+| **Session Memory** | Persistent notes survive context resets — AI picks up where it left off |
 | **Graph-Aware Search** | Every grep result shows which function contains the match |
 | **Auto-Sync** | Graph updates on every file save, AI always sees latest code |
 | **Dead Code Detection** | Finds unreachable functions (supports Django, FastAPI, Celery, etc.) |
 | **Git at Function Level** | Blame, history, and commit scope per function, not per file |
 | **Atomic Changes** | Multi-file updates either all apply or all roll back |
 | **Cross-Project Rename** | Rename a function and update every reference |
+| **Large File Safety** | Blocks edits on 10K+ char nodes; integrity check catches truncated LLM output |
 
 ---
 
@@ -169,7 +173,7 @@ lenspr doctor <path>         # Diagnose configuration issues
 ```
 
 <details>
-<summary>All MCP tools (38)</summary>
+<summary>All MCP tools (41)</summary>
 
 ### Navigation & Search
 | Tool | Description |
@@ -187,7 +191,7 @@ lenspr doctor <path>         # Diagnose configuration issues
 | Tool | Description |
 |------|-------------|
 | `lens_check_impact` | Severity + affected nodes before changes |
-| `lens_validate_change` | Dry-run validation |
+| `lens_validate_change` | Dry-run validation without applying |
 | `lens_health` | Graph quality stats |
 | `lens_dead_code` | Find unreachable code |
 | `lens_dependencies` | External packages used |
@@ -196,11 +200,17 @@ lenspr doctor <path>         # Diagnose configuration issues
 ### Modification
 | Tool | Description |
 |------|-------------|
-| `lens_update_node` | Update with validation |
+| `lens_update_node` | Replace full node source with validation |
+| `lens_patch_node` | Surgical find/replace within a node |
 | `lens_add_node` | Add new function/class |
 | `lens_delete_node` | Remove a node |
 | `lens_rename` | Rename across project |
 | `lens_batch` | Atomic multi-node updates |
+
+### Testing
+| Tool | Description |
+|------|-------------|
+| `lens_run_tests` | Run pytest, return structured pass/fail + failure details |
 
 ### Git Integration
 | Tool | Description |
@@ -232,6 +242,13 @@ lenspr doctor <path>         # Diagnose configuration issues
 | Tool | Description |
 |------|-------------|
 | `lens_explain` | Human-readable explanation of a node |
+
+### Session Memory
+| Tool | Description |
+|------|-------------|
+| `lens_session_write` | Save a persistent note by key |
+| `lens_session_read` | Read all session notes |
+| `lens_session_handoff` | Generate handoff doc for next session |
 
 </details>
 
