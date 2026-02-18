@@ -19,12 +19,55 @@ def handle_update_node(params: dict, ctx: LensContext) -> ToolResponse:
     """Update the source code of a node."""
     node_id = params["node_id"]
     new_source = params["new_source"]
+    reasoning = params.get("reasoning", "")
 
     node = database.get_node(node_id, ctx.graph_db)
     if not node:
         return ToolResponse(
             success=False,
             error=f"Node not found: {node_id}",
+        )
+
+    old_src_len = len(node.source_code or "")
+    new_src_len = len(new_source)
+
+    # Guard 1: Block direct updates on large container nodes.
+    # These must be updated via their individual method/function children.
+    _CONTAINER_THRESHOLD = 10_000
+    if node.type.value in ("class", "module") and old_src_len > _CONTAINER_THRESHOLD:
+        total_lines = len((node.source_code or "").splitlines())
+        return ToolResponse(
+            success=False,
+            error=(
+                f"Node '{node_id}' is a large {node.type.value} "
+                f"({total_lines} lines, {old_src_len:,} chars). "
+                f"Direct updates are blocked — too risky."
+            ),
+            hint=(
+                f"Work on individual children instead:\n"
+                f"  • Modify a method: lens_update_node on the specific method node\n"
+                f"  • Add a method: lens_add_node(file_path='{node.file_path}', "
+                f"source_code=..., after_node='<existing_method_id>')\n"
+                f"  • List methods: lens_list_nodes(file_path='{node.file_path}', type='method')"
+            ),
+        )
+
+    # Guard 2: Source integrity check.
+    # If new source is less than 20% of old source on a non-trivial node,
+    # it's almost certainly truncated output from the LLM.
+    _INTEGRITY_RATIO = 0.20
+    if old_src_len > 2_000 and new_src_len < old_src_len * _INTEGRITY_RATIO:
+        return ToolResponse(
+            success=False,
+            error=(
+                f"Source integrity check failed: new source ({new_src_len:,} chars) "
+                f"is less than {int(_INTEGRITY_RATIO * 100)}% of the original "
+                f"({old_src_len:,} chars). The new source appears to be truncated."
+            ),
+            hint=(
+                "Provide the COMPLETE source code for the node. "
+                "If you need to make a small change, include the entire function/method body."
+            ),
         )
 
     # Compute impact FIRST - BEFORE any changes
@@ -105,6 +148,7 @@ def handle_update_node(params: dict, ctx: LensContext) -> ToolResponse:
         affected_nodes=impact.get("direct_callers", []),
         description=f"Updated {node.name}",
         db_path=ctx.history_db,
+        reasoning=reasoning,
     )
 
     return ToolResponse(
@@ -117,6 +161,74 @@ def handle_update_node(params: dict, ctx: LensContext) -> ToolResponse:
         warnings=all_warnings,
         affected_nodes=impact.get("direct_callers", []),
     )
+
+
+def handle_patch_node(params: dict, ctx: LensContext) -> ToolResponse:
+    """Apply a surgical find/replace within a node's source code.
+
+    Safer than lens_update_node for large functions — you only provide the
+    fragment that changes, not the entire source. The old_fragment must be
+    unique within the node's source.
+
+    Args:
+        node_id: The node to patch.
+        old_fragment: Exact text to find within the node source. Must appear
+            exactly once (provide more context if ambiguous).
+        new_fragment: Text to replace old_fragment with.
+        reasoning: Why this change is being made.
+    """
+    node_id = params["node_id"]
+    old_fragment = params["old_fragment"]
+    new_fragment = params["new_fragment"]
+    reasoning = params.get("reasoning", "")
+
+    node = database.get_node(node_id, ctx.graph_db)
+    if not node:
+        return ToolResponse(success=False, error=f"Node not found: {node_id}")
+
+    source = node.source_code or ""
+
+    # Validate old_fragment exists and is unambiguous
+    count = source.count(old_fragment)
+    if count == 0:
+        # Give a helpful hint with surrounding context
+        lines = source.splitlines()
+        sample = "\n".join(lines[:10]) + ("\n..." if len(lines) > 10 else "")
+        return ToolResponse(
+            success=False,
+            error=f"old_fragment not found in node '{node_id}'.",
+            hint=(
+                f"The fragment you provided does not appear in this node's source. "
+                f"First 10 lines of source:\n{sample}"
+            ),
+        )
+    if count > 1:
+        return ToolResponse(
+            success=False,
+            error=(
+                f"old_fragment is ambiguous — found {count} times in node '{node_id}'. "
+                f"Provide more surrounding context to make it unique."
+            ),
+            hint=(
+                "Include additional lines before/after your target fragment "
+                "so that the match is unique within the function."
+            ),
+        )
+
+    # Apply the replacement
+    new_source = source.replace(old_fragment, new_fragment, 1)
+
+    # Delegate to the existing update pipeline:
+    # impact analysis → validation → patch → graph sync → history
+    return handle_update_node(
+        {
+            "node_id": node_id,
+            "new_source": new_source,
+            "reasoning": reasoning or f"patch: replaced fragment in {node_id}",
+        },
+        ctx,
+    )
+
 
 
 def handle_add_node(params: dict, ctx: LensContext) -> ToolResponse:

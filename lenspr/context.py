@@ -39,6 +39,7 @@ class LensContext:
         self.lens_dir = lens_dir or (self.project_root / ".lens")
         self.graph_db = self.lens_dir / "graph.db"
         self.history_db = self.lens_dir / "history.db"
+        self.session_db = self.lens_dir / "session.db"
         self.resolve_cache_db = self.lens_dir / "resolve_cache.db"
         self.config_path = self.lens_dir / "config.json"
         self.patch_buffer = PatchBuffer()

@@ -50,6 +50,52 @@ def handle_get_node(params: dict, ctx: LensContext) -> ToolResponse:
             error=f"Node not found: {params['node_id']}",
             hint="Use lens_search or lens_list_nodes to find valid node IDs.",
         )
+
+    # Container nodes (class, module) return metadata + direct children, not full source.
+    # Source lives in the individual method/function children — work with those directly.
+    # For leaf nodes (function, method, block) always return full source.
+    _CONTAINER_TYPES = ("class", "module")
+    _LARGE_THRESHOLD = 10_000  # chars
+
+    source = node.source_code
+    children: list[dict] | None = None
+    warnings: list[str] = []
+
+    if node.type.value in _CONTAINER_TYPES and len(source or "") > _LARGE_THRESHOLD:
+        total_lines = len((source or "").splitlines())
+        source = None  # Don't return source for large containers
+
+        # Find direct children by ID prefix + depth.
+        # Children IDs look like: {node_id}.{child_name} (exactly one dot deeper).
+        prefix = node.id + "."
+        all_nodes = database.get_nodes(ctx.graph_db)
+        child_nodes = []
+        for n in all_nodes:
+            if not n.id.startswith(prefix):
+                continue
+            # Direct child: suffix has no dots (one level deeper)
+            suffix = n.id[len(prefix):]
+            if "." in suffix:
+                continue
+            if n.type.value in ("function", "method", "class"):
+                child_nodes.append({
+                    "id": n.id,
+                    "name": n.name,
+                    "type": n.type.value,
+                    "start_line": n.start_line,
+                    "end_line": n.end_line,
+                    "signature": n.signature,
+                })
+        # Sort by line number
+        child_nodes.sort(key=lambda c: c["start_line"] or 0)
+        children = child_nodes
+
+        warnings.append(
+            f"Large {node.type.value} ({total_lines} lines). "
+            f"Source not returned — use child node IDs listed in 'children' to read individual "
+            f"methods/functions. Use lens_update_node on a child node ID to make changes."
+        )
+
     return ToolResponse(
         success=True,
         data={
@@ -60,10 +106,12 @@ def handle_get_node(params: dict, ctx: LensContext) -> ToolResponse:
             "file_path": node.file_path,
             "start_line": node.start_line,
             "end_line": node.end_line,
-            "source_code": node.source_code,
+            "source_code": source,
             "docstring": node.docstring,
             "signature": node.signature,
+            **({"children": children} if children is not None else {}),
         },
+        warnings=warnings,
     )
 
 
@@ -150,6 +198,47 @@ def handle_context(params: dict, ctx: LensContext) -> ToolResponse:
 
     nx_graph = ctx.get_graph()
 
+    _CONTAINER_TYPES = ("class", "module")
+    _LARGE_THRESHOLD = 10_000
+
+    def _get_children(n_id: str) -> list[dict]:
+        """Find direct children of a container node by ID prefix."""
+        prefix = n_id + "."
+        all_nodes = database.get_nodes(ctx.graph_db)
+        result = []
+        for n in all_nodes:
+            if not n.id.startswith(prefix):
+                continue
+            suffix = n.id[len(prefix):]
+            if "." in suffix:
+                continue
+            if n.type.value in ("function", "method", "class"):
+                result.append({
+                    "id": n.id,
+                    "name": n.name,
+                    "type": n.type.value,
+                    "start_line": n.start_line,
+                    "end_line": n.end_line,
+                    "signature": n.signature,
+                })
+        result.sort(key=lambda c: c["start_line"] or 0)
+        return result
+
+    # Container nodes: return metadata + children instead of full source
+    source = node.source_code
+    children: list[dict] | None = None
+    ctx_warnings: list[str] = []
+
+    if node.type.value in _CONTAINER_TYPES and len(source or "") > _LARGE_THRESHOLD:
+        total_lines = len((source or "").splitlines())
+        source = None
+        children = _get_children(node_id)
+        ctx_warnings.append(
+            f"Large {node.type.value} ({total_lines} lines). "
+            f"Source not returned — use child node IDs listed in 'children' to read "
+            f"individual methods/functions."
+        )
+
     # Target node info
     target: dict[str, Any] = {
         "id": node.id,
@@ -159,10 +248,12 @@ def handle_context(params: dict, ctx: LensContext) -> ToolResponse:
         "file_path": node.file_path,
         "start_line": node.start_line,
         "end_line": node.end_line,
-        "source_code": node.source_code,
+        "source_code": source if include_source else None,
         "docstring": node.docstring,
         "signature": node.signature,
     }
+    if children is not None:
+        target["children"] = children
 
     # Include annotations if present
     if node.is_annotated:
@@ -207,7 +298,15 @@ def handle_context(params: dict, ctx: LensContext) -> ToolResponse:
                     "depth": _level + 1,
                 }
                 if include_source:
-                    caller_info["source_code"] = pred_node.source_code
+                    caller_src = pred_node.source_code or ""
+                    if pred_node.type.value in _CONTAINER_TYPES and len(caller_src) > _LARGE_THRESHOLD:
+                        caller_info["source_code"] = None
+                        caller_info["source_note"] = (
+                            f"Large {pred_node.type.value}, "
+                            f"use lens_get_node('{pred_node.id}') for details"
+                        )
+                    else:
+                        caller_info["source_code"] = caller_src
                 else:
                     caller_info["start_line"] = pred_node.start_line
                     caller_info["end_line"] = pred_node.end_line
@@ -251,7 +350,15 @@ def handle_context(params: dict, ctx: LensContext) -> ToolResponse:
                     "depth": _level + 1,
                 }
                 if include_source:
-                    callee_info["source_code"] = succ_node.source_code
+                    callee_src = succ_node.source_code or ""
+                    if succ_node.type.value in _CONTAINER_TYPES and len(callee_src) > _LARGE_THRESHOLD:
+                        callee_info["source_code"] = None
+                        callee_info["source_note"] = (
+                            f"Large {succ_node.type.value}, "
+                            f"use lens_get_node('{succ_node.id}') for details"
+                        )
+                    else:
+                        callee_info["source_code"] = callee_src
                 else:
                     callee_info["start_line"] = succ_node.start_line
                     callee_info["end_line"] = succ_node.end_line
@@ -325,7 +432,7 @@ def handle_context(params: dict, ctx: LensContext) -> ToolResponse:
         result["tests"] = tests
         result["test_count"] = len(tests)
 
-    # Add modification warning - always show impact of potential changes
+    # Add modification warning
     caller_count = len(callers) if include_callers else 0
     test_count = len(tests) if include_tests else 0
     if caller_count > 10:
@@ -341,7 +448,7 @@ def handle_context(params: dict, ctx: LensContext) -> ToolResponse:
     if test_count == 0:
         result["test_warning"] = "⚠️ NO TESTS: Consider adding tests before modifying."
 
-    return ToolResponse(success=True, data=result)
+    return ToolResponse(success=True, data=result, warnings=ctx_warnings)
 
 
 def handle_grep(params: dict, ctx: LensContext) -> ToolResponse:

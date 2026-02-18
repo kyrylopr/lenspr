@@ -149,12 +149,51 @@ def get_system_prompt() -> str:
     edge_count = g.number_of_edges()
     file_count = result["pagination"]["total_files"]
 
-    return prompt_template.format(
+    base_prompt = prompt_template.format(
         project_structure=structure_text,
         node_count=node_count,
         edge_count=edge_count,
         file_count=file_count,
     )
+
+    # Append session context (recent changes + session notes) if available
+    extra_sections: list[str] = []
+
+    # 1. Recent changes from history.db (last 5)
+    try:
+        from lenspr.tracker import get_history
+        if ctx.history_db.exists():
+            recent = get_history(ctx.history_db, limit=5)
+            if recent:
+                lines = ["## Recent Changes (last session)"]
+                for ch in recent:
+                    when = ch.timestamp[:19].replace("T", " ")
+                    line = f"- **{ch.action}** `{ch.node_id}` at {when}"
+                    if ch.reasoning:
+                        line += f" — {ch.reasoning}"
+                    lines.append(line)
+                extra_sections.append("\n".join(lines))
+    except Exception:
+        pass
+
+    # 2. Session notes from session.db
+    try:
+        from lenspr import database
+        if ctx.session_db.exists():
+            notes = database.read_session_notes(ctx.session_db)
+            if notes:
+                lines = ["## Session Notes"]
+                for note in notes:
+                    lines.append(f"### {note['key']}")
+                    lines.append(note["value"])
+                extra_sections.append("\n".join(lines))
+    except Exception:
+        pass
+
+    if extra_sections:
+        return base_prompt + "\n\n" + "\n\n".join(extra_sections)
+
+    return base_prompt
 
 
 def get_claude_tools() -> list[dict]:

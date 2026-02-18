@@ -348,6 +348,7 @@ class Change:
     new_hash: str = ""
     affected_nodes: list[str] = field(default_factory=list)
     description: str = ""
+    reasoning: str = ""  # Why this change was made
 
 
 @dataclass

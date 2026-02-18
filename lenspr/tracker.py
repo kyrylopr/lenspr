@@ -20,9 +20,13 @@ def record_change(
     affected_nodes: list[str],
     description: str,
     db_path: Path,
+    reasoning: str = "",
 ) -> int:
     """
     Record a change to history.db.
+
+    Args:
+        reasoning: Why this change was made (optional but recommended).
 
     Returns the change ID.
     """
@@ -30,11 +34,17 @@ def record_change(
 
     conn = sqlite3.connect(str(db_path))
     try:
+        # Auto-migrate: ensure reasoning column exists (added in a later version)
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(changes)")}
+        if "reasoning" not in cols:
+            conn.execute("ALTER TABLE changes ADD COLUMN reasoning TEXT NOT NULL DEFAULT ''")
+            conn.commit()
+
         cursor = conn.execute(
             """INSERT INTO changes
             (timestamp, node_id, action, old_source, new_source,
-             old_hash, new_hash, affected_nodes, description)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+             old_hash, new_hash, affected_nodes, description, reasoning)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 timestamp,
                 node_id,
@@ -45,6 +55,7 @@ def record_change(
                 new_hash,
                 json.dumps(affected_nodes),
                 description,
+                reasoning,
             ),
         )
         conn.commit()
@@ -97,6 +108,7 @@ def get_history(
                 new_hash=row["new_hash"],
                 affected_nodes=json.loads(row["affected_nodes"]),
                 description=row["description"],
+                reasoning=row["reasoning"] if "reasoning" in row.keys() else "",
             )
             for row in rows
         ]

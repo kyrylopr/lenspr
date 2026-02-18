@@ -413,16 +413,42 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
     def lens_update_node(
         node_id: str,
         new_source: str,
+        reasoning: str = "",
     ) -> str:
         """Update the source code of a node. Validates syntax and structure before applying.
 
         Args:
             node_id: The node identifier.
             new_source: The new source code for the node.
+            reasoning: Why this change is being made. Stored in history for future sessions.
         """
         result = lenspr.handle_tool("lens_update_node", {
             "node_id": node_id,
             "new_source": new_source,
+            "reasoning": reasoning,
+        })
+        return json.dumps(result, indent=2)
+
+    @mcp.tool()
+    def lens_patch_node(
+        node_id: str,
+        old_fragment: str,
+        new_fragment: str,
+        reasoning: str = "",
+    ) -> str:
+        """Surgical find/replace within a node's source code.
+
+        Args:
+            node_id: The node identifier.
+            old_fragment: Exact text to find in the node's source (must appear exactly once).
+            new_fragment: Replacement text for the matched fragment.
+            reasoning: Why this change is being made. Stored in history for future sessions.
+        """
+        result = lenspr.handle_tool("lens_patch_node", {
+            "node_id": node_id,
+            "old_fragment": old_fragment,
+            "new_fragment": new_fragment,
+            "reasoning": reasoning,
         })
         return json.dumps(result, indent=2)
 
@@ -910,6 +936,65 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
         if min_cohesion > 0:
             params["min_cohesion"] = min_cohesion
         return _tool_result("lens_components", params)
+
+    # -- Session Memory Tools --
+
+    @mcp.tool()
+    def lens_session_write(key: str, value: str) -> str:
+        """Write or overwrite a persistent session note by key.
+
+        Notes survive context resets and are stored in .lens/session.db.
+        Use to save task state, decisions, TODOs, and progress.
+
+        Args:
+            key: Note key (e.g. 'current_task', 'done', 'next_steps').
+            value: Note content (markdown supported).
+        """
+        return _tool_result("lens_session_write", {"key": key, "value": value})
+
+    @mcp.tool()
+    def lens_session_read() -> str:
+        """Read all persistent session notes.
+
+        Call at the start of a new session to restore context from the previous one.
+        """
+        return _tool_result("lens_session_read", {})
+
+    @mcp.tool()
+    def lens_session_handoff(limit: int = 10) -> str:
+        """Generate a handoff document combining recent changes and session notes.
+
+        Combines recent LensPR changes (with reasoning) and all current session notes
+        into a markdown document. Saves the result as the 'handoff' session note so
+        the next session can restore full context with lens_session_read().
+
+        Args:
+            limit: Max recent changes to include. Default: 10.
+        """
+        return _tool_result("lens_session_handoff", {"limit": limit})
+
+    @mcp.tool()
+    def lens_run_tests(
+        path: str = "",
+        filter_k: str = "",
+        timeout: int = 120,
+        max_output_lines: int = 150,
+    ) -> str:
+        """Run pytest and return structured results.
+
+        Args:
+            path: Specific test file or directory (e.g. 'tests/test_auth.py').
+                  If omitted, pytest auto-discovers all tests.
+            filter_k: pytest -k expression to filter by test name.
+            timeout: Max seconds to wait. Default: 120.
+            max_output_lines: Max output lines to return. Default: 150.
+        """
+        params: dict = {"timeout": timeout, "max_output_lines": max_output_lines}
+        if path:
+            params["path"] = path
+        if filter_k:
+            params["filter_k"] = filter_k
+        return _tool_result("lens_run_tests", params)
 
     logger.info("Starting LensPR MCP server for: %s", project_path)
     mcp.run(transport="stdio")

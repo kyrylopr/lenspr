@@ -162,7 +162,10 @@ class TypeScriptParser(BaseParser):
         )
 
         # Extract nodes and edges from AST
-        visitor = _TreeSitterVisitor(source_text, source_lines, module_id, rel_path)
+        # Pass raw bytes so _get_text uses byte offsets correctly (avoids
+        # multi-byte UTF-8 char mismatch between tree-sitter byte offsets
+        # and Python str character offsets).
+        visitor = _TreeSitterVisitor(source_text, source, source_lines, module_id, rel_path)
         visitor.visit(tree.root_node)
 
         all_nodes = [module_node] + visitor.nodes
@@ -374,11 +377,13 @@ class _TreeSitterVisitor:
     def __init__(
         self,
         source: str,
+        source_bytes: bytes,
         source_lines: list[str],
         module_id: str,
         file_path: str,
     ) -> None:
         self.source = source
+        self.source_bytes = source_bytes
         self.source_lines = source_lines
         self.module_id = module_id
         self.file_path = file_path
@@ -408,7 +413,8 @@ class _TreeSitterVisitor:
 
     def _get_text(self, node: Any) -> str:  # type: ignore
         """Get the text content of a node."""
-        return self.source[node.start_byte : node.end_byte]
+        raw = self.source_bytes[node.start_byte : node.end_byte]
+        return raw.decode("utf-8", errors="replace")
 
     def _get_source_segment(self, start_line: int, end_line: int) -> str:
         """Extract source lines (1-based)."""

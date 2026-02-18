@@ -42,6 +42,7 @@ from lenspr.tools.modification import (
     handle_add_node,
     handle_batch,
     handle_delete_node,
+    handle_patch_node,
     handle_rename,
     handle_update_node,
 )
@@ -53,6 +54,14 @@ from lenspr.tools.navigation import (
     handle_grep,
     handle_list_nodes,
     handle_search,
+)
+from lenspr.tools.session import (
+    handle_session_handoff,
+    handle_session_read,
+    handle_session_write,
+)
+from lenspr.tools.testing import (
+    handle_run_tests,
 )
 from lenspr.tools.schemas import LENS_TOOLS
 
@@ -73,6 +82,7 @@ __all__ = [
     "handle_grep",
     # Modification
     "handle_update_node",
+    "handle_patch_node",
     "handle_add_node",
     "handle_delete_node",
     "handle_rename",
@@ -104,6 +114,12 @@ __all__ = [
     "handle_largest_classes",
     "handle_compare_classes",
     "handle_components",
+    # Session memory
+    "handle_session_write",
+    "handle_session_read",
+    "handle_session_handoff",
+    # Testing
+    "handle_run_tests",
 ]
 
 
@@ -115,6 +131,7 @@ _HANDLER_MAP: dict[str, tuple[str, str]] = {
     "lens_get_connections": ("lenspr.tools.navigation", "handle_get_connections"),
     "lens_check_impact": ("lenspr.tools.analysis", "handle_check_impact"),
     "lens_update_node": ("lenspr.tools.modification", "handle_update_node"),
+    "lens_patch_node": ("lenspr.tools.modification", "handle_patch_node"),
     "lens_validate_change": ("lenspr.tools.analysis", "handle_validate_change"),
     "lens_add_node": ("lenspr.tools.modification", "handle_add_node"),
     "lens_delete_node": ("lenspr.tools.modification", "handle_delete_node"),
@@ -147,6 +164,12 @@ _HANDLER_MAP: dict[str, tuple[str, str]] = {
     "lens_largest_classes": ("lenspr.tools.arch", "handle_largest_classes"),
     "lens_compare_classes": ("lenspr.tools.arch", "handle_compare_classes"),
     "lens_components": ("lenspr.tools.arch", "handle_components"),
+    # Session memory
+    "lens_session_write": ("lenspr.tools.session", "handle_session_write"),
+    "lens_session_read": ("lenspr.tools.session", "handle_session_read"),
+    "lens_session_handoff": ("lenspr.tools.session", "handle_session_handoff"),
+    # Testing
+    "lens_run_tests": ("lenspr.tools.testing", "handle_run_tests"),
 }
 
 # Hot-reload mode: when True, handlers are resolved dynamically each call

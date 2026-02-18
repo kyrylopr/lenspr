@@ -45,7 +45,7 @@ LENS_TOOLS: list[dict[str, Any]] = [
     {
         "name": "lens_get_connections",
         "description": (
-            "Get all connections (edges) for a node — "
+            "Get all connections (edges) for a node \u2014 "
             "what it calls and what calls it."
         ),
         "input_schema": {
@@ -92,8 +92,54 @@ LENS_TOOLS: list[dict[str, Any]] = [
                     "type": "string",
                     "description": "New source code for the node.",
                 },
+                "reasoning": {
+                    "type": "string",
+                    "description": (
+                        "Why this change is being made. "
+                        "Stored in history for future sessions to understand context."
+                    ),
+                },
             },
             "required": ["node_id", "new_source"],
+        },
+    },
+    {
+        "name": "lens_patch_node",
+        "description": (
+            "Surgical find/replace within a node's source code. "
+            "Safer than lens_update_node because you only specify the fragment to change, "
+            "not the entire function. The old_fragment must appear exactly once in the node. "
+            "Use this for targeted fixes: changing a variable name, fixing a condition, "
+            "adding/removing a line. Falls back to lens_update_node for the actual write."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "node_id": {
+                    "type": "string",
+                    "description": "Node identifier (e.g. 'app.models.User.save').",
+                },
+                "old_fragment": {
+                    "type": "string",
+                    "description": (
+                        "Exact text to find in the node's source. "
+                        "Must appear exactly once — include enough surrounding context "
+                        "to make it unique if the string appears multiple times."
+                    ),
+                },
+                "new_fragment": {
+                    "type": "string",
+                    "description": "Replacement text for the matched fragment.",
+                },
+                "reasoning": {
+                    "type": "string",
+                    "description": (
+                        "Why this change is being made. "
+                        "Stored in history for future sessions."
+                    ),
+                },
+            },
+            "required": ["node_id", "old_fragment", "new_fragment"],
         },
     },
     {
@@ -722,6 +768,94 @@ LENS_TOOLS: list[dict[str, Any]] = [
                 "min_cohesion": {
                     "type": "number",
                     "description": "Minimum cohesion threshold (0.0-1.0). Default: 0.0.",
+                },
+            },
+        },
+    },
+    # -- Session Memory Tools --
+    {
+        "name": "lens_session_write",
+        "description": (
+            "Write or overwrite a persistent session note by key. "
+            "Notes survive context resets and are stored in .lens/session.db. "
+            "Use to save task state, decisions, TODOs, and progress."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "key": {
+                    "type": "string",
+                    "description": "Note key (e.g. 'current_task', 'done', 'next_steps').",
+                },
+                "value": {
+                    "type": "string",
+                    "description": "Note content (markdown supported).",
+                },
+            },
+            "required": ["key", "value"],
+        },
+    },
+    {
+        "name": "lens_session_read",
+        "description": (
+            "Read all persistent session notes. "
+            "Call at the start of a new session to restore context from the previous one."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+    # -- Testing Tool --
+    {
+        "name": "lens_run_tests",
+        "description": (
+            "Run pytest in the project root and return structured results. "
+            "Shows passed/failed/error counts, individual failure details, "
+            "and trimmed output. Use after making changes to verify nothing broke."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": (
+                        "Specific test file or directory to run "
+                        "(e.g. 'tests/test_auth.py'). "
+                        "If omitted, pytest auto-discovers all tests."
+                    ),
+                },
+                "filter_k": {
+                    "type": "string",
+                    "description": (
+                        "pytest -k expression to filter tests by name "
+                        "(e.g. 'test_login or test_register')."
+                    ),
+                },
+                "timeout": {
+                    "type": "integer",
+                    "description": "Max seconds to wait for tests. Default: 120.",
+                },
+                "max_output_lines": {
+                    "type": "integer",
+                    "description": "Max lines of pytest output to return. Default: 150.",
+                },
+            },
+        },
+    },
+    {
+        "name": "lens_session_handoff",
+        "description": (
+            "Generate a handoff document combining recent LensPR changes (with reasoning) "
+            "and all current session notes. Saves the result as the 'handoff' session note "
+            "so the next session can restore full context with lens_session_read()."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer",
+                    "description": "Max recent changes to include. Default: 10.",
                 },
             },
         },

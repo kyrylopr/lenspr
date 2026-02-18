@@ -71,7 +71,8 @@ CREATE TABLE IF NOT EXISTS changes (
     old_hash TEXT NOT NULL DEFAULT '',
     new_hash TEXT NOT NULL DEFAULT '',
     affected_nodes TEXT NOT NULL DEFAULT '[]',
-    description TEXT NOT NULL DEFAULT ''
+    description TEXT NOT NULL DEFAULT '',
+    reasoning TEXT NOT NULL DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_changes_node ON changes(node_id);
@@ -89,6 +90,14 @@ CREATE TABLE IF NOT EXISTS resolutions (
 );
 """
 
+_SESSION_SCHEMA = """
+CREATE TABLE IF NOT EXISTS notes (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+"""
+
 
 def _connect(db_path: Path) -> sqlite3.Connection:
     """Create a connection with sensible defaults."""
@@ -103,7 +112,7 @@ def init_database(lens_dir: Path) -> None:
     """
     Initialize .lens/ directory with empty databases.
 
-    Creates graph.db, history.db, and resolve_cache.db with proper schemas.
+    Creates graph.db, history.db, resolve_cache.db, and session.db with proper schemas.
     """
     lens_dir.mkdir(parents=True, exist_ok=True)
 
@@ -113,9 +122,13 @@ def init_database(lens_dir: Path) -> None:
 
     with _connect(lens_dir / "history.db") as conn:
         conn.executescript(_HISTORY_SCHEMA)
+        _migrate_history(conn)
 
     with _connect(lens_dir / "resolve_cache.db") as conn:
         conn.executescript(_RESOLVE_CACHE_SCHEMA)
+
+    with _connect(lens_dir / "session.db") as conn:
+        conn.executescript(_SESSION_SCHEMA)
 
 
 def _migrate_annotations(conn: sqlite3.Connection) -> None:
@@ -136,6 +149,14 @@ def _migrate_annotations(conn: sqlite3.Connection) -> None:
     for col_name, col_type in annotation_columns:
         if col_name not in columns:
             conn.execute(f"ALTER TABLE nodes ADD COLUMN {col_name} {col_type}")
+
+def _migrate_history(conn: sqlite3.Connection) -> None:
+    """Add reasoning column to existing history.db if missing."""
+    cursor = conn.execute("PRAGMA table_info(changes)")
+    columns = {row["name"] for row in cursor.fetchall()}
+    if "reasoning" not in columns:
+        conn.execute("ALTER TABLE changes ADD COLUMN reasoning TEXT NOT NULL DEFAULT ''")
+
 
 
 def save_graph(nodes: list[Node], edges: list[Edge], db_path: Path) -> None:
@@ -452,3 +473,48 @@ def update_node_metrics(node_id: str, metrics: dict, db_path: Path) -> bool:
             (json.dumps(metrics), node_id),
         )
         return cursor.rowcount > 0
+
+def write_session_note(key: str, value: str, session_db: Path) -> None:
+    """Write or overwrite a session note by key."""
+    from datetime import datetime, timezone
+
+    updated_at = datetime.now(timezone.utc).isoformat()
+    with _connect(session_db) as conn:
+        conn.execute(_SESSION_SCHEMA)  # ensure table exists
+        conn.execute(
+            """INSERT INTO notes (key, value, updated_at)
+               VALUES (?, ?, ?)
+               ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at""",
+            (key, value, updated_at),
+        )
+
+
+def read_session_notes(session_db: Path) -> list[dict]:
+    """Read all session notes, sorted by updated_at descending."""
+    if not session_db.exists():
+        return []
+    with _connect(session_db) as conn:
+        conn.execute(_SESSION_SCHEMA)  # ensure table exists
+        rows = conn.execute(
+            "SELECT key, value, updated_at FROM notes ORDER BY updated_at DESC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def delete_session_note(key: str, session_db: Path) -> bool:
+    """Delete a session note by key. Returns True if it existed."""
+    if not session_db.exists():
+        return False
+    with _connect(session_db) as conn:
+        cursor = conn.execute("DELETE FROM notes WHERE key = ?", (key,))
+        return cursor.rowcount > 0
+
+
+def clear_session_notes(session_db: Path) -> int:
+    """Delete all session notes. Returns count deleted."""
+    if not session_db.exists():
+        return 0
+    with _connect(session_db) as conn:
+        cursor = conn.execute("DELETE FROM notes")
+        return cursor.rowcount
+
