@@ -134,7 +134,9 @@ def handle_nfr_check(params: dict, ctx: LensContext) -> ToolResponse:
     Checks: error handling, logging, hardcoded secrets, input validation,
     auth on sensitive operations.
     """
-    node_id = params["node_id"]
+    node_id = params.get("node_id")
+    if not node_id:
+        return ToolResponse(success=False, error="node_id is required")
     node = database.get_node(node_id, ctx.graph_db)
     if not node:
         return ToolResponse(success=False, error=f"Node not found: {node_id}")
@@ -235,10 +237,11 @@ def handle_test_coverage(params: dict, ctx: LensContext) -> ToolResponse:
     for node in nodes:
         if node.type.value not in ("function", "method"):
             continue
-        # Skip test functions themselves
+        # Skip test functions themselves and eval/ test projects
         if (
             node.name.startswith("test_")
             or "test" in (node.file_path or "").lower()
+            or (node.file_path or "").startswith("eval/")
         ):
             continue
 
@@ -682,12 +685,13 @@ def handle_vibecheck(params: dict, ctx: LensContext) -> ToolResponse:
     nx_graph = ctx.get_graph()
     all_nodes = database.get_nodes(ctx.graph_db)
 
-    # Production functions only (exclude test files)
+    # Production functions only (exclude test files and eval/ scripts)
     func_nodes = [
         n for n in all_nodes
         if n.type.value in ("function", "method")
         and "test" not in (n.file_path or "").lower()
         and not n.name.startswith("test_")
+        and not (n.file_path or "").startswith("eval/")
     ]
     total_funcs = len(func_nodes)
 
@@ -718,7 +722,15 @@ def handle_vibecheck(params: dict, ctx: LensContext) -> ToolResponse:
         top_risks.append(f"🔴 Only {test_pct}% test coverage — bugs go undetected")
 
     # --- 2. Dead code (0-20 points) ---
-    dead = graph_module.find_dead_code(nx_graph, entry_points=[])
+    # Filter to production code only — exclude eval/, test files, and dynamic-dispatch entry points
+    _DYNAMIC_ENTRY_PATTERNS = ("run_server", "main", "cmd_", "_sync_loop", "_poll_loop")
+    all_dead = graph_module.find_dead_code(nx_graph, entry_points=[])
+    dead = [
+        d for d in all_dead
+        if not d.startswith("eval.")
+        and "test" not in d.lower()
+        and not any(pat in d for pat in _DYNAMIC_ENTRY_PATTERNS)
+    ]
     dead_pct = round(len(dead) / total_funcs * 100) if total_funcs else 0
     dead_score = max(0, 20 - dead_pct)  # lose 1 point per 1% dead code
     breakdown["dead_code"] = {
@@ -762,7 +774,7 @@ def handle_vibecheck(params: dict, ctx: LensContext) -> ToolResponse:
     score += arch_score
 
     # --- 5. Documentation / annotations (0-10 points) ---
-    annotated = sum(1 for n in func_nodes if n.summary)
+    annotated = sum(1 for n in func_nodes if n.summary or n.docstring)
     ann_pct = round(annotated / total_funcs * 100) if total_funcs else 100
     ann_score = round(ann_pct / 100 * 10)
     breakdown["documentation"] = {
