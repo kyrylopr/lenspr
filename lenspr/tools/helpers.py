@@ -44,9 +44,13 @@ def get_proactive_warnings(
     Warnings:
     - high_impact: If node has >10 direct callers
     - no_tests: If no test functions call this node
-    - signature_change: If function signature differs (detected by validator)
     - circular_dependency: If node is part of a circular import
+    - hardcoded_secret: If new_source contains suspicious credential patterns
+    - io_without_error_handling: If new_source has IO/network calls but no try/except
+    - arch_violation: If change would violate architecture rules
     """
+    import re
+
     warnings: list[str] = []
     nx_graph = ctx.get_graph()
 
@@ -102,5 +106,43 @@ def get_proactive_warnings(
                 f"{' → '.join(cycle)}"
             )
             break
+
+    # 4. Hardcoded secrets detection
+    _SECRET_PATTERNS = [
+        (r'(?i)(password|passwd|pwd)\s*=\s*["\'][^"\']{3,}["\']', "hardcoded password"),
+        (r'(?i)(api_key|apikey|secret_key)\s*=\s*["\'][^"\']{6,}["\']', "hardcoded API key"),
+        (r'(?i)(token)\s*=\s*["\'][^"\']{8,}["\']', "hardcoded token"),
+        (r'(?i)(secret)\s*=\s*["\'][^"\']{6,}["\']', "hardcoded secret"),
+    ]
+    for pattern, label in _SECRET_PATTERNS:
+        if re.search(pattern, new_source):
+            warnings.append(
+                f"🔐 HARDCODED SECRET: Possible {label} detected. "
+                "Use environment variables or a secrets manager instead."
+            )
+            break  # One warning is enough
+
+    # 5. IO/network operations without error handling
+    _IO_MARKERS = [
+        "open(", "requests.", "httpx.", "aiohttp.",
+        ".execute(", ".query(", ".fetchone(", ".fetchall(",
+        "subprocess.", "socket.", "urllib.",
+    ]
+    has_io = any(marker in new_source for marker in _IO_MARKERS)
+    has_try = "try:" in new_source
+    if has_io and not has_try:
+        warnings.append(
+            "⚠️ NO ERROR HANDLING: This code performs IO/network/DB operations "
+            "without try/except. Consider wrapping in try/except."
+        )
+
+    # 6. Architecture rules check (non-blocking, warns only)
+    try:
+        from lenspr.tools.safety import check_arch_violations
+        violations = check_arch_violations(node_id, ctx)
+        for v in violations:
+            warnings.append(f"🏛️ ARCH VIOLATION: {v}")
+    except Exception:
+        pass  # Never block on arch check failure
 
     return warnings

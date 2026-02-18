@@ -63,6 +63,17 @@ from lenspr.tools.session import (
 from lenspr.tools.testing import (
     handle_run_tests,
 )
+from lenspr.tools.safety import (
+    handle_nfr_check,
+    handle_test_coverage,
+    handle_security_scan,
+    handle_dep_audit,
+    handle_arch_rule_add,
+    handle_arch_rule_list,
+    handle_arch_rule_delete,
+    handle_arch_check,
+    handle_vibecheck,
+)
 from lenspr.tools.schemas import LENS_TOOLS
 
 if TYPE_CHECKING:
@@ -120,6 +131,16 @@ __all__ = [
     "handle_session_handoff",
     # Testing
     "handle_run_tests",
+    # Safety
+    "handle_nfr_check",
+    "handle_test_coverage",
+    "handle_security_scan",
+    "handle_dep_audit",
+    "handle_arch_rule_add",
+    "handle_arch_rule_list",
+    "handle_arch_rule_delete",
+    "handle_arch_check",
+    "handle_vibecheck",
 ]
 
 
@@ -170,6 +191,16 @@ _HANDLER_MAP: dict[str, tuple[str, str]] = {
     "lens_session_handoff": ("lenspr.tools.session", "handle_session_handoff"),
     # Testing
     "lens_run_tests": ("lenspr.tools.testing", "handle_run_tests"),
+    # Safety
+    "lens_nfr_check": ("lenspr.tools.safety", "handle_nfr_check"),
+    "lens_test_coverage": ("lenspr.tools.safety", "handle_test_coverage"),
+    "lens_security_scan": ("lenspr.tools.safety", "handle_security_scan"),
+    "lens_dep_audit": ("lenspr.tools.safety", "handle_dep_audit"),
+    "lens_arch_rule_add": ("lenspr.tools.safety", "handle_arch_rule_add"),
+    "lens_arch_rule_list": ("lenspr.tools.safety", "handle_arch_rule_list"),
+    "lens_arch_rule_delete": ("lenspr.tools.safety", "handle_arch_rule_delete"),
+    "lens_arch_check": ("lenspr.tools.safety", "handle_arch_check"),
+    "lens_vibecheck": ("lenspr.tools.safety", "handle_vibecheck"),
 }
 
 # Hot-reload mode: when True, handlers are resolved dynamically each call

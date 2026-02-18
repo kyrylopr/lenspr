@@ -996,5 +996,130 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
             params["filter_k"] = filter_k
         return _tool_result("lens_run_tests", params)
 
+    # -- Safety & Vibecoding Tools --
+
+    @mcp.tool()
+    def lens_nfr_check(node_id: str) -> str:
+        """Check a function for missing non-functional requirements (NFRs).
+
+        Checks: error handling on IO/network/DB, structured logging,
+        hardcoded secrets, input validation on handlers, auth on sensitive ops.
+
+        Args:
+            node_id: The node identifier to check.
+        """
+        return _tool_result("lens_nfr_check", {"node_id": node_id})
+
+    @mcp.tool()
+    def lens_test_coverage(file_path: str | None = None) -> str:
+        """Report which functions/methods have test coverage (graph-based).
+
+        Uses the call graph: a function is 'covered' if at least one test
+        function calls it. Returns coverage %, grade (A–F), and lists of
+        covered/uncovered functions.
+
+        Args:
+            file_path: Optional filter to a specific file or directory.
+        """
+        params: dict = {}
+        if file_path is not None:
+            params["file_path"] = file_path
+        return _tool_result("lens_test_coverage", params)
+
+    @mcp.tool()
+    def lens_security_scan(file_path: str | None = None) -> str:
+        """Run Bandit security scanner and map results to graph nodes.
+
+        Returns issues grouped by the function/class that contains them,
+        with severity (HIGH/MEDIUM/LOW) and CWE IDs where available.
+
+        Requires: pip install bandit
+
+        Args:
+            file_path: Specific file or directory to scan. Defaults to full project.
+        """
+        params: dict = {}
+        if file_path is not None:
+            params["file_path"] = file_path
+        return _tool_result("lens_security_scan", params)
+
+    @mcp.tool()
+    def lens_dep_audit() -> str:
+        """Audit project dependencies for known vulnerabilities.
+
+        Tries pip-audit (Python) then npm audit (Node.js).
+        Returns vulnerable packages with CVE IDs and fix versions.
+
+        Requires: pip install pip-audit  (or npm for JS projects)
+        """
+        return _tool_result("lens_dep_audit", {})
+
+    @mcp.tool()
+    def lens_arch_rule_add(
+        rule_type: str,
+        description: str = "",
+        config: dict | None = None,
+    ) -> str:
+        """Add an architecture rule enforced on every code change.
+
+        Rule types:
+        - no_dependency: from_pattern + to_pattern (glob-style node ID patterns)
+        - max_class_methods: threshold (int)
+        - required_test: pattern (glob for function names)
+        - no_circular_imports: no config needed
+
+        Examples:
+          rule_type="no_dependency", config={"from_pattern":"*.api.*","to_pattern":"*.database*"}
+          rule_type="max_class_methods", config={"threshold": 20}
+          rule_type="required_test", config={"pattern": "*_handler"}
+
+        Args:
+            rule_type: Type of rule (see above).
+            description: Human-readable description of the rule.
+            config: Rule-specific configuration dict.
+        """
+        params: dict = {"rule_type": rule_type, "description": description}
+        if config is not None:
+            params["config"] = config
+        result = lenspr.handle_tool("lens_arch_rule_add", params)
+        return json.dumps(result, indent=2)
+
+    @mcp.tool()
+    def lens_arch_rule_list() -> str:
+        """List all defined architecture rules with their IDs and config."""
+        return _tool_result("lens_arch_rule_list", {})
+
+    @mcp.tool()
+    def lens_arch_rule_delete(rule_id: str) -> str:
+        """Delete an architecture rule by ID.
+
+        Args:
+            rule_id: The rule ID (from lens_arch_rule_list).
+        """
+        result = lenspr.handle_tool("lens_arch_rule_delete", {"rule_id": rule_id})
+        return json.dumps(result, indent=2)
+
+    @mcp.tool()
+    def lens_arch_check() -> str:
+        """Check all architecture rules against the current codebase.
+
+        Returns all violations grouped by rule. Run after refactoring or
+        to audit an inherited vibecoded project.
+        """
+        return _tool_result("lens_arch_check", {})
+
+    @mcp.tool()
+    def lens_vibecheck() -> str:
+        """Comprehensive vibecoding health score for the project (0-100, grade A–F).
+
+        Aggregates: test coverage (25pts), dead code (20pts), circular imports (15pts),
+        architecture rules compliance (15pts), documentation (10pts),
+        graph confidence (15pts).
+
+        Use this to track if the codebase is improving or degrading over time.
+        Run lens_test_coverage, lens_security_scan, lens_arch_check for breakdowns.
+        """
+        return _tool_result("lens_vibecheck", {})
+
     logger.info("Starting LensPR MCP server for: %s", project_path)
     mcp.run(transport="stdio")
