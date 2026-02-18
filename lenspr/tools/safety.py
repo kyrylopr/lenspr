@@ -285,10 +285,15 @@ def handle_test_coverage(params: dict, ctx: LensContext) -> ToolResponse:
             "uncovered": uncovered[:100],
             "covered": covered[:50],
             "filter": file_path_filter,
+            "analysis_method": (
+                "static call graph — a function counts as covered only if a test "
+                "calls it via a resolved edge. Dynamic calls (getattr/importlib) "
+                "may not appear as covered even if tests exist."
+            ),
             "hint": (
                 f"Run lens_run_tests to see if tests pass. "
                 f"{len(uncovered)} functions have no tests — consider adding them."
-            ) if uncovered else "Great — all functions have test coverage.",
+            ) if uncovered else "Great — all functions have test coverage (graph-based).",
         },
         warnings=[
             f"⚠️ Only {pct}% test coverage (grade {grade}) — "

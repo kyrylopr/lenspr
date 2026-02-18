@@ -473,8 +473,9 @@ def handle_dead_code(params: dict, ctx: LensContext) -> ToolResponse:
 
             # === MCP and tool handlers ===
 
-            # 8. MCP tool functions (lens_* inside mcp_server.py)
-            if "mcp_server" in file_path and name.startswith("lens_"):
+            # 8. MCP server module (all nodes are entry points:
+            # lens_* tools, run_server, _start_watcher, helpers, etc.)
+            if "mcp_server" in file_path:
                 entry_set.add(nid)
 
             # 9. Tool handlers (handle_* functions) - dynamically dispatched
@@ -718,9 +719,10 @@ def handle_dead_code(params: dict, ctx: LensContext) -> ToolResponse:
             "entry_points_used": len(entry_points),
         },
         warnings=[
-            "Verify with lens_grep before deleting. Possible false positives: "
-            "dynamic dispatch (getattr/eval), string-based imports, "
-            "and code used only via external entry points not in the graph."
+            "Static graph analysis only. Verify with lens_grep before deleting. "
+            "False positives possible for: dynamic dispatch (getattr/eval), "
+            "string-based imports, subprocess entry points, and framework "
+            "callbacks not traceable at parse time."
         ] if dead_code else [],
     )
 
@@ -812,6 +814,10 @@ def handle_find_usages(params: dict, ctx: LensContext) -> ToolResponse:
                 "results": results,
                 "count": len(results),
                 "not_found": not_found,
+                "note": (
+                    "Static graph analysis. Dynamic calls (getattr/importlib) "
+                    "may not appear as usages — use lens_grep to verify zero-usage nodes."
+                ),
             },
         )
 

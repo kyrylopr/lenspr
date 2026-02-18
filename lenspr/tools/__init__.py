@@ -224,27 +224,73 @@ def enable_hot_reload(enabled: bool = True) -> None:
 def _get_handler(
     tool_name: str,
 ) -> Callable[[dict, LensContext], ToolResponse] | None:
-    """Get the handler function for a tool, with hot-reload support."""
-    if tool_name not in _HANDLER_MAP:
-        return None
+    """Get the handler function for a tool.
 
-    module_name, func_name = _HANDLER_MAP[tool_name]
+    Fast path: static registry (_HANDLER_MAP).
+    Slow path: auto-discovery by convention — converts 'lens_fix_plan'
+    to 'handle_fix_plan' and searches all tools submodules. Caches the
+    result in _HANDLER_MAP so discovery only runs once per tool.
 
-    if _hot_reload_enabled:
-        # Dynamic resolution - always get fresh function
-        import importlib
+    This means new tools added via lens_add_node work without restarting
+    the server — no importlib.reload() overhead on each call.
+    """
+    import importlib
+
+    # Fast path: known tool in static registry
+    if tool_name in _HANDLER_MAP:
         import sys
-
-        if module_name in sys.modules:
-            module = importlib.reload(sys.modules[module_name])
+        module_name, func_name = _HANDLER_MAP[tool_name]
+        if _hot_reload_enabled:
+            if module_name in sys.modules:
+                module = importlib.reload(sys.modules[module_name])
+            else:
+                module = importlib.import_module(module_name)
         else:
             module = importlib.import_module(module_name)
-        handler: Callable[[dict, LensContext], ToolResponse] = getattr(module, func_name)
-        return handler
-    else:
-        # Use pre-imported handlers (faster)
-        handler_maybe = globals().get(func_name)
-        return handler_maybe  # type: ignore[return-value]
+        handler = getattr(module, func_name, None)
+        if handler is not None:
+            return handler  # type: ignore[return-value]
+        # Stale sys.modules cache — function added after process start.
+        # Reload once to pick up the new definition.
+        if module_name in sys.modules:
+            module = importlib.reload(sys.modules[module_name])
+            handler = getattr(module, func_name, None)
+            if handler is not None:
+                return handler  # type: ignore[return-value]
+        # Still missing — fall through to slow-path discovery
+
+    # Slow path: auto-discovery by naming convention
+    # "lens_fix_plan" → look for "handle_fix_plan" in each submodule
+    if not tool_name.startswith("lens_"):
+        return None
+    func_name = "handle_" + tool_name[len("lens_"):]
+
+    _DISCOVERY_ORDER = [
+        "lenspr.tools.safety",
+        "lenspr.tools.modification",
+        "lenspr.tools.navigation",
+        "lenspr.tools.analysis",
+        "lenspr.tools.annotation",
+        "lenspr.tools.git",
+        "lenspr.tools.arch",
+        "lenspr.tools.explain",
+        "lenspr.tools.session",
+        "lenspr.tools.testing",
+        "lenspr.tools.helpers",
+        "lenspr.tools.patterns",
+    ]
+    for module_name in _DISCOVERY_ORDER:
+        try:
+            module = importlib.import_module(module_name)
+        except ImportError:
+            continue
+        handler = getattr(module, func_name, None)
+        if handler is not None:
+            # Cache so this only runs once
+            _HANDLER_MAP[tool_name] = (module_name, func_name)
+            return handler  # type: ignore[return-value]
+
+    return None
 
 
 def handle_tool_call(

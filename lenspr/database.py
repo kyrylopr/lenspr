@@ -165,31 +165,35 @@ def save_graph(nodes: list[Node], edges: list[Edge], db_path: Path) -> None:
 
     Clears existing data and writes fresh — used during full reparse.
     """
-    with _connect(db_path) as conn:
-        conn.execute("DELETE FROM edges")
-        conn.execute("DELETE FROM nodes")
+    try:
+        with _connect(db_path) as conn:
+            conn.execute("DELETE FROM edges")
+            conn.execute("DELETE FROM nodes")
 
-        conn.executemany(
-            """INSERT INTO nodes
-            (id, type, name, qualified_name, file_path, start_line, end_line,
-             source_code, docstring, signature, hash, metadata,
-             summary, role, side_effects, semantic_inputs, semantic_outputs,
-             annotation_hash, metrics)
-            VALUES (:id, :type, :name, :qualified_name, :file_path, :start_line,
-                    :end_line, :source_code, :docstring, :signature, :hash, :metadata,
-                    :summary, :role, :side_effects, :semantic_inputs, :semantic_outputs,
-                    :annotation_hash, :metrics)""",
-            [n.to_dict() for n in nodes],
-        )
+            conn.executemany(
+                """INSERT INTO nodes
+                (id, type, name, qualified_name, file_path, start_line, end_line,
+                 source_code, docstring, signature, hash, metadata,
+                 summary, role, side_effects, semantic_inputs, semantic_outputs,
+                 annotation_hash, metrics)
+                VALUES (:id, :type, :name, :qualified_name, :file_path, :start_line,
+                        :end_line, :source_code, :docstring, :signature, :hash, :metadata,
+                        :summary, :role, :side_effects, :semantic_inputs, :semantic_outputs,
+                        :annotation_hash, :metrics)""",
+                [n.to_dict() for n in nodes],
+            )
 
-        conn.executemany(
-            """INSERT INTO edges
-            (id, from_node, to_node, type, line_number, column, confidence, source,
-             untracked_reason, metadata)
-            VALUES (:id, :from_node, :to_node, :type, :line_number, :column,
-                    :confidence, :source, :untracked_reason, :metadata)""",
-            [e.to_dict() for e in edges],
-        )
+            conn.executemany(
+                """INSERT INTO edges
+                (id, from_node, to_node, type, line_number, column, confidence, source,
+                 untracked_reason, metadata)
+                VALUES (:id, :from_node, :to_node, :type, :line_number, :column,
+                        :confidence, :source, :untracked_reason, :metadata)""",
+                [e.to_dict() for e in edges],
+            )
+    except Exception as e:
+        logger.error("save_graph failed for %s: %s", db_path, e)
+        raise
 
 
 def load_graph(db_path: Path) -> tuple[list[Node], list[Edge]]:
