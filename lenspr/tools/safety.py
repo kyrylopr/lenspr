@@ -722,15 +722,20 @@ def handle_vibecheck(params: dict, ctx: LensContext) -> ToolResponse:
         top_risks.append(f"🔴 Only {test_pct}% test coverage — bugs go undetected")
 
     # --- 2. Dead code (0-20 points) ---
-    # Filter to production code only — exclude eval/, test files, and dynamic-dispatch entry points
-    _DYNAMIC_ENTRY_PATTERNS = ("run_server", "main", "cmd_", "_sync_loop", "_poll_loop")
-    all_dead = graph_module.find_dead_code(nx_graph, entry_points=[])
-    dead = [
-        d for d in all_dead
-        if not d.startswith("eval.")
-        and "test" not in d.lower()
-        and not any(pat in d for pat in _DYNAMIC_ENTRY_PATTERNS)
-    ]
+    # Reuse handle_dead_code which has full entry-point auto-detection (1000+ patterns).
+    # Calling find_dead_code(entry_points=[]) would give a false 200%+ figure since
+    # everything with no predecessor is "dead" without proper entry points.
+    from lenspr.tools.analysis import handle_dead_code as _handle_dead_code  # noqa: PLC0415
+    dead_resp = _handle_dead_code({}, ctx)
+    if dead_resp.success and dead_resp.data:
+        all_dead_ids: list[str] = dead_resp.data.get("dead_code", [])
+        dead = [
+            d for d in all_dead_ids
+            if not d.startswith("eval.")
+            and "test" not in d.lower()
+        ]
+    else:
+        dead = []
     dead_pct = round(len(dead) / total_funcs * 100) if total_funcs else 0
     dead_score = max(0, 20 - dead_pct)  # lose 1 point per 1% dead code
     breakdown["dead_code"] = {
