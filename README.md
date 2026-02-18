@@ -94,7 +94,7 @@ Your code (.py, .ts, .tsx, .js, .jsx)
   SQLite database (local, never leaves your machine)
        │
        ▼
-  41 MCP tools for your AI assistant
+  50 MCP tools for your AI assistant
        │
        ▼
   File watcher auto-syncs on every save
@@ -143,6 +143,10 @@ Run yourself: `make benchmark`
 | **Atomic Changes** | Multi-file updates either all apply or all roll back |
 | **Cross-Project Rename** | Rename a function and update every reference |
 | **Large File Safety** | Blocks edits on 10K+ char nodes; integrity check catches truncated LLM output |
+| **Vibecoding Health Score** | `lens_vibecheck` gives 0-100 score (A–F) across 6 dimensions |
+| **NFR Checks** | `lens_nfr_check` flags missing error handling, hardcoded secrets, missing auth |
+| **Architecture Rules** | Enforce boundaries between layers — violations block changes automatically |
+| **Security Scanning** | `lens_security_scan` runs Bandit; `lens_dep_audit` checks CVEs in dependencies |
 
 ---
 
@@ -173,7 +177,7 @@ lenspr doctor <path>         # Diagnose configuration issues
 ```
 
 <details>
-<summary>All MCP tools (41)</summary>
+<summary>All MCP tools (50)</summary>
 
 ### Navigation & Search
 | Tool | Description |
@@ -250,6 +254,23 @@ lenspr doctor <path>         # Diagnose configuration issues
 | `lens_session_read` | Read all session notes |
 | `lens_session_handoff` | Generate handoff doc for next session |
 
+### Vibecoding Safety
+| Tool | Description |
+|------|-------------|
+| `lens_vibecheck` | 0-100 health score (grade A–F) across 6 dimensions |
+| `lens_nfr_check` | Flag missing error handling, logging, secrets, auth per function |
+| `lens_test_coverage` | Graph-based coverage report — which functions lack tests |
+| `lens_security_scan` | Run Bandit security scanner, results mapped to graph nodes |
+| `lens_dep_audit` | Check dependencies for known CVEs (pip-audit / npm audit) |
+
+### Architecture Rules
+| Tool | Description |
+|------|-------------|
+| `lens_arch_rule_add` | Define a rule enforced on every code change |
+| `lens_arch_rule_list` | List all defined rules |
+| `lens_arch_rule_delete` | Remove a rule by ID |
+| `lens_arch_check` | Check all rules against current codebase |
+
 </details>
 
 ---
@@ -264,6 +285,60 @@ pip install 'lenspr[all]'        # Everything
 ```
 
 TypeScript support requires Node.js 18+.
+
+---
+
+## Vibecoding Safety
+
+AI agents write a lot of code fast. LensPR adds a safety layer that catches common quality problems before they accumulate.
+
+### Health Score
+
+```
+lens_vibecheck()
+→ score: 58/100
+→ grade: D
+→ breakdown:
+    test_coverage:    2/25  — 7% tested
+    dead_code:       16/20  — 4% dead
+    circular_imports:15/15  — 0 cycles ✓
+    architecture:     8/15  — no rules defined
+    documentation:    8/10  — 78% have docstrings
+    graph_confidence: 9/15  — 62% edges resolved
+→ top_risks:
+    🔴 Only 7% test coverage — bugs go undetected
+```
+
+Run `lens_vibecheck()` periodically to track whether the codebase is improving or degrading.
+
+### NFR Checks
+
+`lens_nfr_check(node_id)` checks a function for:
+- IO/network/DB operations without `try/except`
+- Hardcoded secrets (passwords, API keys, tokens)
+- Missing structured logging in large functions
+- Handler/endpoint with no input validation
+- Auth-sensitive operation (create/delete/update) with no auth check
+
+### Architecture Rules
+
+Enforce structural boundaries so they can't be violated by accident:
+
+```python
+# Parsers must not depend on tool handlers
+lens_arch_rule_add(rule_type="no_dependency",
+    config={"from_pattern": "*.parsers.*", "to_pattern": "*.tools.*"})
+
+# No class should grow beyond 20 methods
+lens_arch_rule_add(rule_type="max_class_methods",
+    config={"threshold": 20})
+
+# Every handle_* function must have a test
+lens_arch_rule_add(rule_type="required_test",
+    config={"pattern": "handle_*"})
+```
+
+Rules are checked automatically on every `lens_update_node` call. Violations appear as warnings before any change is applied.
 
 ---
 
