@@ -120,6 +120,8 @@ _IO_MARKERS = [
     "open(", "requests.", "httpx.", "aiohttp.",
     ".execute(", ".query(", ".fetchone(", ".fetchall(",
     "subprocess.", "socket.", "urllib.",
+    ".read_text(", ".write_text(", ".read_bytes(", ".write_bytes(",
+    ".unlink(", "shutil.",
 ]
 
 _SECRET_PATTERNS = [
@@ -1027,15 +1029,18 @@ def handle_fix_plan(params: dict, ctx: LensContext) -> ToolResponse:
         violations_resp = handle_arch_check({}, ctx)
         if violations_resp.success and violations_resp.data:
             for v in violations_resp.data.get("violations", []):
+                viol_id = v.get("violation", "")
+                # Look up node in graph for name/file (works for max_class_methods, required_test)
+                viol_node_data = nx_graph.nodes.get(viol_id, {})
                 actions.append({
                     "action_type": "fix_arch_violation",
-                    "target_node_id": v.get("node_id", ""),
-                    "target_name": v.get("node_name", ""),
-                    "file": v.get("file", ""),
-                    "reason": v.get("description", "Architecture rule violated"),
+                    "target_node_id": viol_id,
+                    "target_name": viol_node_data.get("name", viol_id),
+                    "file": viol_node_data.get("file_path", ""),
+                    "reason": v.get("message", v.get("description", "Architecture rule violated")),
                     "priority": "CRITICAL",
                     "expected_score_impact": 3.0,
-                    "hint": f"Rule violated: {v.get('rule_description', '')}",
+                    "hint": f"Rule: {v.get('description', '')}",
                 })
 
     # --- 2. NFR: IO without error handling (HIGH severity, affects reliability) ---

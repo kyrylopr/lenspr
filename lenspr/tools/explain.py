@@ -76,8 +76,8 @@ def handle_explain(params: dict, ctx: LensContext) -> ToolResponse:
             "context": {
                 "callers": callers,
                 "callees": callees,
-                "caller_count": len(callers),
-                "callee_count": len(callees),
+                "caller_count": nx_graph.in_degree(node_id) if nx_graph.has_node(node_id) else 0,
+                "callee_count": nx_graph.out_degree(node_id) if nx_graph.has_node(node_id) else 0,
             },
             "usage_examples": usage_examples,
             # Hint for Claude

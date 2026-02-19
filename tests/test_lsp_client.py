@@ -17,6 +17,7 @@ from lenspr.resolvers.lsp_client import (
     LSPError,
     Location,
     SymbolInfo,
+    _parse_single_location,
 )
 from lenspr.resolvers.config import (
     get_language_for_extension,
@@ -276,7 +277,7 @@ class TestLSPProtocol:
 class TestLocationParsing:
     def test_parse_location_link(self) -> None:
         """LocationLink format (targetUri) is correctly parsed."""
-        loc = LSPClient._parse_single_location({
+        loc = _parse_single_location({
             "targetUri": "file:///a.py",
             "targetRange": {
                 "start": {"line": 3, "character": 2},
@@ -290,7 +291,7 @@ class TestLocationParsing:
 
     def test_parse_location_standard(self) -> None:
         """Standard Location format (uri + range) is correctly parsed."""
-        loc = LSPClient._parse_single_location({
+        loc = _parse_single_location({
             "uri": "file:///b.py",
             "range": {
                 "start": {"line": 7, "character": 0},

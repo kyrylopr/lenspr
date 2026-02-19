@@ -58,6 +58,45 @@ class LSPError(Exception):
     """Error from the LSP server or transport layer."""
 
 
+def _parse_single_location(item: dict) -> Location | None:
+    """Parse a single Location or LocationLink from LSP response."""
+    if not isinstance(item, dict):
+        return None
+
+    # Handle LocationLink (has targetUri/targetRange)
+    if "targetUri" in item:
+        pos = item.get("targetRange", {}).get("start", {})
+        return Location(
+            uri=item["targetUri"],
+            line=pos.get("line", 0),
+            character=pos.get("character", 0),
+        )
+
+    # Handle Location (has uri/range)
+    if "uri" in item:
+        pos = item.get("range", {}).get("start", {})
+        return Location(
+            uri=item["uri"],
+            line=pos.get("line", 0),
+            character=pos.get("character", 0),
+        )
+
+    return None
+
+
+def _parse_symbol(item: dict) -> SymbolInfo:
+    """Parse a DocumentSymbol from LSP response."""
+    range_info = item.get("range", item.get("location", {}).get("range", {}))
+    children_raw = item.get("children", [])
+    return SymbolInfo(
+        name=item.get("name", ""),
+        kind=item.get("kind", 0),
+        start_line=range_info.get("start", {}).get("line", 0),
+        end_line=range_info.get("end", {}).get("line", 0),
+        children=[_parse_symbol(c) for c in children_raw],
+    )
+
+
 class LSPClient:
     """Generic LSP client communicating via stdin/stdout JSON-RPC 2.0.
 
@@ -240,7 +279,7 @@ class LSPClient:
         return [
             loc
             for item in result
-            if (loc := self._parse_single_location(item)) is not None
+            if (loc := _parse_single_location(item)) is not None
         ]
 
     def document_symbols(self, file_path: str) -> list[SymbolInfo]:
@@ -259,7 +298,7 @@ class LSPClient:
         )
         if not result or not isinstance(result, list):
             return []
-        return [self._parse_symbol(item) for item in result]
+        return [_parse_symbol(item) for item in result]
 
     # -- Helpers ------------------------------------------------------------
 
@@ -405,46 +444,7 @@ class LSPClient:
             if not result:
                 return None
             result = result[0]
-        return self._parse_single_location(result)
-
-    @staticmethod
-    def _parse_single_location(item: dict) -> Location | None:
-        """Parse a single Location or LocationLink from LSP response."""
-        if not isinstance(item, dict):
-            return None
-
-        # Handle LocationLink (has targetUri/targetRange)
-        if "targetUri" in item:
-            pos = item.get("targetRange", {}).get("start", {})
-            return Location(
-                uri=item["targetUri"],
-                line=pos.get("line", 0),
-                character=pos.get("character", 0),
-            )
-
-        # Handle Location (has uri/range)
-        if "uri" in item:
-            pos = item.get("range", {}).get("start", {})
-            return Location(
-                uri=item["uri"],
-                line=pos.get("line", 0),
-                character=pos.get("character", 0),
-            )
-
-        return None
-
-    @classmethod
-    def _parse_symbol(cls, item: dict) -> SymbolInfo:
-        """Parse a DocumentSymbol from LSP response."""
-        range_info = item.get("range", item.get("location", {}).get("range", {}))
-        children_raw = item.get("children", [])
-        return SymbolInfo(
-            name=item.get("name", ""),
-            kind=item.get("kind", 0),
-            start_line=range_info.get("start", {}).get("line", 0),
-            end_line=range_info.get("end", {}).get("line", 0),
-            children=[cls._parse_symbol(c) for c in children_raw],
-        )
+        return _parse_single_location(result)
 
     # -- Context Manager ----------------------------------------------------
 

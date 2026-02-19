@@ -148,14 +148,16 @@ class ApiMapper:
         # Skip test files — they contain URL string literals that produce false positives
         nodes = [n for n in nodes if not _is_test_file(n.file_path)]
 
-        # First pass: find router prefixes
+        # First pass: find router prefixes (skip matches inside comments)
         prefixes: dict[str, str] = {}  # file_path → prefix
         for node in nodes:
             if not node.source_code:
                 continue
-            match = _ROUTER_PREFIX_RE.search(node.source_code)
-            if match:
+            for match in _ROUTER_PREFIX_RE.finditer(node.source_code):
+                if self._is_in_comment(node.source_code, match):
+                    continue
                 prefixes[node.file_path] = match.group(1).rstrip("/")
+                break
 
         # Build index: file_path → [function nodes sorted by start_line]
         func_index: dict[str, list[Node]] = {}
@@ -165,11 +167,14 @@ class ApiMapper:
         for funcs in func_index.values():
             funcs.sort(key=lambda n: n.start_line)
 
-        # Second pass: scan ALL nodes (including modules) for decorator patterns
+        # Second pass: scan function/method/module nodes for decorator patterns
+        # Skip block nodes (constant definitions, imports — never contain decorators)
         seen: set[tuple[str, str, str]] = set()  # (handler_id, method, path) dedup
 
         for node in nodes:
             if not node.source_code:
+                continue
+            if node.type.value == "block":
                 continue
 
             file_prefix = prefixes.get(node.file_path, "")
@@ -178,6 +183,9 @@ class ApiMapper:
 
             # Check decorator-based routes: @app.get("/path")
             for match in _DECORATOR_ROUTE_RE.finditer(source):
+                # Real decorators have @ at start of line — skip comments/docstrings
+                if not self._is_decorator_start(source, match):
+                    continue
                 method = match.group(1).upper()
                 path = file_prefix + match.group(2)
                 handler = self._find_handler(
@@ -199,6 +207,8 @@ class ApiMapper:
 
             # Check @app.route() style
             for match in _ROUTE_DECORATOR_RE.finditer(source):
+                if not self._is_decorator_start(source, match):
+                    continue
                 path = file_prefix + match.group(1)
                 handler = self._find_handler(
                     node, match, lines, func_index,
@@ -246,6 +256,24 @@ class ApiMapper:
                 return func
 
         return None
+
+    @staticmethod
+    def _is_decorator_start(source: str, match: re.Match) -> bool:
+        """Check that a regex match is a real decorator (@ at start of line).
+
+        Returns False if the match is inside a comment, docstring, or string
+        literal — i.e. there is non-whitespace text before the @ on its line.
+        """
+        line_start = source.rfind("\n", 0, match.start()) + 1
+        preceding = source[line_start:match.start()]
+        return not preceding.strip()
+
+    @staticmethod
+    def _is_in_comment(source: str, match: re.Match) -> bool:
+        """Check if a regex match falls within a comment line (# or //)."""
+        line_start = source.rfind("\n", 0, match.start()) + 1
+        line_prefix = source[line_start:match.start()].lstrip()
+        return line_prefix.startswith("#") or line_prefix.startswith("//")
 
     def extract_api_calls(self, nodes: list[Node]) -> list[ApiCallInfo]:
         """Extract frontend API calls from TypeScript/JavaScript nodes."""
