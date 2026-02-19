@@ -24,6 +24,15 @@ def handle_run_tests(params: dict, ctx: LensContext) -> ToolResponse:
     project_root = str(ctx.project_root)
 
     cmd = ["python", "-m", "pytest", "--tb=short", "-q", "--no-header"]
+
+    # Auto-enable coverage when pytest-cov is available
+    cov_json = ctx.project_root / ".lens" / "coverage.json"
+    try:
+        import pytest_cov  # noqa: F401
+        cmd.extend(["--cov", "--cov-report", f"json:{cov_json}"])
+    except ImportError:
+        pass
+
     if path:
         cmd.append(path)
     if filter_k:
