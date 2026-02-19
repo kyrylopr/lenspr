@@ -33,6 +33,17 @@ class EdgeType(Enum):
     IMPLEMENTS = "implements"  # Implements interface/protocol
     COMPOSED_OF = "composed_of"  # Class contains instances of other classes
     MOCKS = "mocks"  # @patch("target") mock relationship in tests
+    # Cross-language edge types
+    CALLS_API = "calls_api"  # Frontend HTTP call → backend route handler
+    HANDLES_ROUTE = "handles_route"  # Route decorator → handler function
+    # Database edge types
+    READS_TABLE = "reads_table"  # Function reads from a DB table (SELECT)
+    WRITES_TABLE = "writes_table"  # Function writes to a DB table (INSERT/UPDATE/DELETE)
+    MIGRATES = "migrates"  # Migration creates/alters a table
+    # Infrastructure edge types
+    DEPENDS_ON = "depends_on"  # Docker service depends on another service
+    EXPOSES_PORT = "exposes_port"  # Service exposes a port
+    USES_ENV = "uses_env"  # Code references an environment variable
 
 
 class EdgeConfidence(Enum):

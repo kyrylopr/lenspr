@@ -153,3 +153,157 @@ class TestExplain:
         assert result.success
         assert result.data["docstring"] is not None
         assert "Create and return" in result.data["docstring"]
+
+
+# ---------------------------------------------------------------------------
+# Fixture for limit-filtering and class method tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def project_with_methods(tmp_path: Path) -> LensContext:
+    """Project where class methods call each other via self and also call
+    many stdlib functions, exposing the limit-filtering bug."""
+    (tmp_path / "processor.py").write_text(
+        "import os\n"
+        "import json\n"
+        "import hashlib\n"
+        "\n"
+        "class DataProcessor:\n"
+        '    """Processes data files."""\n'
+        "\n"
+        "    def __init__(self, path: str):\n"
+        "        self.path = path\n"
+        "        self.data = None\n"
+        "\n"
+        "    def load(self) -> dict:\n"
+        '        """Load data from disk."""\n'
+        "        raw = os.path.join(self.path, 'data.json')\n"
+        "        text = json.dumps({'key': 'value'})\n"
+        "        h = hashlib.md5(text.encode()).hexdigest()\n"
+        "        self.data = self.parse(text)\n"
+        "        return self.data\n"
+        "\n"
+        "    def parse(self, text: str) -> dict:\n"
+        '        """Parse text into a dict."""\n'
+        "        return json.loads(text)\n"
+        "\n"
+        "    def transform(self) -> dict:\n"
+        '        """Transform loaded data."""\n'
+        "        if self.data is None:\n"
+        "            self.load()\n"
+        "        return self.validate(self.data)\n"
+        "\n"
+        "    def validate(self, data: dict) -> dict:\n"
+        '        """Validate data structure."""\n'
+        "        return data\n"
+    )
+
+    (tmp_path / "runner.py").write_text(
+        "from processor import DataProcessor\n"
+        "\n"
+        "def run_pipeline(path: str) -> dict:\n"
+        '    """Run the full processing pipeline."""\n'
+        "    proc = DataProcessor(path)\n"
+        "    proc.load()\n"
+        "    return proc.transform()\n"
+    )
+
+    lens_dir = tmp_path / ".lens"
+    lens_dir.mkdir()
+    database.init_database(lens_dir)
+    ctx = LensContext(project_root=tmp_path, lens_dir=lens_dir)
+    ctx.full_sync()
+    return ctx
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for limit-filtering bug and class method explain
+# ---------------------------------------------------------------------------
+
+
+class TestExplainLimitFix:
+    """Regression tests for the callers/callees limit filtering bug.
+
+    Old code applied [:limit] before filtering external nodes, so if
+    the first N successors were all external, 0 internal callees appeared.
+    """
+
+    def test_method_callees_include_self_calls(
+        self, project_with_methods: LensContext
+    ) -> None:
+        """Method calling self.parse() → parse appears in callees."""
+        result = handle_explain(
+            {"node_id": "processor.DataProcessor.load"},
+            project_with_methods,
+        )
+
+        assert result.success
+        callees = result.data["context"]["callees"]
+        callee_names = [c["name"] for c in callees]
+        assert "parse" in callee_names, (
+            f"Expected 'parse' in callees but got: {callee_names}"
+        )
+
+    def test_method_callees_despite_many_externals(
+        self, project_with_methods: LensContext
+    ) -> None:
+        """Method with many external calls (os, json, hashlib) still shows
+        internal callees (self.parse)."""
+        result = handle_explain(
+            {"node_id": "processor.DataProcessor.load"},
+            project_with_methods,
+        )
+
+        assert result.success
+        callee_count = result.data["context"]["callee_count"]
+        assert callee_count > 0, "Expected at least 1 internal callee"
+
+    def test_method_callers_from_other_methods(
+        self, project_with_methods: LensContext
+    ) -> None:
+        """Method called via self from another method → caller appears."""
+        result = handle_explain(
+            {"node_id": "processor.DataProcessor.validate"},
+            project_with_methods,
+        )
+
+        assert result.success
+        callers = result.data["context"]["callers"]
+        caller_names = [c["name"] for c in callers]
+        assert "transform" in caller_names, (
+            f"Expected 'transform' in callers but got: {caller_names}"
+        )
+
+    def test_method_callers_from_external_function(
+        self, project_with_methods: LensContext
+    ) -> None:
+        """Method called from a function in another file → caller appears."""
+        result = handle_explain(
+            {"node_id": "processor.DataProcessor.load"},
+            project_with_methods,
+        )
+
+        assert result.success
+        callers = result.data["context"]["callers"]
+        caller_names = [c["name"] for c in callers]
+        assert "run_pipeline" in caller_names, (
+            f"Expected 'run_pipeline' in callers but got: {caller_names}"
+        )
+
+    def test_function_calling_method_shows_callees(
+        self, project_with_methods: LensContext
+    ) -> None:
+        """Function calling instance.method() → method appears in callees."""
+        result = handle_explain(
+            {"node_id": "runner.run_pipeline"},
+            project_with_methods,
+        )
+
+        assert result.success
+        callees = result.data["context"]["callees"]
+        callee_names = [c["name"] for c in callees]
+        # Should show at least DataProcessor, load, transform
+        assert len(callees) >= 2, (
+            f"Expected >= 2 callees but got {len(callees)}: {callee_names}"
+        )

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import logging
+import os
 import uuid
 from pathlib import Path
 
@@ -794,12 +795,36 @@ class PythonParser(BaseParser):
 
     def __init__(self) -> None:
         self._jedi_project: jedi.Project | None = None
+        self._pyright_resolver = None  # PyrightResolver | None
 
     def get_file_extensions(self) -> list[str]:
         return [".py"]
 
     def set_project_root(self, root_path: Path) -> None:
-        """Initialize jedi project for deep name resolution."""
+        """Initialize resolvers: Pyright (opt-in) or Jedi (default).
+
+        Set LENSPR_USE_PYRIGHT=1 to enable the Pyright resolver for better
+        self.method(), isinstance(), and generic type resolution.
+        """
+        # Try Pyright if opted in (better self/cls/isinstance resolution)
+        if os.environ.get("LENSPR_USE_PYRIGHT", "").strip() in ("1", "true", "yes"):
+            try:
+                from lenspr.resolvers.pyright_resolver import (
+                    PyrightResolver,
+                    is_pyright_available,
+                )
+                if is_pyright_available():
+                    self._pyright_resolver = PyrightResolver(root_path)
+                    logger.info("Using Pyright resolver for Python")
+                else:
+                    logger.info(
+                        "LENSPR_USE_PYRIGHT set but pyright-langserver not found, "
+                        "falling back to Jedi"
+                    )
+            except ImportError:
+                logger.debug("Pyright resolver module not available")
+
+        # Always set up Jedi as fallback
         self._jedi_project = jedi.Project(path=str(root_path))
 
     def parse_file(self, file_path: Path, root_path: Path) -> tuple[list[Node], list[Edge]]:
@@ -844,8 +869,18 @@ class PythonParser(BaseParser):
         all_nodes = [module_node] + visitor.nodes
         all_edges = visitor.edges
 
-        # Jedi resolution pass: upgrade INFERRED edges to RESOLVED
-        if self._jedi_project is not None:
+        # Resolution pass: upgrade INFERRED edges to RESOLVED
+        # Prefer Pyright (better type inference), fall back to Jedi
+        if self._pyright_resolver is not None:
+            try:
+                self._pyright_resolver.resolve_edges(
+                    all_edges, str(file_path), settle_time=0.5
+                )
+            except Exception as e:
+                logger.warning("Pyright resolution failed, falling back to Jedi: %s", e)
+                if self._jedi_project is not None:
+                    self._resolve_edges_with_jedi(all_edges, str(file_path))
+        elif self._jedi_project is not None:
             self._resolve_edges_with_jedi(all_edges, str(file_path))
 
         return all_nodes, all_edges

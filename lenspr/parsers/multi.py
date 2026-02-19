@@ -264,6 +264,74 @@ class MultiParser(BaseParser):
         # Fixes mismatches when project root != package root
         normalize_edge_targets(all_nodes, all_edges)
 
+        # Fourth pass: cross-language API mapping (frontend HTTP → backend route)
+        try:
+            from lenspr.resolvers.api_mapper import ApiMapper
+
+            api_mapper = ApiMapper()
+            api_mapper.extract_routes(all_nodes)
+            api_mapper.extract_api_calls(all_nodes)
+            api_edges = api_mapper.match()
+            if api_edges:
+                all_edges.extend(api_edges)
+                logger.info(
+                    "API mapper: added %d cross-language edges", len(api_edges),
+                )
+        except Exception as e:
+            logger.debug("API mapper skipped: %s", e)
+
+        # Fifth pass: SQL/DB schema mapping (function → table edges)
+        try:
+            from lenspr.resolvers.sql_mapper import SqlMapper
+
+            sql_mapper = SqlMapper()
+            sql_mapper.extract_tables(all_nodes)
+            sql_mapper.extract_operations(all_nodes)
+            db_edges = sql_mapper.match()
+            if db_edges:
+                all_edges.extend(db_edges)
+                logger.info(
+                    "SQL mapper: added %d database edges", len(db_edges),
+                )
+        except Exception as e:
+            logger.debug("SQL mapper skipped: %s", e)
+
+        # Sixth pass: infrastructure mapping (Docker, env vars)
+        try:
+            from lenspr.resolvers.infra_mapper import InfraMapper
+
+            infra_mapper = InfraMapper()
+
+            # Parse docker-compose files
+            for name in ("docker-compose.yml", "docker-compose.yaml", "compose.yml"):
+                compose_path = root_path / name
+                if compose_path.exists():
+                    infra_mapper.parse_compose(compose_path)
+
+            # Parse .env files
+            for name in (".env", ".env.example", ".env.local"):
+                env_path = root_path / name
+                if env_path.exists():
+                    infra_mapper.parse_env_file(env_path)
+
+            # Extract env var usages from code
+            infra_mapper.extract_env_usages(all_nodes)
+
+            # Create virtual service nodes
+            service_nodes = infra_mapper.get_service_nodes()
+            if service_nodes:
+                all_nodes.extend(service_nodes)
+
+            # Create edges
+            infra_edges = infra_mapper.match()
+            if infra_edges:
+                all_edges.extend(infra_edges)
+                logger.info(
+                    "Infra mapper: added %d infrastructure edges", len(infra_edges),
+                )
+        except Exception as e:
+            logger.debug("Infra mapper skipped: %s", e)
+
         # Update stats with resolved edges (recalculate resolution percentages)
         if stats:
             stats.recalculate_resolution(all_edges)

@@ -18,6 +18,7 @@ def handle_explain(params: dict, ctx: LensContext) -> ToolResponse:
     Provides rich context for Claude (or other LLM) to generate explanations,
     plus rule-based analysis as a starting point.
     """
+    ctx.ensure_synced()
     node_id = params["node_id"]
     include_examples = params.get("include_examples", True)
 
@@ -97,7 +98,7 @@ def _get_callers_context(
     if node_id not in graph:
         return callers
 
-    for pred_id in list(graph.predecessors(node_id))[:limit]:
+    for pred_id in graph.predecessors(node_id):
         pred_node = database.get_node(pred_id, ctx.graph_db)
         if not pred_node:
             continue
@@ -111,6 +112,8 @@ def _get_callers_context(
             # Include source for context
             "source_code": pred_node.source_code,
         })
+        if len(callers) >= limit:
+            break
 
     return callers
 
@@ -123,7 +126,7 @@ def _get_callees_context(
     if node_id not in graph:
         return callees
 
-    for succ_id in list(graph.successors(node_id))[:limit]:
+    for succ_id in graph.successors(node_id):
         succ_node = database.get_node(succ_id, ctx.graph_db)
         if not succ_node:
             continue
@@ -137,6 +140,8 @@ def _get_callees_context(
             # Brief snippet only for callees
             "docstring": succ_node.docstring,
         })
+        if len(callees) >= limit:
+            break
 
     return callees
 

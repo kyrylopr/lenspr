@@ -86,6 +86,7 @@ class TypeScriptParser(BaseParser):
         # Resolvers for cross-file resolution (initialized in set_project_root)
         self._python_resolver: TypeScriptResolver | None = None
         self._node_resolver: Any = None  # NodeResolver if available
+        self._lsp_resolver: Any = None  # TsServerResolver if available
         self._use_node_resolver = use_node_resolver
         self._project_root: Path | None = None
 
@@ -117,6 +118,22 @@ class TypeScriptParser(BaseParser):
                     logger.debug("Node.js not available, using Python resolver")
             except Exception as e:
                 logger.warning("Failed to init Node resolver: %s", e)
+
+        # Try LSP-based tsserver resolver (fallback when Node resolver unavailable)
+        if self._node_resolver is None:
+            try:
+                from lenspr.resolvers.tsserver_resolver import (
+                    TsServerResolver,
+                    is_tsserver_available,
+                )
+
+                if is_tsserver_available():
+                    self._lsp_resolver = TsServerResolver(root_path)
+                    logger.info("TypeScriptParser: LSP tsserver resolver enabled")
+                else:
+                    logger.debug("typescript-language-server not available")
+            except Exception as e:
+                logger.warning("Failed to init TsServer resolver: %s", e)
 
         logger.debug("TypeScriptParser: resolver initialized for %s", root_path)
 
@@ -242,14 +259,17 @@ class TypeScriptParser(BaseParser):
         return self._resolve_edges(edges)
 
     def _resolve_edges(self, edges: list[Edge]) -> list[Edge]:
-        """Resolve edges using Node.js resolver (preferred) or Python resolver.
+        """Resolve edges using best available resolver.
 
-        Node.js resolver uses TypeScript Compiler API for full type inference.
-        Falls back to Python resolver if Node.js is not available.
+        Priority: Node.js resolver > LSP tsserver > Python resolver.
         """
         # Try Node.js resolver first (batch mode for performance)
         if self._node_resolver is not None:
             return self._resolve_edges_with_node(edges)
+
+        # Try LSP tsserver resolver (go-to-definition)
+        if self._lsp_resolver is not None:
+            return self._resolve_edges_with_lsp(edges)
 
         # Fall back to Python resolver
         if self._python_resolver is not None:
@@ -330,6 +350,14 @@ class TypeScriptParser(BaseParser):
             resolved.append(edge)
 
         return resolved
+
+    def _resolve_edges_with_lsp(self, edges: list[Edge]) -> list[Edge]:
+        """Resolve edges using LSP tsserver (go-to-definition)."""
+        try:
+            edges = self._lsp_resolver.resolve_edges(edges)
+        except Exception as e:
+            logger.warning("TsServer LSP resolver failed: %s", e)
+        return edges
 
     def _resolve_edges_with_python(self, edges: list[Edge]) -> list[Edge]:
         """Resolve edges using Python TypeScriptResolver (fallback)."""
