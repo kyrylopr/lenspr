@@ -129,8 +129,8 @@ def get_proactive_warnings(
         "subprocess.", "socket.", "urllib.",
     ]
     has_io = any(marker in new_source for marker in _IO_MARKERS)
-    has_try = "try:" in new_source
-    if has_io and not has_try:
+    has_error_handling = "try:" in new_source and "except" in new_source
+    if has_io and not has_error_handling:
         warnings.append(
             "⚠️ NO ERROR HANDLING: This code performs IO/network/DB operations "
             "without try/except. Consider wrapping in try/except."

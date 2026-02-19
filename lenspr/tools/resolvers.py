@@ -98,7 +98,7 @@ def handle_db_map(params: dict, ctx: LensContext) -> ToolResponse:
         t = op.table_name
         if t not in table_usage:
             table_usage[t] = {"reads": [], "writes": []}
-        key = "writes" if op.op_type.upper() in ("INSERT", "UPDATE", "DELETE", "CREATE") else "reads"
+        key = "writes" if op.op_type in ("write", "migrate") else "reads"
         table_usage[t][key].append(op.caller_node_id)
 
     return ToolResponse(

@@ -134,49 +134,54 @@ def handle_trace_stats(params: dict, ctx: LensContext) -> ToolResponse:
 
     Reports how many edges are static-only, runtime-only, or confirmed
     by both static analysis and runtime observation.
+
+    Reads directly from graph.db for accuracy — NetworkX DiGraph deduplicates
+    parallel edges, undercounting by ~30%.
     """
+    import sqlite3
+
     ctx.ensure_synced()
-    nx_graph = ctx.get_graph()
 
-    static_only = 0
-    runtime_only = 0
-    both = 0
-    total_runtime_calls = 0
+    conn = sqlite3.connect(str(ctx.graph_db))
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            "SELECT source, COUNT(*) as cnt FROM edges GROUP BY source"
+        ).fetchall()
+        source_counts = {r["source"]: r["cnt"] for r in rows}
 
-    # Top nodes by runtime-discovered connections
-    runtime_connections: dict[str, int] = {}
+        # Runtime call totals from metadata
+        runtime_meta_rows = conn.execute(
+            "SELECT metadata FROM edges WHERE source IN ('runtime', 'both') AND metadata IS NOT NULL"
+        ).fetchall()
 
-    for u, v, data in nx_graph.edges(data=True):
-        source = data.get("source", "static")
-        if source == "static":
-            static_only += 1
-        elif source == "runtime":
-            runtime_only += 1
-            runtime_connections[u] = runtime_connections.get(u, 0) + 1
-            runtime_connections[v] = runtime_connections.get(v, 0) + 1
-            meta = data.get("metadata", {})
-            if isinstance(meta, str):
+        total_runtime_calls = 0
+        for row in runtime_meta_rows:
+            meta_str = row["metadata"]
+            if meta_str:
                 try:
-                    meta = json.loads(meta)
+                    meta = json.loads(meta_str)
+                    total_runtime_calls += meta.get("runtime_calls", 0)
                 except (json.JSONDecodeError, TypeError):
-                    meta = {}
-            total_runtime_calls += meta.get("runtime_calls", 0)
-        elif source == "both":
-            both += 1
-            meta = data.get("metadata", {})
-            if isinstance(meta, str):
-                try:
-                    meta = json.loads(meta)
-                except (json.JSONDecodeError, TypeError):
-                    meta = {}
-            total_runtime_calls += meta.get("runtime_calls", 0)
+                    pass
 
-    # Top 10 nodes with most runtime-discovered connections
-    top_runtime_nodes = sorted(
-        runtime_connections.items(), key=lambda x: x[1], reverse=True,
-    )[:10]
+        # Top 10 nodes with most runtime-discovered connections
+        top_rows = conn.execute("""
+            SELECT node_id, SUM(cnt) as total FROM (
+                SELECT from_node as node_id, COUNT(*) as cnt FROM edges WHERE source = 'runtime' GROUP BY from_node
+                UNION ALL
+                SELECT to_node as node_id, COUNT(*) as cnt FROM edges WHERE source = 'runtime' GROUP BY to_node
+            ) GROUP BY node_id ORDER BY total DESC LIMIT 10
+        """).fetchall()
+        top_runtime_nodes = [{"node_id": r["node_id"], "runtime_connections": r["total"]} for r in top_rows]
+    finally:
+        conn.close()
 
-    total_edges = static_only + runtime_only + both
+    static_only = source_counts.get("static", 0)
+    runtime_only = source_counts.get("runtime", 0)
+    both = source_counts.get("both", 0)
+    inferred = source_counts.get("inferred", 0)
+    total_edges = sum(source_counts.values())
 
     # Trace file freshness
     trace_file = ctx.project_root / ".lens" / "trace_edges.json"
@@ -206,10 +211,8 @@ def handle_trace_stats(params: dict, ctx: LensContext) -> ToolResponse:
                 if (static_only + both) > 0 else 0
             ),
             "total_runtime_calls": total_runtime_calls,
-            "top_runtime_nodes": [
-                {"node_id": nid, "runtime_connections": count}
-                for nid, count in top_runtime_nodes
-            ],
+            "top_runtime_nodes": top_runtime_nodes,
             "trace_file_age": trace_age,
+            "source": "graph.db (direct SQL)",
         },
     )

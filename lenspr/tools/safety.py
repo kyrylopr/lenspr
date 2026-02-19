@@ -256,9 +256,10 @@ def handle_nfr_check(params: dict, ctx: LensContext) -> ToolResponse:
     line_count = len(src.splitlines())
     issues: list[dict] = []
 
-    # 1. IO without error handling
+    # 1. IO without error handling (try/finally alone is NOT error handling)
     has_io = any(marker in src for marker in _IO_MARKERS)
-    if has_io and "try:" not in src:
+    has_error_handling = "try:" in src and "except" in src
+    if has_io and not has_error_handling:
         issues.append({
             "severity": "HIGH",
             "rule": "io_without_error_handling",
@@ -1048,7 +1049,8 @@ def handle_fix_plan(params: dict, ctx: LensContext) -> ToolResponse:
         for node in func_nodes:
             src = node.source_code or ""
             has_io = any(marker in src for marker in _IO_MARKERS)
-            if has_io and "try:" not in src:
+            has_error_handling = "try:" in src and "except" in src
+            if has_io and not has_error_handling:
                 # Count callers (higher = more urgent)
                 caller_count = sum(
                     1 for pred_id in nx_graph.predecessors(node.id)
