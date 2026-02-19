@@ -25,6 +25,9 @@ logger = logging.getLogger(__name__)
 # AST node types that indicate dynamic/untrackable patterns
 _DYNAMIC_CALL_NAMES = {"exec", "eval", "globals", "locals", "getattr", "setattr", "delattr"}
 
+# Known mock.patch decorator names (for MOCKS edge extraction)
+_MOCK_PATCH_NAMES = {"patch", "mock.patch", "unittest.mock.patch"}
+
 # Python stdlib modules (common subset for fast detection)
 _STDLIB_MODULES = {
     "abc", "aifc", "argparse", "array", "ast", "asynchat", "asyncio", "asyncore",
@@ -468,6 +471,22 @@ class CodeGraphVisitor(ast.NodeVisitor):
                     )
                 )
 
+        # Extract mock targets from @patch("module.function") decorators
+        for decorator in node.decorator_list:
+            mock_target = self._extract_mock_target(decorator)
+            if mock_target:
+                self.edges.append(
+                    Edge(
+                        id=_edge_id(),
+                        from_node=node_id,
+                        to_node=mock_target,
+                        type=EdgeType.MOCKS,
+                        line_number=decorator.lineno,
+                        confidence=EdgeConfidence.INFERRED,
+                        source=EdgeSource.STATIC,
+                    )
+                )
+
         # Extract type annotation edges
         self._extract_type_annotations(node, node_id)
 
@@ -634,6 +653,35 @@ class CodeGraphVisitor(ast.NodeVisitor):
             return node.attr
         if isinstance(node, ast.Call):
             return self._resolve_name_from_ast(node.func)
+        return None
+
+    def _extract_mock_target(self, decorator: ast.expr) -> str | None:
+        """Extract mock target from @patch("module.function") decorator.
+
+        Returns the dotted string argument if decorator is a known mock.patch
+        variant, otherwise None.
+        """
+        if not isinstance(decorator, ast.Call):
+            return None
+        func_name = self._resolve_name_from_ast(decorator.func)
+        if not func_name:
+            return None
+        # Check against known mock names (raw and import-resolved)
+        resolved = self.import_table.resolve(func_name)
+        names = {func_name}
+        if resolved:
+            names.add(resolved[0])
+        is_patch = any(
+            n in _MOCK_PATCH_NAMES or n.endswith(".patch")
+            for n in names
+        )
+        if not is_patch:
+            return None
+        # Extract first positional string argument containing a dot
+        if decorator.args and isinstance(decorator.args[0], ast.Constant):
+            value = decorator.args[0].value
+            if isinstance(value, str) and "." in value:
+                return value
         return None
 
     def extract_blocks(self, tree: ast.Module) -> None:

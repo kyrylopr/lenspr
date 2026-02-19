@@ -353,6 +353,102 @@ class TestSelfMethodResolution:
         assert any("self.x" in t for t in targets)
 
 
+class TestMockPatchExtraction:
+    """@patch("module.function") → MOCKS edge to mock target."""
+
+    def _parse_source(self, source, module_id="test_mod", file_path="test_mod.py"):
+        import ast
+        from lenspr.parsers.python_parser import CodeGraphVisitor
+
+        visitor = CodeGraphVisitor(source.splitlines(), module_id, file_path)
+        visitor.visit(ast.parse(source))
+        return [e for e in visitor.edges if e.type == EdgeType.MOCKS]
+
+    def test_patch_creates_mocks_edge(self):
+        """@patch("myapp.db.save") → MOCKS edge to myapp.db.save."""
+        edges = self._parse_source(
+            "from unittest.mock import patch\n"
+            "\n"
+            "@patch('myapp.db.save')\n"
+            "def test_save():\n"
+            "    pass\n"
+        )
+        assert len(edges) == 1
+        assert edges[0].from_node == "test_mod.test_save"
+        assert edges[0].to_node == "myapp.db.save"
+
+    def test_mock_patch_creates_mocks_edge(self):
+        """@mock.patch("myapp.db.save") → same result via mock.patch."""
+        edges = self._parse_source(
+            "from unittest import mock\n"
+            "\n"
+            "@mock.patch('myapp.service.run')\n"
+            "def test_run():\n"
+            "    pass\n"
+        )
+        assert len(edges) == 1
+        assert edges[0].to_node == "myapp.service.run"
+
+    def test_stacked_patches_multiple_edges(self):
+        """@patch("a.b") @patch("c.d") → two MOCKS edges."""
+        edges = self._parse_source(
+            "from unittest.mock import patch\n"
+            "\n"
+            "@patch('alpha.beta')\n"
+            "@patch('gamma.delta')\n"
+            "def test_multi():\n"
+            "    pass\n"
+        )
+        assert len(edges) == 2
+        targets = {e.to_node for e in edges}
+        assert targets == {"alpha.beta", "gamma.delta"}
+
+    def test_patch_without_dot_ignored(self):
+        """@patch("bare_name") → no MOCKS edge (ambiguous target)."""
+        edges = self._parse_source(
+            "from unittest.mock import patch\n"
+            "\n"
+            "@patch('bare_name')\n"
+            "def test_bare():\n"
+            "    pass\n"
+        )
+        assert len(edges) == 0
+
+    def test_non_string_arg_ignored(self):
+        """@patch(some_var) → no MOCKS edge."""
+        edges = self._parse_source(
+            "from unittest.mock import patch\n"
+            "TARGET = 'myapp.db.save'\n"
+            "\n"
+            "@patch(TARGET)\n"
+            "def test_var():\n"
+            "    pass\n"
+        )
+        assert len(edges) == 0
+
+    def test_non_patch_decorator_no_mocks(self):
+        """@pytest.fixture → no MOCKS edge."""
+        edges = self._parse_source(
+            "import pytest\n"
+            "\n"
+            "@pytest.fixture\n"
+            "def my_fixture():\n"
+            "    pass\n"
+        )
+        assert len(edges) == 0
+
+    def test_mocks_edge_confidence_is_inferred(self):
+        """MOCKS edges should have INFERRED confidence for cross-file resolution."""
+        edges = self._parse_source(
+            "from unittest.mock import patch\n"
+            "\n"
+            "@patch('myapp.db.save')\n"
+            "def test_save():\n"
+            "    pass\n"
+        )
+        assert edges[0].confidence == EdgeConfidence.INFERRED
+
+
 def _make_node(node_id, name=None):
     """Helper to create a minimal Node for normalization tests."""
     return Node(

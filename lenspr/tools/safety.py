@@ -130,6 +130,113 @@ _SECRET_PATTERNS = [
 ]
 
 
+def _try_pytest_cov(ctx: LensContext) -> dict | None:
+    """Run pytest --cov and return coverage JSON data, or None if unavailable.
+
+    Tries two approaches:
+    1. Read existing coverage.json from .lens/ (from a previous run)
+    2. Run pytest --cov to generate fresh data
+
+    Returns parsed JSON dict on success, None on any failure.
+    """
+    import json
+    import subprocess
+    import time
+
+    cov_json = ctx.project_root / ".lens" / "coverage.json"
+
+    # Try existing coverage data first (if recent - less than 5 min old)
+    if cov_json.exists():
+        age = time.time() - cov_json.stat().st_mtime
+        if age < 300:  # 5 minutes
+            try:
+                return json.loads(cov_json.read_text())
+            except (json.JSONDecodeError, OSError):
+                pass
+
+    # Run pytest --cov
+    try:
+        subprocess.run(
+            [
+                "python", "-m", "pytest",
+                "--cov", "--cov-report", f"json:{cov_json}",
+                "-q", "--no-header", "--tb=no",
+            ],
+            cwd=str(ctx.project_root),
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if cov_json.exists():
+            return json.loads(cov_json.read_text())
+    except (FileNotFoundError, subprocess.TimeoutExpired, json.JSONDecodeError, OSError):
+        pass
+    return None
+
+
+def _map_cov_to_functions(
+    cov_data: dict, nodes: list, project_root: str
+) -> tuple[list[dict], list[dict]]:
+    """Map pytest-cov line coverage to function-level coverage using graph nodes.
+
+    A function is 'covered' if at least 1 of its body lines was executed.
+    Returns (covered_list, uncovered_list) in the same format as graph-based.
+    """
+    from pathlib import Path
+
+    # Build lookup: relative_file_path → {executed_lines}
+    file_coverage: dict[str, set[int]] = {}
+    files_data = cov_data.get("files", {})
+    for abs_path, info in files_data.items():
+        # Convert absolute paths to relative
+        try:
+            rel = str(Path(abs_path).relative_to(project_root))
+        except ValueError:
+            rel = abs_path
+        executed = set(info.get("executed_lines", []))
+        file_coverage[rel] = executed
+
+    covered: list[dict] = []
+    uncovered: list[dict] = []
+
+    for node in nodes:
+        if node.type.value not in ("function", "method"):
+            continue
+        if (
+            node.name.startswith("test_")
+            or "test" in (node.file_path or "").lower()
+            or (node.file_path or "").startswith("eval/")
+        ):
+            continue
+
+        fp = node.file_path or ""
+        executed = file_coverage.get(fp, set())
+        # Skip the `def` line — it's always "executed" on module import.
+        # Only count body lines (start_line+1 .. end_line) as real coverage.
+        # For one-liners (start == end), the def line is the only line.
+        end = node.end_line or node.start_line
+        body_start = node.start_line + 1 if end > node.start_line else node.start_line
+        node_lines = set(range(body_start, end + 1))
+        hit = node_lines & executed
+
+        if hit:
+            covered.append({
+                "node_id": node.id,
+                "name": node.name,
+                "file": fp,
+                "lines_hit": len(hit),
+                "lines_total": len(node_lines),
+            })
+        else:
+            uncovered.append({
+                "node_id": node.id,
+                "name": node.name,
+                "file": fp,
+            })
+
+    return covered, uncovered
+
+
 def handle_nfr_check(params: dict, ctx: LensContext) -> ToolResponse:
     """Check a function for missing non-functional requirements (NFRs).
 
@@ -222,53 +329,73 @@ def handle_nfr_check(params: dict, ctx: LensContext) -> ToolResponse:
 # ---------------------------------------------------------------------------
 
 def handle_test_coverage(params: dict, ctx: LensContext) -> ToolResponse:
-    """Report which functions/methods have test coverage in the graph.
+    """Report which functions/methods have test coverage.
 
-    Uses the call graph: a function is 'covered' if at least one test function
-    calls it directly.
+    Tries pytest-cov (runtime line coverage) first, falls back to
+    static call graph analysis if pytest-cov is unavailable.
     """
     file_path_filter = params.get("file_path")
 
     ctx.ensure_synced()
-    nx_graph = ctx.get_graph()
     nodes = database.get_nodes(ctx.graph_db, file_filter=file_path_filter)
 
-    covered: list[dict] = []
-    uncovered: list[dict] = []
+    # Try runtime coverage first
+    cov_data = _try_pytest_cov(ctx)
+    if cov_data:
+        covered, uncovered = _map_cov_to_functions(
+            cov_data, nodes, str(ctx.project_root)
+        )
+        source = "pytest-cov (runtime)"
+        method_desc = (
+            "Runtime line coverage via pytest-cov. A function is covered if "
+            "at least 1 of its body lines was executed during tests."
+        )
+    else:
+        # Fallback: static call graph
+        nx_graph = ctx.get_graph()
+        covered = []
+        uncovered = []
 
-    for node in nodes:
-        if node.type.value not in ("function", "method"):
-            continue
-        # Skip test functions themselves and eval/ test projects
-        if (
-            node.name.startswith("test_")
-            or "test" in (node.file_path or "").lower()
-            or (node.file_path or "").startswith("eval/")
-        ):
-            continue
-
-        test_callers = [
-            pred_id
-            for pred_id in nx_graph.predecessors(node.id)
+        for node in nodes:
+            if node.type.value not in ("function", "method"):
+                continue
             if (
-                nx_graph.nodes.get(pred_id, {}).get("name", "").startswith("test_")
-                or "test" in (nx_graph.nodes.get(pred_id, {}).get("file_path") or "").lower()
-            )
-        ]
+                node.name.startswith("test_")
+                or "test" in (node.file_path or "").lower()
+                or (node.file_path or "").startswith("eval/")
+            ):
+                continue
 
-        if test_callers:
-            covered.append({
-                "node_id": node.id,
-                "name": node.name,
-                "file": node.file_path,
-                "tests": test_callers,
-            })
-        else:
-            uncovered.append({
-                "node_id": node.id,
-                "name": node.name,
-                "file": node.file_path,
-            })
+            test_callers = [
+                pred_id
+                for pred_id in nx_graph.predecessors(node.id)
+                if (
+                    nx_graph.nodes.get(pred_id, {}).get("name", "").startswith("test_")
+                    or "test" in (nx_graph.nodes.get(pred_id, {}).get("file_path") or "").lower()
+                )
+            ]
+
+            if test_callers:
+                covered.append({
+                    "node_id": node.id,
+                    "name": node.name,
+                    "file": node.file_path,
+                    "tests": test_callers,
+                })
+            else:
+                uncovered.append({
+                    "node_id": node.id,
+                    "name": node.name,
+                    "file": node.file_path,
+                })
+
+        source = "graph-based (static)"
+        method_desc = (
+            "Static call graph — a function counts as covered only if a test "
+            "calls it via a resolved edge. Dynamic calls (getattr/importlib) "
+            "may not appear as covered even if tests exist. "
+            "Install pytest-cov for accurate runtime coverage."
+        )
 
     total = len(covered) + len(uncovered)
     pct = round(len(covered) / total * 100) if total else 100
@@ -278,6 +405,7 @@ def handle_test_coverage(params: dict, ctx: LensContext) -> ToolResponse:
     return ToolResponse(
         success=True,
         data={
+            "source": source,
             "coverage_pct": pct,
             "grade": grade,
             "covered_count": len(covered),
@@ -285,15 +413,11 @@ def handle_test_coverage(params: dict, ctx: LensContext) -> ToolResponse:
             "uncovered": uncovered[:100],
             "covered": covered[:50],
             "filter": file_path_filter,
-            "analysis_method": (
-                "static call graph — a function counts as covered only if a test "
-                "calls it via a resolved edge. Dynamic calls (getattr/importlib) "
-                "may not appear as covered even if tests exist."
-            ),
+            "analysis_method": method_desc,
             "hint": (
                 f"Run lens_run_tests to see if tests pass. "
                 f"{len(uncovered)} functions have no tests — consider adding them."
-            ) if uncovered else "Great — all functions have test coverage (graph-based).",
+            ) if uncovered else "Great — all functions have test coverage.",
         },
         warnings=[
             f"⚠️ Only {pct}% test coverage (grade {grade}) — "
@@ -707,15 +831,23 @@ def handle_vibecheck(params: dict, ctx: LensContext) -> ToolResponse:
     top_risks: list[str] = []
 
     # --- 1. Test coverage (0-25 points) ---
-    covered = 0
-    for node in func_nodes:
-        has_test = any(
-            nx_graph.nodes.get(pred_id, {}).get("name", "").startswith("test_")
-            or "test" in (nx_graph.nodes.get(pred_id, {}).get("file_path") or "").lower()
-            for pred_id in nx_graph.predecessors(node.id)
+    # Prefer pytest-cov (runtime) over graph-based (static) when available.
+    cov_data = _try_pytest_cov(ctx)
+    if cov_data:
+        cov_covered, cov_uncovered = _map_cov_to_functions(
+            cov_data, all_nodes, str(ctx.project_root)
         )
-        if has_test:
-            covered += 1
+        covered = len(cov_covered)
+    else:
+        covered = 0
+        for node in func_nodes:
+            has_test = any(
+                nx_graph.nodes.get(pred_id, {}).get("name", "").startswith("test_")
+                or "test" in (nx_graph.nodes.get(pred_id, {}).get("file_path") or "").lower()
+                for pred_id in nx_graph.predecessors(node.id)
+            )
+            if has_test:
+                covered += 1
 
     test_pct = round(covered / total_funcs * 100) if total_funcs else 100
     test_score = round(test_pct / 100 * 25)

@@ -32,6 +32,7 @@ class EdgeType(Enum):
     WRAPS = "wraps"  # Wrapper/decorator pattern
     IMPLEMENTS = "implements"  # Implements interface/protocol
     COMPOSED_OF = "composed_of"  # Class contains instances of other classes
+    MOCKS = "mocks"  # @patch("target") mock relationship in tests
 
 
 class EdgeConfidence(Enum):

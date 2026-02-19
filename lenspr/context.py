@@ -147,6 +147,7 @@ class LensContext:
             result = self.incremental_sync()
             total = len(result.added) + len(result.modified) + len(result.deleted)
             if total > 0:
+                self.invalidate_graph()
                 logger.info(
                     "Auto-synced before read: +%d ~%d -%d",
                     len(result.added), len(result.modified), len(result.deleted)
