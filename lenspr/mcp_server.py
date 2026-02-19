@@ -98,6 +98,7 @@ _LENSPR_MODULES = [
     "lenspr.tools.session",
     "lenspr.tools.testing",
     "lenspr.tools.patterns",
+    "lenspr.tools.resolvers",
     "lenspr.tools",
     "lenspr.claude_tools",
     "lenspr.context",
@@ -1185,6 +1186,37 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
             node_id: The node to generate a test spec for.
         """
         return _tool_result("lens_generate_test_skeleton", {"node_id": node_id})
+
+    # -- Resolver Tools (cross-language mappers) --
+
+    @mcp.tool()
+    def lens_api_map() -> str:
+        """Map API routes to frontend calls and create cross-language edges.
+
+        Scans backend code for route decorators (@app.get, @app.route) and
+        frontend code for fetch/axios calls, then matches them by path.
+        """
+        return _tool_result("lens_api_map", {})
+
+    @mcp.tool()
+    def lens_db_map() -> str:
+        """Map database tables to the functions that read/write them.
+
+        Detects tables from SQLAlchemy __tablename__, Django models, and
+        CREATE TABLE statements. Maps SQL queries (SELECT, INSERT, UPDATE,
+        DELETE) to the containing functions.
+        """
+        return _tool_result("lens_db_map", {})
+
+    @mcp.tool()
+    def lens_env_map() -> str:
+        """Map environment variables and infrastructure dependencies.
+
+        Detects env var definitions (.env, docker-compose) and usages
+        (os.environ, os.getenv, process.env) across the codebase.
+        Highlights undefined env vars (used but not defined anywhere).
+        """
+        return _tool_result("lens_env_map", {})
 
     logger.info("Starting LensPR MCP server for: %s", project_path)
     mcp.run(transport="stdio")

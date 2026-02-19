@@ -74,6 +74,11 @@ from lenspr.tools.safety import (
     handle_arch_check,
     handle_vibecheck,
 )
+from lenspr.tools.resolvers import (
+    handle_api_map,
+    handle_db_map,
+    handle_env_map,
+)
 from lenspr.tools.schemas import LENS_TOOLS
 
 if TYPE_CHECKING:
@@ -144,6 +149,10 @@ __all__ = [
     "handle_vibecheck",
     "handle_fix_plan",
     "handle_generate_test_skeleton",
+    # Resolvers (cross-language mappers)
+    "handle_api_map",
+    "handle_db_map",
+    "handle_env_map",
 ]
 
 
@@ -207,6 +216,10 @@ _HANDLER_MAP: dict[str, tuple[str, str]] = {
     "lens_vibecheck": ("lenspr.tools.safety", "handle_vibecheck"),
     "lens_fix_plan": ("lenspr.tools.safety", "handle_fix_plan"),
     "lens_generate_test_skeleton": ("lenspr.tools.safety", "handle_generate_test_skeleton"),
+    # Resolvers (cross-language mappers)
+    "lens_api_map": ("lenspr.tools.resolvers", "handle_api_map"),
+    "lens_db_map": ("lenspr.tools.resolvers", "handle_db_map"),
+    "lens_env_map": ("lenspr.tools.resolvers", "handle_env_map"),
 }
 
 # Hot-reload mode: when True, handlers are unconditionally reloaded each call.
@@ -310,6 +323,7 @@ def _get_handler(
         "lenspr.tools.testing",
         "lenspr.tools.helpers",
         "lenspr.tools.patterns",
+        "lenspr.tools.resolvers",
     ]
     for module_name in _DISCOVERY_ORDER:
         try:

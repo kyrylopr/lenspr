@@ -901,4 +901,42 @@ LENS_TOOLS: list[dict[str, Any]] = [
             "properties": {},
         },
     },
+    # -- Resolver tools (cross-language mappers) --
+    {
+        "name": "lens_api_map",
+        "description": (
+            "Map API routes to frontend calls and create cross-language edges. "
+            "Scans backend code for route decorators (@app.get, @app.route) and "
+            "frontend code for fetch/axios calls, then matches them by path."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+    {
+        "name": "lens_db_map",
+        "description": (
+            "Map database tables to the functions that read/write them. "
+            "Detects tables from SQLAlchemy __tablename__, Django models, and "
+            "CREATE TABLE statements. Maps SQL queries to containing functions."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+    {
+        "name": "lens_env_map",
+        "description": (
+            "Map environment variables and infrastructure dependencies. "
+            "Detects env var definitions (.env, docker-compose) and usages "
+            "(os.environ, os.getenv, process.env) across the codebase. "
+            "Highlights undefined env vars (used but not defined anywhere)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
 ]
