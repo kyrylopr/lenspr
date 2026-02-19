@@ -133,3 +133,88 @@ def handle_session_handoff(params: dict, ctx: LensContext) -> ToolResponse:
         },
         hint="Handoff saved as session note 'handoff'. Next session: lens_session_read().",
     )
+
+def handle_resume(params: dict, ctx) -> "ToolResponse":
+    """Reconstruct previous session context from the auto-generated action log.
+
+    Every successful lens_update_node / lens_patch_node / lens_add_node /
+    lens_delete_node call writes a structured entry to the session log
+    automatically.  Call this at the start of a new session to immediately
+    understand what changed in the last session and why — no manual handoff
+    needed.
+
+    Returns:
+        A formatted markdown summary of all logged actions, grouped by file,
+        plus any user-written session notes.
+    """
+    import json
+
+    from lenspr.models import ToolResponse
+
+    notes = database.read_session_notes(ctx.session_db)
+
+    # Split auto-log entries (key starts with '_log_') from user notes
+    action_entries = []
+    user_notes = []
+    for note in notes:
+        if note["key"].startswith("_log_"):
+            try:
+                action_entries.append(json.loads(note["value"]))
+            except Exception:
+                pass  # Skip malformed entries
+        elif note["key"] not in ("handoff", "handoff_at"):
+            user_notes.append(note)
+
+    # Sort actions chronologically (keys are _log_<timestamp>_... so lexical sort works)
+    action_entries.sort(key=lambda e: e.get("timestamp", ""))
+
+    lines: list[str] = ["# Session Resume\n"]
+
+    if action_entries:
+        lines.append(f"## Action log — {len(action_entries)} change(s)\n")
+        for i, entry in enumerate(action_entries, 1):
+            ts = entry.get("timestamp", "")[:19].replace("T", " ")
+            action = entry.get("action", "?")
+            node_id = entry.get("node_id", "?")
+            reasoning = entry.get("reasoning", "(no reasoning)")
+            impact = entry.get("impact_summary", "")
+
+            lines.append(f"**{i}. {action.upper()}** `{node_id}` — {ts}")
+            lines.append(f"   - Why: {reasoning}")
+            if impact and impact not in ("added", "deleted"):
+                lines.append(f"   - Impact: {impact}")
+            lines.append("")
+    else:
+        lines.append("_No auto-logged actions found._\n")
+        lines.append(
+            "Actions are logged automatically by lens_update_node, "
+            "lens_patch_node, lens_add_node, and lens_delete_node.\n"
+        )
+
+    if user_notes:
+        lines.append("## Session notes\n")
+        for note in user_notes:
+            ts = note.get("updated_at", "")[:19].replace("T", " ")
+            lines.append(f"### {note['key']} _(updated {ts})_")
+            lines.append(note["value"])
+            lines.append("")
+
+    summary = "\n".join(lines)
+
+    hint = (
+        "Use lens_session_write(key, value) to add notes, "
+        "lens_session_read() to list all notes."
+    )
+    if not action_entries and not user_notes:
+        hint = "Start working — actions will be logged automatically."
+
+    return ToolResponse(
+        success=True,
+        data={
+            "summary": summary,
+            "actions_logged": len(action_entries),
+            "user_notes": len(user_notes),
+        },
+        hint=hint,
+    )
+

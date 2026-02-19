@@ -181,6 +181,13 @@ LENS_TOOLS: list[dict[str, Any]] = [
                         "Node ID to insert after. If omitted, appends to end of file."
                     ),
                 },
+                "reasoning": {
+                    "type": "string",
+                    "description": (
+                        "Why this node is being added. "
+                        "Stored in the session log so lens_resume() can reconstruct history."
+                    ),
+                },
             },
             "required": ["file_path", "source_code"],
         },
@@ -192,6 +199,13 @@ LENS_TOOLS: list[dict[str, Any]] = [
             "type": "object",
             "properties": {
                 "node_id": {"type": "string"},
+                "reasoning": {
+                    "type": "string",
+                    "description": (
+                        "Why this node is being deleted. "
+                        "Stored in the session log so lens_resume() can reconstruct history."
+                    ),
+                },
             },
             "required": ["node_id"],
         },
@@ -352,8 +366,10 @@ LENS_TOOLS: list[dict[str, Any]] = [
     {
         "name": "lens_batch",
         "description": (
-            "Apply multiple node updates atomically. All changes are validated first, "
-            "then applied together with a single reparse. Rolls back on error."
+            "Apply multiple node updates atomically with multi-file rollback. "
+            "All changes are validated first. If ANY step fails (patching, graph sync, "
+            "or optional test verification), ALL files are restored to their pre-batch state. "
+            "Set verify_tests=true to run tests before and after — rolls back on regressions."
         ),
         "input_schema": {
             "type": "object",
@@ -369,6 +385,17 @@ LENS_TOOLS: list[dict[str, Any]] = [
                         },
                         "required": ["node_id", "new_source"],
                     },
+                },
+                "verify_tests": {
+                    "type": "boolean",
+                    "description": (
+                        "Run tests before and after applying. If new failures appear, "
+                        "all files are rolled back. Default: false."
+                    ),
+                },
+                "timeout": {
+                    "type": "integer",
+                    "description": "Max seconds for test runs. Default: 120.",
                 },
             },
             "required": ["updates"],
@@ -858,6 +885,20 @@ LENS_TOOLS: list[dict[str, Any]] = [
                     "description": "Max recent changes to include. Default: 10.",
                 },
             },
+        },
+    },
+    {
+        "name": "lens_resume",
+        "description": (
+            "Reconstruct previous session context from the auto-generated action log. "
+            "Every successful lens_update_node / lens_patch_node / lens_add_node / "
+            "lens_delete_node call writes a structured entry to the session log automatically. "
+            "Call this at the START of a new session to understand what changed in the last "
+            "session and why — no manual handoff needed."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
         },
     },
 ]

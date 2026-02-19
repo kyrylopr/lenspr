@@ -382,3 +382,24 @@ class TestVibecheck:
 
         assert result.success
         assert isinstance(result.data["top_risks"], list)
+
+    def test_graph_confidence_excludes_external_edges(self, project: LensContext) -> None:
+        """Graph confidence should only count internal edges.
+
+        The test fixture has `import os` in service.py, creating an external
+        edge to stdlib. This edge should NOT reduce the confidence score.
+        Internal edges (service→test calls) are all resolved, so confidence
+        should be high despite the external dependency.
+        """
+        result = handle_vibecheck({}, project)
+
+        assert result.success
+        conf = result.data["breakdown"]["graph_confidence"]
+        # All internal edges in the test project are resolved (direct imports
+        # between service.py and test_service.py). External edges (os, urllib)
+        # should be excluded. So confidence should be near 100%.
+        assert conf["score"] >= 13, (
+            f"Graph confidence score {conf['score']}/15 is too low. "
+            f"External edges (stdlib) may be incorrectly penalizing the score. "
+            f"Detail: {conf['detail']}"
+        )

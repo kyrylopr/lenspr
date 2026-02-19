@@ -5,7 +5,10 @@ from pathlib import Path
 
 import pytest
 
+import sqlite3
+
 from lenspr.database import (
+    _connect,
     delete_node,
     get_edges,
     get_node,
@@ -174,3 +177,21 @@ class TestSearch:
         results = search_nodes("42", db, "code")
         assert len(results) == 1
         assert results[0].name == "helper"
+
+
+class TestConnect:
+    def test_returns_connection_for_valid_path(self, tmp_path):
+        """_connect opens a connection and sets WAL mode and row_factory."""
+        db_path = tmp_path / "test.db"
+        conn = _connect(db_path)
+        try:
+            row = conn.execute("PRAGMA journal_mode").fetchone()
+            assert row[0] == "wal"
+        finally:
+            conn.close()
+
+    def test_raises_operational_error_for_invalid_path(self, tmp_path):
+        """_connect raises OperationalError with a path-aware message when it can't open the DB."""
+        bad_path = tmp_path / "nonexistent_dir" / "x" / "graph.db"
+        with pytest.raises(sqlite3.OperationalError, match="Cannot open database at"):
+            _connect(bad_path)

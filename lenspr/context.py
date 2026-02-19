@@ -34,6 +34,10 @@ class LensContext:
     - Parser instance
     """
 
+    # Increment when parser changes affect edge generation (e.g. jedi resolver fixes).
+    # On mismatch with config.json, ensure_synced() auto-triggers a full resync.
+    PARSER_VERSION = "1"
+
     def __init__(self, project_root: Path, lens_dir: Path | None = None) -> None:
         self.project_root = project_root.resolve()
         self.lens_dir = lens_dir or (self.project_root / ".lens")
@@ -48,6 +52,27 @@ class LensContext:
         self._parser = MultiParser()
         self._lock = threading.Lock()
         self._lock_path = self.lens_dir / ".lock"
+
+        # Detect parser version mismatch — triggers full resync in ensure_synced()
+        self._needs_full_sync = self._is_parser_version_stale()
+
+    def _is_parser_version_stale(self) -> bool:
+        """Return True if config.json has a different parser_version than current."""
+        if not self.config_path.exists():
+            return False  # Fresh install — no graph yet, nothing to resync
+        try:
+            config = json.loads(self.config_path.read_text())
+            stored = config.get("parser_version", "0")
+            if stored != LensContext.PARSER_VERSION:
+                logger.warning(
+                    "Parser version mismatch: stored=%s current=%s — "
+                    "graph will be rebuilt on next tool call",
+                    stored, LensContext.PARSER_VERSION,
+                )
+                return True
+        except (json.JSONDecodeError, OSError):
+            pass
+        return False
 
     @property
     def is_initialized(self) -> bool:
@@ -102,6 +127,19 @@ class LensContext:
         Raises:
             RuntimeError: If sync fails (parser error, etc.)
         """
+        if self._needs_full_sync:
+            logger.warning(
+                "Parser version changed — forcing full resync to rebuild graph"
+            )
+            try:
+                self._full_sync_locked()
+                self._needs_full_sync = False
+            except Exception as e:
+                raise RuntimeError(
+                    f"Graph sync failed during parser upgrade migration: {e}"
+                ) from e
+            return
+
         if not self.has_pending_changes():
             return
 
@@ -140,24 +178,48 @@ class LensContext:
                 # Remove nodes from this file
                 old_node_ids = {n.id for n in all_nodes if n.file_path == rel_path}
                 all_nodes = [n for n in all_nodes if n.file_path != rel_path]
+
+                # Remove only OUTGOING edges from this file's nodes.
+                # Keep incoming edges (from other files) — they'll be
+                # cleaned up below if the target node was deleted.
                 all_edges = [
                     e for e in all_edges
-                    if e.from_node not in old_node_ids and e.to_node not in old_node_ids
+                    if e.from_node not in old_node_ids
                 ]
 
                 # Parse fresh
+                new_node_ids: set[str] = set()
                 if file_path.exists():
                     new_nodes, new_edges = self._parser.parse_file(
                         file_path, self.project_root
                     )
+                    new_node_ids = {n.id for n in new_nodes}
                     all_nodes.extend(new_nodes)
                     all_edges.extend(new_edges)
+
+                # Remove stale incoming edges to nodes that were deleted
+                # (existed before but not after reparse)
+                deleted_node_ids = old_node_ids - new_node_ids
+                if deleted_node_ids:
+                    all_edges = [
+                        e for e in all_edges
+                        if e.to_node not in deleted_node_ids
+                    ]
 
                 # Normalize edge targets (fixes root != package root mismatch)
                 normalize_edge_targets(all_nodes, all_edges)
 
+                # Recompute metrics (class method counts, etc.)
+                node_metrics, project_metrics = compute_all_metrics(
+                    all_nodes, all_edges
+                )
+                for node in all_nodes:
+                    if node.id in node_metrics:
+                        node.metrics = node_metrics[node.id]
+
                 # Save
                 database.save_graph(all_nodes, all_edges, self.graph_db)
+                database.save_project_metrics(project_metrics, self.graph_db)
                 self.invalidate_graph()
             finally:
                 fcntl.flock(lock_file, fcntl.LOCK_UN)
@@ -333,10 +395,13 @@ class LensContext:
                     n.id for n in all_nodes if n.file_path in files_to_remove
                 }
                 all_nodes = [n for n in all_nodes if n.file_path not in files_to_remove]
+
+                # Remove only OUTGOING edges from removed nodes.
+                # Keep incoming edges (from other files) — they'll be
+                # cleaned up below if the target node was deleted.
                 all_edges = [
                     e for e in all_edges
                     if e.from_node not in removed_node_ids
-                    and e.to_node not in removed_node_ids
                 ]
 
                 # Refresh jedi project to pick up new/changed files
@@ -345,19 +410,39 @@ class LensContext:
                     self._parser.set_project_root(self.project_root)
 
                 # Reparse changed/added files
+                new_node_ids: set[str] = set()
                 for rel in files_to_reparse:
                     file_path = self.project_root / rel
                     if file_path.exists():
                         new_nodes, new_edges = self._parser.parse_file(
                             file_path, self.project_root
                         )
+                        new_node_ids.update(n.id for n in new_nodes)
                         all_nodes.extend(new_nodes)
                         all_edges.extend(new_edges)
+
+                # Remove stale incoming edges to nodes that were deleted
+                # (existed before but not after reparse)
+                deleted_node_ids = removed_node_ids - new_node_ids
+                if deleted_node_ids:
+                    all_edges = [
+                        e for e in all_edges
+                        if e.to_node not in deleted_node_ids
+                    ]
 
                 # Normalize edge targets (fixes root != package root mismatch)
                 normalize_edge_targets(all_nodes, all_edges)
 
+                # Recompute metrics (class method counts, etc.)
+                node_metrics, project_metrics = compute_all_metrics(
+                    all_nodes, all_edges
+                )
+                for node in all_nodes:
+                    if node.id in node_metrics:
+                        node.metrics = node_metrics[node.id]
+
                 database.save_graph(all_nodes, all_edges, self.graph_db)
+                database.save_project_metrics(project_metrics, self.graph_db)
                 self.invalidate_graph()
             finally:
                 fcntl.flock(lock_file, fcntl.LOCK_UN)
@@ -401,6 +486,7 @@ class LensContext:
                 config = {}
 
         config["last_sync"] = datetime.now(UTC).isoformat()
+        config["parser_version"] = LensContext.PARSER_VERSION
 
         if fingerprints is not None:
             config["file_fingerprints"] = fingerprints

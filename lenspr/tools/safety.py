@@ -797,20 +797,25 @@ def handle_vibecheck(params: dict, ctx: LensContext) -> ToolResponse:
     score += ann_score
 
     # --- 6. Graph confidence (0-15 points) ---
-    total_edges = nx_graph.number_of_edges()
-    if total_edges > 0:
+    # Only count internal edges. External edges (stdlib/third-party) are expected
+    # to be unresolved and should not penalize the confidence score.
+    internal_edges = [
+        (u, v, d) for u, v, d in nx_graph.edges(data=True)
+        if d.get("confidence") != "external"
+    ]
+    if internal_edges:
         resolved = sum(
-            1 for _, _, d in nx_graph.edges(data=True)
+            1 for _, _, d in internal_edges
             if d.get("confidence") == "resolved"
         )
-        conf_pct = round(resolved / total_edges * 100)
+        conf_pct = round(resolved / len(internal_edges) * 100)
     else:
         conf_pct = 100
     conf_score = round(conf_pct / 100 * 15)
     breakdown["graph_confidence"] = {
         "score": conf_score,
         "max": 15,
-        "detail": f"{conf_pct}% of call/import edges are resolved (higher = more accurate analysis)",
+        "detail": f"{conf_pct}% of internal edges resolved (excludes stdlib/third-party)",
     }
     score += conf_score
 
@@ -873,10 +878,15 @@ def handle_fix_plan(params: dict, ctx: LensContext) -> ToolResponse:
     ]
     total_funcs = len(func_nodes)
 
-    # Score impact per unit
+    # Score impact per unit — must mirror vibecheck's exact scoring formula.
+    # test_score  = covered/total * 25  → +1 covered = +25/total pts       ✓
+    # ann_score   = annotated/total * 10 → +1 annotated = +10/total pts     ✓
+    # dead_score  = max(0, 20 - dead_pct) where dead_pct = N/total*100
+    #             → +1 deleted = dead_pct drops 100/total pts
+    #             → dead_score gains 100/total pts  (NOT 20/total)
     pts_per_test = round(25 / total_funcs, 3) if total_funcs else 0
     pts_per_doc = round(10 / total_funcs, 3) if total_funcs else 0
-    pts_per_dead = round(20 / total_funcs, 3) if total_funcs else 0
+    pts_per_dead = round(100 / total_funcs, 3) if total_funcs else 0
 
     actions: list[dict] = []
 
@@ -985,23 +995,28 @@ def handle_fix_plan(params: dict, ctx: LensContext) -> ToolResponse:
         key=lambda a: (_order.get(a["priority"], 0), a["expected_score_impact"]),
         reverse=True,
     )
-    actions = actions[:max_items]
-
+    # Calculate total impact across ALL actions before slicing (not just the top N shown)
     total_impact = round(sum(a["expected_score_impact"] for a in actions), 1)
+    total_actions = len(actions)
+    actions = actions[:max_items]
 
     # Current grade context
     _grade_targets = {"A": 90, "B": 75, "C": 60, "D": 45}
     target_pts = _grade_targets.get(target_grade.upper(), 75)
+
+    hidden = total_actions - len(actions)
+    scope_note = f" (showing {len(actions)} of {total_actions})" if hidden > 0 else ""
 
     return ToolResponse(
         success=True,
         data={
             "actions": actions,
             "count": len(actions),
+            "total_actions": total_actions,
             "target_grade": target_grade.upper(),
             "estimated_score_gain": total_impact,
             "summary": (
-                f"{len(actions)} actions identified. "
+                f"{total_actions} actions identified{scope_note}. "
                 f"Estimated +{total_impact} pts toward grade {target_grade.upper()} (needs {target_pts}/100)."
             ),
             "protocol": (
@@ -1084,13 +1099,25 @@ def handle_generate_test_skeleton(params: dict, ctx: LensContext) -> ToolRespons
         "kind": "happy_path",
     })
 
-    # Detect conditional branches
-    branch_count = source.count("\n    if ") + source.count("\n        if ")
-    for i in range(min(branch_count, 3)):
+    # Detect conditional branches — extract actual condition text via AST
+    import ast as _ast
+    _if_conditions: list[str] = []
+    try:
+        for _node in _ast.walk(_ast.parse(source)):
+            if isinstance(_node, _ast.If):
+                try:
+                    _if_conditions.append(_ast.unparse(_node.test))
+                except Exception:
+                    pass
+    except SyntaxError:
+        pass
+    for _cond in _if_conditions[:3]:
+        _slug = re.sub(r"[^a-z0-9]+", "_", _cond.lower())[:40].strip("_")
         scenarios.append({
-            "name": f"test_{name}_branch_{i + 1}",
-            "description": f"Cover branch #{i + 1} (conditional logic detected in source)",
+            "name": f"test_{name}_when_{_slug}",
+            "description": f"When `{_cond}` is true — verify the corresponding branch behaviour",
             "kind": "branch",
+            "condition": _cond,
         })
 
     # Detect error paths
@@ -1131,7 +1158,7 @@ def handle_generate_test_skeleton(params: dict, ctx: LensContext) -> ToolRespons
 
     # --- Module to place the test in ---
     file_path = node.file_path or ""
-    suggested_test_file = file_path.replace("lenspr/", "tests/test_").replace("/", "_")
+    suggested_test_file = "tests/test_" + file_path.replace("lenspr/", "", 1).replace("/", "_")
     if not suggested_test_file.endswith(".py"):
         suggested_test_file += ".py"
 

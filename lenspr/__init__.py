@@ -198,7 +198,7 @@ def get_system_prompt() -> str:
 
 def get_claude_tools() -> list[dict]:
     """Get tool definitions for Claude API."""
-    from lenspr.claude_tools import LENS_TOOLS
+    from lenspr.tools.schemas import LENS_TOOLS
     return LENS_TOOLS
 
 
@@ -209,7 +209,7 @@ def handle_tool(name: str, parameters: dict) -> dict:
     Returns dict with success, data, errors, and warnings.
     """
     ctx = _require_ctx()
-    from lenspr.claude_tools import handle_tool_call
+    from lenspr.tools import handle_tool_call
     response = handle_tool_call(name, parameters, ctx)
     return {
         "success": response.success,
@@ -334,13 +334,38 @@ of code nodes and their relationships.
 - `lens_arch_rule_delete` - Remove a rule by ID
 - `lens_arch_check` - Check all rules against the current codebase
 
+### Session Memory
+- `lens_resume` - **START OF SESSION: call this first** — reads auto-logged action history
+- `lens_session_write` - Save a persistent note (survives context resets)
+- `lens_session_read` - Read all saved notes
+- `lens_session_handoff` - Generate a manual handoff document
+
+## Protocol
+
+**These are non-negotiable steps, not suggestions:**
+
+### Session Start
+1. Call `lens_resume()` — restores what changed in the previous session and why.
+   Skip this and you are working blind, guaranteed to repeat work or miss context.
+
+### After Every Code Change
+2. After **every** `lens_update_node`, `lens_patch_node`, `lens_add_node`, or
+   `lens_delete_node` — call `lens_run_tests()` immediately.
+   This catches import-time crashes (NameError, broken references) that are
+   invisible until the next tool call fails with a cryptic error.
+
+### Before Every Modification
+3. Call `lens_check_impact(node_id)` before touching any node.
+   If severity is CRITICAL or HIGH — stop and confirm with the user.
+
 ## Rules
 
-1. **Before ANY modification**, call `lens_check_impact` to understand consequences
-2. After modifying, verify the change is syntactically valid
-3. Connections marked "unresolved" cannot be statically determined (dynamic dispatch, eval, getattr). Warn the user about these.
-4. Prefer small, focused changes over large rewrites
-5. When impact zone is large (>10 nodes), confirm with the user before proceeding
+1. **SESSION START**: call `lens_resume()` before any other action
+2. **AFTER EVERY CHANGE**: call `lens_run_tests()` — no exceptions
+3. **BEFORE EVERY MODIFICATION**: call `lens_check_impact` to understand consequences
+4. Connections marked "unresolved" cannot be statically determined (dynamic dispatch, eval, getattr). Warn the user about these.
+5. Prefer small, focused changes over large rewrites
+6. When impact zone is large (>10 nodes), confirm with the user before proceeding
 
 ## Non-Functional Requirements Checklist
 

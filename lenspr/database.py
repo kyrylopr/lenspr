@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from pathlib import Path
 
 from lenspr.models import Edge, Node
+
+logger = logging.getLogger(__name__)
 
 # -- Schema definitions --
 
@@ -101,11 +104,16 @@ CREATE TABLE IF NOT EXISTS notes (
 
 def _connect(db_path: Path) -> sqlite3.Connection:
     """Create a connection with sensible defaults."""
-    conn = sqlite3.connect(str(db_path))
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    return conn
+    try:
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA foreign_keys=ON")
+        return conn
+    except sqlite3.Error as e:
+        raise sqlite3.OperationalError(
+            f"Cannot open database at {db_path}: {e}"
+        ) from e
 
 
 def init_database(lens_dir: Path) -> None:
@@ -467,16 +475,6 @@ def get_project_metrics(db_path: Path) -> dict:
         return result
 
 
-def update_node_metrics(node_id: str, metrics: dict, db_path: Path) -> bool:
-    """Update a node's pre-computed metrics."""
-    import json
-
-    with _connect(db_path) as conn:
-        cursor = conn.execute(
-            "UPDATE nodes SET metrics = ? WHERE id = ?",
-            (json.dumps(metrics), node_id),
-        )
-        return cursor.rowcount > 0
 
 def write_session_note(key: str, value: str, session_db: Path) -> None:
     """Write or overwrite a session note by key."""
@@ -505,20 +503,6 @@ def read_session_notes(session_db: Path) -> list[dict]:
         return [dict(r) for r in rows]
 
 
-def delete_session_note(key: str, session_db: Path) -> bool:
-    """Delete a session note by key. Returns True if it existed."""
-    if not session_db.exists():
-        return False
-    with _connect(session_db) as conn:
-        cursor = conn.execute("DELETE FROM notes WHERE key = ?", (key,))
-        return cursor.rowcount > 0
 
 
-def clear_session_notes(session_db: Path) -> int:
-    """Delete all session notes. Returns count deleted."""
-    if not session_db.exists():
-        return 0
-    with _connect(session_db) as conn:
-        cursor = conn.execute("DELETE FROM notes")
-        return cursor.rowcount
 

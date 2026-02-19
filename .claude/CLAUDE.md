@@ -70,6 +70,43 @@ You have a **proven pattern** of:
 
 ---
 
+## CRITICAL: READ CODE VS RUN CODE
+
+**If you have read 3+ files in a row and everything "looks correct" — STOP. Run the code.**
+
+LensPR tools are convenient for reading code but cannot execute it. When debugging runtime behavior (what edges get created, what jedi resolves, what a function actually returns), **running code is 30 seconds, reading code is 25 tool calls**.
+
+### The Anti-Pattern (documented from real session, 2026-02-18):
+
+**Symptom:** Debugging why `from lenspr import database` creates no graph edges.
+**Wrong approach:** Read `_extract_calls` → looks correct. Read `_ImportTable.resolve` → looks correct. Read `_resolve_edges_with_jedi` → looks correct. Read `normalize_edge_targets` → looks correct. Read `save_graph` → looks correct. (25 tool calls, ~25 minutes, no answer)
+**Right approach:** Run the parser directly:
+```python
+python3 -c "
+from lenspr.parsers.python_parser import CodeGraphVisitor
+import ast
+source = 'from lenspr import database\ndef f():\n    database.save_graph(x)'
+visitor = CodeGraphVisitor(source.splitlines(), 'test', 'test.py')
+visitor.visit(ast.parse(source))
+for e in visitor.edges: print(e.from_node, '->', e.to_node, e.confidence.value)
+"
+```
+Result in 30 seconds: edges ARE created. Bug is not in parser. Move to next layer.
+
+### Decision Rule:
+
+```
+□ Debugging runtime behavior?       → python3 -c first, THEN read code if needed
+□ Third file looks "correct"?        → STOP. Run the thing.
+□ "jedi should return X"?            → script.goto() in python3 -c to verify
+□ "edge should be created"?          → parse a minimal example, check visitor.edges
+□ "save_graph should save it"?       → run parse_project() + inspect edges list
+```
+
+**Root cause:** LensPR is the primary tool → agent stays inside LensPR → LensPR can't execute code → agent reads instead of runs. Bash is available and faster for verification. Use it.
+
+---
+
 ## TRUST THE GRAPH
 
 The MCP server has a **file watcher that auto-syncs** the graph before every tool call.

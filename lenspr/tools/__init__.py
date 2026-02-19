@@ -129,6 +129,7 @@ __all__ = [
     "handle_session_write",
     "handle_session_read",
     "handle_session_handoff",
+    "handle_resume",
     # Testing
     "handle_run_tests",
     # Safety
@@ -191,6 +192,7 @@ _HANDLER_MAP: dict[str, tuple[str, str]] = {
     "lens_session_write": ("lenspr.tools.session", "handle_session_write"),
     "lens_session_read": ("lenspr.tools.session", "handle_session_read"),
     "lens_session_handoff": ("lenspr.tools.session", "handle_session_handoff"),
+    "lens_resume": ("lenspr.tools.session", "handle_resume"),
     # Testing
     "lens_run_tests": ("lenspr.tools.testing", "handle_run_tests"),
     # Safety
@@ -207,8 +209,12 @@ _HANDLER_MAP: dict[str, tuple[str, str]] = {
     "lens_generate_test_skeleton": ("lenspr.tools.safety", "handle_generate_test_skeleton"),
 }
 
-# Hot-reload mode: when True, handlers are resolved dynamically each call
+# Hot-reload mode: when True, handlers are unconditionally reloaded each call.
+# By default, mtime-based reload handles the common case automatically.
 _hot_reload_enabled: bool = False
+
+# Per-module file mtime at last load — used for automatic mtime-based reload.
+_MODULE_MTIMES: dict[str, float] = {}
 
 
 def enable_hot_reload(enabled: bool = True) -> None:
@@ -231,22 +237,48 @@ def _get_handler(
     to 'handle_fix_plan' and searches all tools submodules. Caches the
     result in _HANDLER_MAP so discovery only runs once per tool.
 
-    This means new tools added via lens_add_node work without restarting
-    the server — no importlib.reload() overhead on each call.
+    Reload strategy (mtime-based, always active):
+      On each call, stat the module's __file__. If mtime changed since last
+      load, reload immediately — no server restart, no 200ms debounce wait.
+      This means lens_patch_node / lens_update_node changes are visible to
+      the very next tool call.
+
+    _hot_reload_enabled=True forces unconditional reload every call
+    (useful for debugging reload issues).
     """
     import importlib
+    import os
+    import sys
 
     # Fast path: known tool in static registry
     if tool_name in _HANDLER_MAP:
-        import sys
         module_name, func_name = _HANDLER_MAP[tool_name]
         if _hot_reload_enabled:
+            # Unconditional reload every call (for debugging reload issues)
             if module_name in sys.modules:
                 module = importlib.reload(sys.modules[module_name])
             else:
                 module = importlib.import_module(module_name)
         else:
-            module = importlib.import_module(module_name)
+            # Mtime-based reload: reload only when the file changed on disk.
+            # Catches lens_patch_node / lens_update_node changes immediately
+            # without waiting for the 200ms file-watcher debounce delay.
+            module = sys.modules.get(module_name)
+            if module is not None and getattr(module, "__file__", None):
+                try:
+                    current_mtime = os.path.getmtime(module.__file__)
+                    if current_mtime != _MODULE_MTIMES.get(module_name, 0.0):
+                        module = importlib.reload(module)
+                        _MODULE_MTIMES[module_name] = current_mtime
+                except OSError:
+                    pass
+            if module is None:
+                module = importlib.import_module(module_name)
+                if getattr(module, "__file__", None):
+                    try:
+                        _MODULE_MTIMES[module_name] = os.path.getmtime(module.__file__)
+                    except OSError:
+                        pass
         handler = getattr(module, func_name, None)
         if handler is not None:
             return handler  # type: ignore[return-value]
@@ -302,6 +334,40 @@ def handle_tool_call(
         return ToolResponse(success=False, error=f"Unknown tool: {tool_name}")
 
     try:
-        return handler(parameters, ctx)
+        result = handler(parameters, ctx)
     except Exception as e:
         return ToolResponse(success=False, error=str(e))
+
+    # Append graph-confidence warning when the graph is already loaded and
+    # confidence is low.  Computed only from in-memory graph — never forces a
+    # load.  Threshold 70%: below this, dead_code/impact/coverage results may
+    # contain significant false positives from unresolved dynamic calls.
+    try:
+        nx_graph = ctx._graph  # None if not yet loaded — intentional
+        if nx_graph is not None:
+            # Only count internal edges — external (stdlib/third-party) are
+            # expected to be unresolved and should not trigger warnings.
+            internal = [
+                (u, v, d) for u, v, d in nx_graph.edges(data=True)
+                if d.get("confidence") != "external"
+            ]
+            if internal:
+                resolved = sum(
+                    1 for _, _, d in internal
+                    if d.get("confidence") == "resolved"
+                )
+                unresolved = len(internal) - resolved
+                conf_pct = round(resolved / len(internal) * 100)
+                if conf_pct < 70:
+                    conf_warning = (
+                        f"⚠️ Graph confidence: {conf_pct}% "
+                        f"({unresolved}/{len(internal)} internal edges unresolved). "
+                        "Impact analysis, dead code, and coverage results may include "
+                        "false positives from dynamic calls. "
+                        "Run lens_health() for full details."
+                    )
+                    result.warnings = list(result.warnings or []) + [conf_warning]
+    except Exception:
+        pass  # Never let confidence check break tool output
+
+    return result

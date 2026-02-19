@@ -371,79 +371,18 @@ class TypeScriptParser(BaseParser):
         return stats
 
 
-class _TreeSitterVisitor:
-    """Extracts nodes and edges from a tree-sitter AST."""
+# ---------------------------------------------------------------------------
+# _TreeSitterVisitor — split into core + 2 mixins for maintainability
+# ---------------------------------------------------------------------------
 
-    def __init__(
-        self,
-        source: str,
-        source_bytes: bytes,
-        source_lines: list[str],
-        module_id: str,
-        file_path: str,
-    ) -> None:
-        self.source = source
-        self.source_bytes = source_bytes
-        self.source_lines = source_lines
-        self.module_id = module_id
-        self.file_path = file_path
-        self.nodes: list[Node] = []
-        self.edges: list[Edge] = []
-        self._scope_stack: list[str] = [module_id]
-        self._imports: dict[str, str] = {}  # local_name -> source_module
-        self._exports: list[dict[str, Any]] = []  # Tracked exports
-        self._in_export: bool = False  # Flag for export context
 
-    def get_exports(self) -> list[dict[str, Any]]:
-        """Return tracked exports for resolver registration."""
-        return self._exports
+class _ImportExportMixin:
+    """Handles import/export statement processing.
 
-    @property
-    def _current_scope(self) -> str:
-        return self._scope_stack[-1]
-
-    def _push_scope(self, name: str) -> str:
-        node_id = f"{self._current_scope}.{name}"
-        self._scope_stack.append(node_id)
-        return node_id
-
-    def _pop_scope(self) -> None:
-        if len(self._scope_stack) > 1:
-            self._scope_stack.pop()
-
-    def _get_text(self, node: Any) -> str:  # type: ignore
-        """Get the text content of a node."""
-        raw = self.source_bytes[node.start_byte : node.end_byte]
-        return raw.decode("utf-8", errors="replace")
-
-    def _get_source_segment(self, start_line: int, end_line: int) -> str:
-        """Extract source lines (1-based)."""
-        return "\n".join(self.source_lines[start_line - 1 : end_line])
-
-    def visit(self, node: Any) -> None:  # type: ignore
-        """Visit a node and its children."""
-        method_name = f"visit_{node.type}"
-        visitor = getattr(self, method_name, None)
-
-        if visitor:
-            visitor(node)
-        else:
-            # Visit children for unhandled node types
-            for child in node.children:
-                self.visit(child)
-
-    def _register_export(
-        self, name: str, node_id: str, is_default: bool = False
-    ) -> None:
-        """Register an export for resolver tracking."""
-        self._exports.append({
-            "name": name,
-            "node_id": node_id,
-            "is_default": is_default,
-            "is_type": False,
-        })
-
-    # === Import handling ===
+    Mixin for _TreeSitterVisitor — relies on self.module_id, self._imports,
+    self._in_export, self.edges, self._get_text(), self._register_export(),
+    self.visit(), self._extract_import_names() being available.
+    """
 
     def visit_import_statement(self, node: Any) -> None:  # type: ignore
         """Handle: import x from 'module'"""
@@ -566,6 +505,14 @@ class _TreeSitterVisitor:
                         name = self._get_text(part)
                         self._imports[name] = source
 
+
+class _DeclarationMixin:
+    """Handles function, variable, class, and JSX declarations.
+
+    Mixin for _TreeSitterVisitor — relies on self attributes and core
+    methods being available from _TreeSitterVisitor.
+    """
+
     # === Function handling ===
 
     def visit_function_declaration(self, node: Any) -> None:  # type: ignore
@@ -672,7 +619,7 @@ class _TreeSitterVisitor:
         async_prefix = "async " if self._is_async(node) else ""
         return f"{async_prefix}function {name}({', '.join(params)})"
 
-    # === Arrow functions ===
+    # === Arrow functions / variables ===
 
     def visit_lexical_declaration(self, node: Any) -> None:  # type: ignore
         """Handle: const name = () => { ... }"""
@@ -881,6 +828,140 @@ class _TreeSitterVisitor:
             self._extract_calls(value, node_id)
             self._pop_scope()
 
+    # === JSX handling ===
+
+    def visit_jsx_element(self, node: Any) -> None:  # type: ignore
+        """Handle JSX elements as component calls."""
+        for child in node.children:
+            if child.type in ("jsx_opening_element", "jsx_self_closing_element"):
+                for part in child.children:
+                    if part.type == "identifier":
+                        component_name = self._get_text(part)
+                        # PascalCase = custom component, lowercase = HTML
+                        if component_name and component_name[0].isupper():
+                            target = self._imports.get(component_name, component_name)
+                            self.edges.append(
+                                Edge(
+                                    id=_edge_id(),
+                                    from_node=self._current_scope,
+                                    to_node=target,
+                                    type=EdgeType.CALLS,
+                                    line_number=child.start_point[0] + 1,
+                                    confidence=EdgeConfidence.INFERRED,
+                                    source=EdgeSource.STATIC,
+                                    metadata={
+                                        "jsx": True,
+                                        "column": part.start_point[1],
+                                        "file": self.file_path,
+                                    },
+                                )
+                            )
+            self.visit(child)
+
+    def visit_jsx_self_closing_element(
+        self, node: Any  # type: ignore
+    ) -> None:
+        """Handle: <Component />"""
+        for child in node.children:
+            if child.type == "identifier":
+                component_name = self._get_text(child)
+                if component_name and component_name[0].isupper():
+                    target = self._imports.get(component_name, component_name)
+                    self.edges.append(
+                        Edge(
+                            id=_edge_id(),
+                            from_node=self._current_scope,
+                            to_node=target,
+                            type=EdgeType.CALLS,
+                            line_number=node.start_point[0] + 1,
+                            confidence=EdgeConfidence.INFERRED,
+                            source=EdgeSource.STATIC,
+                            metadata={
+                                "jsx": True,
+                                "column": child.start_point[1],
+                                "file": self.file_path,
+                            },
+                        )
+                    )
+
+
+class _TreeSitterVisitor(_ImportExportMixin, _DeclarationMixin):
+    """Extracts nodes and edges from a tree-sitter AST.
+
+    Core visitor with scope management, text utilities, call extraction,
+    and export tracking. Declaration and import/export handling are in
+    _DeclarationMixin and _ImportExportMixin respectively.
+    """
+
+    def __init__(
+        self,
+        source: str,
+        source_bytes: bytes,
+        source_lines: list[str],
+        module_id: str,
+        file_path: str,
+    ) -> None:
+        self.source = source
+        self.source_bytes = source_bytes
+        self.source_lines = source_lines
+        self.module_id = module_id
+        self.file_path = file_path
+        self.nodes: list[Node] = []
+        self.edges: list[Edge] = []
+        self._scope_stack: list[str] = [module_id]
+        self._imports: dict[str, str] = {}  # local_name -> source_module
+        self._exports: list[dict[str, Any]] = []  # Tracked exports
+        self._in_export: bool = False  # Flag for export context
+
+    def get_exports(self) -> list[dict[str, Any]]:
+        """Return tracked exports for resolver registration."""
+        return self._exports
+
+    @property
+    def _current_scope(self) -> str:
+        return self._scope_stack[-1]
+
+    def _push_scope(self, name: str) -> str:
+        node_id = f"{self._current_scope}.{name}"
+        self._scope_stack.append(node_id)
+        return node_id
+
+    def _pop_scope(self) -> None:
+        if len(self._scope_stack) > 1:
+            self._scope_stack.pop()
+
+    def _get_text(self, node: Any) -> str:  # type: ignore
+        """Get the text content of a node."""
+        raw = self.source_bytes[node.start_byte : node.end_byte]
+        return raw.decode("utf-8", errors="replace")
+
+    def _get_source_segment(self, start_line: int, end_line: int) -> str:
+        """Extract source lines (1-based)."""
+        return "\n".join(self.source_lines[start_line - 1 : end_line])
+
+    def visit(self, node: Any) -> None:  # type: ignore
+        """Visit a node and its children."""
+        method_name = f"visit_{node.type}"
+        visitor = getattr(self, method_name, None)
+
+        if visitor:
+            visitor(node)
+        else:
+            # Visit children for unhandled node types
+            for child in node.children:
+                self.visit(child)
+
+    def _register_export(
+        self, name: str, node_id: str, is_default: bool = False
+    ) -> None:
+        """Register an export for resolver tracking."""
+        self._exports.append({
+            "name": name,
+            "node_id": node_id,
+            "is_default": is_default,
+            "is_type": False,
+        })
+
     # === Call extraction ===
 
     def _extract_calls(
@@ -958,59 +1039,3 @@ class _TreeSitterVisitor:
 
         collect(node)
         return ".".join(parts)
-
-    # === JSX handling ===
-
-    def visit_jsx_element(self, node: Any) -> None:  # type: ignore
-        """Handle JSX elements as component calls."""
-        for child in node.children:
-            if child.type in ("jsx_opening_element", "jsx_self_closing_element"):
-                for part in child.children:
-                    if part.type == "identifier":
-                        component_name = self._get_text(part)
-                        # PascalCase = custom component, lowercase = HTML
-                        if component_name and component_name[0].isupper():
-                            target = self._imports.get(component_name, component_name)
-                            self.edges.append(
-                                Edge(
-                                    id=_edge_id(),
-                                    from_node=self._current_scope,
-                                    to_node=target,
-                                    type=EdgeType.CALLS,
-                                    line_number=child.start_point[0] + 1,
-                                    confidence=EdgeConfidence.INFERRED,
-                                    source=EdgeSource.STATIC,
-                                    metadata={
-                                        "jsx": True,
-                                        "column": part.start_point[1],
-                                        "file": self.file_path,
-                                    },
-                                )
-                            )
-            self.visit(child)
-
-    def visit_jsx_self_closing_element(
-        self, node: Any  # type: ignore
-    ) -> None:
-        """Handle: <Component />"""
-        for child in node.children:
-            if child.type == "identifier":
-                component_name = self._get_text(child)
-                if component_name and component_name[0].isupper():
-                    target = self._imports.get(component_name, component_name)
-                    self.edges.append(
-                        Edge(
-                            id=_edge_id(),
-                            from_node=self._current_scope,
-                            to_node=target,
-                            type=EdgeType.CALLS,
-                            line_number=node.start_point[0] + 1,
-                            confidence=EdgeConfidence.INFERRED,
-                            source=EdgeSource.STATIC,
-                            metadata={
-                                "jsx": True,
-                                "column": child.start_point[1],
-                                "file": self.file_path,
-                            },
-                        )
-                    )

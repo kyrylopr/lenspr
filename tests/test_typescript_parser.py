@@ -353,6 +353,80 @@ class TestMultiParser:
         assert ".tsx" in extensions
 
 
+class TestEvalProjectBaseline:
+    """Behavioral regression: parse the eval test project and verify counts.
+
+    Baseline captured 2026-02-19 after _TreeSitterVisitor refactor:
+    10 TS/TSX files → 43 nodes, 56 edges.
+    """
+
+    EVAL_ROOT = Path("eval/test_projects/with_lenspr/taskflow")
+
+    @pytest.fixture
+    def eval_result(self, parser):
+        if not self.EVAL_ROOT.exists():
+            pytest.skip("eval test project not present")
+        ts_files = sorted(self.EVAL_ROOT.rglob("*.ts")) + sorted(
+            self.EVAL_ROOT.rglob("*.tsx")
+        )
+        all_nodes, all_edges = [], []
+        for f in ts_files:
+            nodes, edges = parser.parse_file(f, self.EVAL_ROOT)
+            all_nodes.extend(nodes)
+            all_edges.extend(edges)
+        return all_nodes, all_edges
+
+    def test_total_file_count(self, parser):
+        if not self.EVAL_ROOT.exists():
+            pytest.skip("eval test project not present")
+        ts_files = sorted(self.EVAL_ROOT.rglob("*.ts")) + sorted(
+            self.EVAL_ROOT.rglob("*.tsx")
+        )
+        assert len(ts_files) == 10
+
+    def test_total_node_count(self, eval_result):
+        nodes, _ = eval_result
+        assert len(nodes) == 43, f"Expected 43 nodes, got {len(nodes)}"
+
+    def test_total_edge_count(self, eval_result):
+        _, edges = eval_result
+        assert len(edges) == 56, f"Expected 56 edges, got {len(edges)}"
+
+    def test_auth_api_nodes(self, eval_result):
+        """frontend/api/auth.ts should produce 7 nodes: module + class + 5 methods."""
+        nodes, _ = eval_result
+        auth_nodes = [n for n in nodes if n.file_path == "frontend/api/auth.ts"]
+        assert len(auth_nodes) == 7, (
+            f"Expected 7 nodes in auth.ts, got {len(auth_nodes)}: "
+            f"{[n.name for n in auth_nodes]}"
+        )
+        assert any(n.name == "AuthApi" and n.type.value == "class" for n in auth_nodes)
+
+    def test_use_auth_hook_nodes(self, eval_result):
+        """frontend/hooks/useAuth.ts should produce 5 nodes: module + useAuth + 3 nested."""
+        nodes, _ = eval_result
+        hook_nodes = [n for n in nodes if n.file_path == "frontend/hooks/useAuth.ts"]
+        assert len(hook_nodes) == 5, (
+            f"Expected 5 nodes in useAuth.ts, got {len(hook_nodes)}: "
+            f"{[n.name for n in hook_nodes]}"
+        )
+        names = {n.name for n in hook_nodes}
+        assert {"useAuth", "login", "logout", "getUser"} <= names
+
+    def test_task_card_component(self, eval_result):
+        """frontend/components/TaskCard.tsx should produce 3 nodes."""
+        nodes, _ = eval_result
+        card_nodes = [
+            n for n in nodes if n.file_path == "frontend/components/TaskCard.tsx"
+        ]
+        assert len(card_nodes) == 3
+        func_nodes = [
+            n for n in card_nodes
+            if n.name == "TaskCard" and n.type.value == "function"
+        ]
+        assert len(func_nodes) == 1
+
+
 class TestErrorTolerance:
     """Test that parser handles errors gracefully."""
 

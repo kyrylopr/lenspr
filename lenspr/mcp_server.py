@@ -604,17 +604,25 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
         return _tool_result("lens_diff", {})
 
     @mcp.tool()
-    def lens_batch(updates: list[dict]) -> str:
-        """Apply multiple node updates atomically with a single reparse.
+    def lens_batch(
+        updates: list[dict],
+        verify_tests: bool = False,
+        timeout: int = 120,
+    ) -> str:
+        """Apply multiple node updates atomically with multi-file rollback.
 
-        All changes are validated first. If any validation fails, nothing is applied.
-        On patch error, all changes are rolled back.
+        All changes are validated first. If any step fails (patching, graph
+        sync, or test verification), ALL files are restored.
 
         Args:
             updates: List of {node_id, new_source} pairs to apply.
+            verify_tests: Run tests before/after; rollback on regressions.
+            timeout: Max seconds for test runs. Default: 120.
         """
-        result = lenspr.handle_tool("lens_batch", {"updates": updates})
-        return json.dumps(result, indent=2)
+        params: dict = {"updates": updates, "timeout": timeout}
+        if verify_tests:
+            params["verify_tests"] = True
+        return _tool_result("lens_batch", params)
 
     @mcp.tool()
     def lens_health() -> str:
@@ -976,6 +984,20 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
             limit: Max recent changes to include. Default: 10.
         """
         return _tool_result("lens_session_handoff", {"limit": limit})
+
+    @mcp.tool()
+    def lens_resume() -> str:
+        """Reconstruct previous session context from the auto-generated action log.
+
+        Every successful lens_update_node / lens_patch_node / lens_add_node /
+        lens_delete_node call writes a structured entry to the session log
+        automatically. Call this at the start of a new session to understand
+        what changed in the last session and why — no manual handoff needed.
+
+        Returns a formatted markdown summary of all logged actions plus any
+        user-written session notes.
+        """
+        return _tool_result("lens_resume", {})
 
     @mcp.tool()
     def lens_run_tests(
