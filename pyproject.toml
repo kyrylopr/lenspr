@@ -37,6 +37,7 @@ typescript = [
 ]
 mcp = [
     "mcp>=1.0",
+    "pytest-cov>=4.0",
 ]
 watch = [
     "watchdog>=3.0",
