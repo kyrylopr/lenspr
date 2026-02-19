@@ -268,6 +268,91 @@ class TestLazyImports:
             )
 
 
+class TestSelfMethodResolution:
+    """self.method() → ClassName.method() edge resolution."""
+
+    def _parse_source(self, source, module_id="mod", file_path="mod.py"):
+        import ast
+        from lenspr.parsers.python_parser import CodeGraphVisitor
+
+        visitor = CodeGraphVisitor(source.splitlines(), module_id, file_path)
+        visitor.visit(ast.parse(source))
+        return [e for e in visitor.edges if e.type == EdgeType.CALLS]
+
+    def test_self_method_creates_class_edge(self):
+        """self.method_b() inside MyClass.method_a → edge to mod.MyClass.method_b"""
+        edges = self._parse_source(
+            "class MyClass:\n"
+            "    def method_a(self):\n"
+            "        self.method_b()\n"
+            "    def method_b(self):\n"
+            "        pass\n"
+        )
+        targets = [e.to_node for e in edges]
+        assert "mod.MyClass.method_b" in targets
+
+    def test_cls_method_creates_class_edge(self):
+        """cls.create() inside MyClass.from_config → edge to mod.MyClass.create"""
+        edges = self._parse_source(
+            "class MyClass:\n"
+            "    @classmethod\n"
+            "    def from_config(cls, cfg):\n"
+            "        return cls.create(cfg)\n"
+            "    @classmethod\n"
+            "    def create(cls, cfg):\n"
+            "        pass\n"
+        )
+        targets = [e.to_node for e in edges]
+        assert "mod.MyClass.create" in targets
+
+    def test_self_in_nested_class(self):
+        """self.y() inside Outer.Inner.x → edge to mod.Outer.Inner.y"""
+        edges = self._parse_source(
+            "class Outer:\n"
+            "    class Inner:\n"
+            "        def x(self):\n"
+            "            self.y()\n"
+            "        def y(self):\n"
+            "            pass\n"
+        )
+        targets = [e.to_node for e in edges]
+        assert "mod.Outer.Inner.y" in targets
+
+    def test_non_self_attribute_unchanged(self):
+        """obj.method() — not self, stays as-is for import table / jedi."""
+        edges = self._parse_source(
+            "class MyClass:\n"
+            "    def method_a(self):\n"
+            "        obj.do_something()\n"
+        )
+        targets = [e.to_node for e in edges]
+        # Should NOT be rewritten to mod.MyClass.do_something
+        assert all("MyClass.do_something" not in t for t in targets)
+
+    def test_self_private_method(self):
+        """self._private() inside class → edge to class._private."""
+        edges = self._parse_source(
+            "class MyClass:\n"
+            "    def public(self):\n"
+            "        self._private()\n"
+            "    def _private(self):\n"
+            "        pass\n"
+        )
+        targets = [e.to_node for e in edges]
+        assert "mod.MyClass._private" in targets
+
+    def test_self_outside_class_not_rewritten(self):
+        """self.x() outside any class → stays as-is (edge case, bad code)."""
+        edges = self._parse_source(
+            "def standalone(self):\n"
+            "    self.x()\n"
+        )
+        targets = [e.to_node for e in edges]
+        # No class context → should NOT be rewritten
+        assert all("MyClass" not in t for t in targets)
+        assert any("self.x" in t for t in targets)
+
+
 def _make_node(node_id, name=None):
     """Helper to create a minimal Node for normalization tests."""
     return Node(

@@ -36,7 +36,7 @@ class LensContext:
 
     # Increment when parser changes affect edge generation (e.g. jedi resolver fixes).
     # On mismatch with config.json, ensure_synced() auto-triggers a full resync.
-    PARSER_VERSION = "1"
+    PARSER_VERSION = "2"
 
     def __init__(self, project_root: Path, lens_dir: Path | None = None) -> None:
         self.project_root = project_root.resolve()

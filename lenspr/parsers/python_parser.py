@@ -508,6 +508,14 @@ class CodeGraphVisitor(ast.NodeVisitor):
             if not call_name:
                 continue
 
+            # Resolve self.method() / cls.method() → ClassName.method()
+            # using the class context already tracked by _class_stack.
+            if self._class_stack and call_name:
+                if call_name.startswith("self."):
+                    call_name = f"{self._class_stack[-1]}.{call_name[5:]}"
+                elif call_name.startswith("cls."):
+                    call_name = f"{self._class_stack[-1]}.{call_name[4:]}"
+
             # Get column offset from the call's func node for precise jedi resolution
             col_offset = getattr(node.func, "col_offset", None)
 
@@ -828,14 +836,14 @@ class PythonParser(BaseParser):
                 resolved_id = None
                 if names:
                     d = names[0]
-                    # If jedi resolved to a module import (not a function), and we have
-                    # a dotted target, try resolving at the attribute position
-                    is_module_with_attr = (
-                        d.type == "module"
-                        and "." in edge.to_node
+                    # If jedi resolved to the receiver (module, self param, variable)
+                    # rather than the attribute, try resolving at the attribute position.
+                    needs_attr_resolution = (
+                        "." in edge.to_node
                         and edge.line_number <= len(source_lines)
+                        and d.type in ("module", "param", "statement")
                     )
-                    if is_module_with_attr:
+                    if needs_attr_resolution:
                         line = source_lines[edge.line_number - 1]
                         # Find the method/attribute name in the line
                         last_part = edge.to_node.split(".")[-1]
