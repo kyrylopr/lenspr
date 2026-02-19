@@ -21,12 +21,14 @@ def record_change(
     description: str,
     db_path: Path,
     reasoning: str = "",
+    file_path: str = "",
 ) -> int:
     """
     Record a change to history.db.
 
     Args:
         reasoning: Why this change was made (optional but recommended).
+        file_path: Relative file path (stored so deleted nodes remain traceable).
 
     Returns the change ID.
     """
@@ -34,17 +36,20 @@ def record_change(
 
     conn = sqlite3.connect(str(db_path))
     try:
-        # Auto-migrate: ensure reasoning column exists (added in a later version)
+        # Auto-migrate: ensure columns added in later versions exist
         cols = {row[1] for row in conn.execute("PRAGMA table_info(changes)")}
         if "reasoning" not in cols:
             conn.execute("ALTER TABLE changes ADD COLUMN reasoning TEXT NOT NULL DEFAULT ''")
+            conn.commit()
+        if "file_path" not in cols:
+            conn.execute("ALTER TABLE changes ADD COLUMN file_path TEXT NOT NULL DEFAULT ''")
             conn.commit()
 
         cursor = conn.execute(
             """INSERT INTO changes
             (timestamp, node_id, action, old_source, new_source,
-             old_hash, new_hash, affected_nodes, description, reasoning)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+             old_hash, new_hash, affected_nodes, description, reasoning, file_path)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 timestamp,
                 node_id,
@@ -56,6 +61,7 @@ def record_change(
                 json.dumps(affected_nodes),
                 description,
                 reasoning,
+                file_path,
             ),
         )
         conn.commit()
@@ -109,6 +115,7 @@ def get_history(
                 affected_nodes=json.loads(row["affected_nodes"]),
                 description=row["description"],
                 reasoning=row["reasoning"] if "reasoning" in row.keys() else "",
+                file_path=row["file_path"] if "file_path" in row.keys() else "",
             )
             for row in rows
         ]

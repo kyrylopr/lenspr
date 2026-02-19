@@ -152,6 +152,7 @@ def handle_update_node(params: dict, ctx: LensContext) -> ToolResponse:
         description=f"Updated {node.name}",
         db_path=ctx.history_db,
         reasoning=reasoning,
+        file_path=node.file_path,
     )
 
     # Synchronous hot-reload: if a lenspr module file was just patched,
@@ -303,6 +304,25 @@ def handle_add_node(params: dict, ctx: LensContext) -> ToolResponse:
         )
 
     reasoning = params.get("reasoning", "")
+
+    # Record in history.db (was previously missing — only session log was written)
+    from lenspr.tracker import record_change
+
+    new_hash = hashlib.sha256(source_code.encode()).hexdigest()
+    record_change(
+        node_id=params["file_path"],
+        action="created",
+        old_source=None,
+        new_source=source_code,
+        old_hash="",
+        new_hash=new_hash,
+        affected_nodes=[],
+        description=f"Added code to {params['file_path']}",
+        db_path=ctx.history_db,
+        reasoning=reasoning,
+        file_path=params["file_path"],
+    )
+
     _log_modification(
         action="added",
         node_id=params["file_path"],
@@ -359,6 +379,7 @@ def handle_delete_node(params: dict, ctx: LensContext) -> ToolResponse:
         affected_nodes=[],
         description=f"Deleted {node.name}",
         db_path=ctx.history_db,
+        file_path=node.file_path,
     )
 
     database.delete_node(node_id, ctx.graph_db)
@@ -456,6 +477,32 @@ def handle_rename(params: dict, ctx: LensContext) -> ToolResponse:
     # Reparse all modified files
     for f in files_modified:
         ctx.reparse_file(ctx.project_root / f)
+
+    # Record in history.db
+    from lenspr.tracker import record_change
+
+    record_change(
+        node_id=node_id,
+        action="renamed",
+        old_source=None,
+        new_source=None,
+        old_hash="",
+        new_hash="",
+        affected_nodes=list(files_modified),
+        description=f"Renamed {old_name} → {new_name}",
+        db_path=ctx.history_db,
+        reasoning=params.get("reasoning", ""),
+        file_path=node.file_path,
+    )
+
+    _log_modification(
+        action="renamed",
+        node_id=node_id,
+        file_path=node.file_path,
+        reasoning=params.get("reasoning", ""),
+        impact_summary=f"{len(files_modified)} file(s) modified",
+        ctx=ctx,
+    )
 
     return ToolResponse(
         success=True,

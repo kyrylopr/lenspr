@@ -939,4 +939,93 @@ LENS_TOOLS: list[dict[str, Any]] = [
             "properties": {},
         },
     },
+    # -- Temporal tools --
+    {
+        "name": "lens_hotspots",
+        "description": (
+            "Find code hotspots — functions that change most frequently. "
+            "Primary source: LensPR history (git-independent). "
+            "Falls back to git when no LensPR history exists."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer",
+                    "description": "Max hotspots to return. Default: 20.",
+                },
+                "since": {
+                    "type": "string",
+                    "description": (
+                        "Time filter: '30d', '7d', '90d', or ISO date. "
+                        "Default: all time."
+                    ),
+                },
+                "file_path": {
+                    "type": "string",
+                    "description": "Filter to files matching this path substring.",
+                },
+            },
+        },
+    },
+    {
+        "name": "lens_node_timeline",
+        "description": (
+            "Show unified timeline of changes for a specific node. "
+            "Merges LensPR history (with reasoning) and git commits (with author)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "node_id": {
+                    "type": "string",
+                    "description": "The node to get timeline for.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max events to return. Default: 20.",
+                },
+            },
+            "required": ["node_id"],
+        },
+    },
+    # -- Runtime tracing tools --
+    {
+        "name": "lens_trace",
+        "description": (
+            "Run tests with runtime call tracing and merge edges into the graph. "
+            "Uses sys.monitoring (Python 3.12+, ~5% overhead) to observe actual "
+            "caller→callee relationships. Resolves instance method dispatch "
+            "(self.method()) and dynamic dispatch (getattr, handler maps)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Specific test file or directory.",
+                },
+                "filter_k": {
+                    "type": "string",
+                    "description": "pytest -k expression to filter tests.",
+                },
+                "timeout": {
+                    "type": "integer",
+                    "description": "Max seconds. Default: 120.",
+                },
+            },
+        },
+    },
+    {
+        "name": "lens_trace_stats",
+        "description": (
+            "Show runtime tracing statistics. Reports edge sources: "
+            "static-only, runtime-only, confirmed by both. "
+            "Shows runtime confirmation rate and top runtime-discovered nodes."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
 ]

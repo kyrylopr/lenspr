@@ -361,6 +361,7 @@ class Change:
     affected_nodes: list[str] = field(default_factory=list)
     description: str = ""
     reasoning: str = ""  # Why this change was made
+    file_path: str = ""  # Relative file path (for traceability after deletion)
 
 
 @dataclass

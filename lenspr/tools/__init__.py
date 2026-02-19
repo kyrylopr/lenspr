@@ -79,6 +79,14 @@ from lenspr.tools.resolvers import (
     handle_db_map,
     handle_env_map,
 )
+from lenspr.tools.temporal import (
+    handle_hotspots,
+    handle_node_timeline,
+)
+from lenspr.tools.trace import (
+    handle_trace,
+    handle_trace_stats,
+)
 from lenspr.tools.schemas import LENS_TOOLS
 
 if TYPE_CHECKING:
@@ -153,6 +161,12 @@ __all__ = [
     "handle_api_map",
     "handle_db_map",
     "handle_env_map",
+    # Temporal
+    "handle_hotspots",
+    "handle_node_timeline",
+    # Trace
+    "handle_trace",
+    "handle_trace_stats",
 ]
 
 
@@ -220,6 +234,12 @@ _HANDLER_MAP: dict[str, tuple[str, str]] = {
     "lens_api_map": ("lenspr.tools.resolvers", "handle_api_map"),
     "lens_db_map": ("lenspr.tools.resolvers", "handle_db_map"),
     "lens_env_map": ("lenspr.tools.resolvers", "handle_env_map"),
+    # Temporal
+    "lens_hotspots": ("lenspr.tools.temporal", "handle_hotspots"),
+    "lens_node_timeline": ("lenspr.tools.temporal", "handle_node_timeline"),
+    # Trace (runtime)
+    "lens_trace": ("lenspr.tools.trace", "handle_trace"),
+    "lens_trace_stats": ("lenspr.tools.trace", "handle_trace_stats"),
 }
 
 # Hot-reload mode: when True, handlers are unconditionally reloaded each call.
@@ -324,6 +344,8 @@ def _get_handler(
         "lenspr.tools.helpers",
         "lenspr.tools.patterns",
         "lenspr.tools.resolvers",
+        "lenspr.tools.temporal",
+        "lenspr.tools.trace",
     ]
     for module_name in _DISCOVERY_ORDER:
         try:

@@ -99,6 +99,8 @@ _LENSPR_MODULES = [
     "lenspr.tools.testing",
     "lenspr.tools.patterns",
     "lenspr.tools.resolvers",
+    "lenspr.tools.temporal",
+    "lenspr.tools.trace",
     "lenspr.tools",
     "lenspr.claude_tools",
     "lenspr.context",
@@ -1217,6 +1219,84 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
         Highlights undefined env vars (used but not defined anywhere).
         """
         return _tool_result("lens_env_map", {})
+
+    # -- Temporal Tools --
+
+    @mcp.tool()
+    def lens_hotspots(
+        limit: int = 20,
+        since: str | None = None,
+        file_path: str | None = None,
+    ) -> str:
+        """Find code hotspots — functions that change most frequently.
+
+        Primary source: LensPR history (git-independent, works without git).
+        Falls back to git log when no LensPR history exists.
+
+        Args:
+            limit: Max hotspots to return. Default: 20.
+            since: Time filter: "30d", "7d", "90d", or ISO date. Default: all time.
+            file_path: Filter to files matching this path substring.
+        """
+        params: dict = {"limit": limit}
+        if since is not None:
+            params["since"] = since
+        if file_path is not None:
+            params["file_path"] = file_path
+        return _tool_result("lens_hotspots", params)
+
+    @mcp.tool()
+    def lens_node_timeline(node_id: str, limit: int = 20) -> str:
+        """Show unified timeline of changes for a specific node.
+
+        Merges LensPR history (with reasoning) and git commits (with author)
+        into a single chronological view.
+
+        Args:
+            node_id: The node to get timeline for.
+            limit: Max events to return. Default: 20.
+        """
+        return _tool_result("lens_node_timeline", {
+            "node_id": node_id, "limit": limit,
+        })
+
+    # -- Runtime Tracing Tools --
+
+    @mcp.tool()
+    def lens_trace(
+        path: str = "",
+        filter_k: str = "",
+        timeout: int = 120,
+    ) -> str:
+        """Run tests with runtime call tracing and merge edges into the graph.
+
+        Uses sys.monitoring (Python 3.12+, ~5% overhead) to observe actual
+        caller→callee relationships during test execution. Discovered edges
+        are merged into the static graph as RUNTIME or BOTH source.
+
+        This resolves the #1 graph limitation: instance method dispatch
+        (self.method() calls) and dynamic dispatch (getattr, handler maps).
+
+        Args:
+            path: Specific test file or directory. Default: all tests.
+            filter_k: pytest -k expression to filter tests.
+            timeout: Max seconds. Default: 120.
+        """
+        params: dict = {"timeout": timeout}
+        if path:
+            params["path"] = path
+        if filter_k:
+            params["filter_k"] = filter_k
+        return _tool_result("lens_trace", params)
+
+    @mcp.tool()
+    def lens_trace_stats() -> str:
+        """Show runtime tracing statistics from the current graph.
+
+        Reports how many edges are static-only, runtime-only, or confirmed
+        by both static analysis and runtime observation.
+        """
+        return _tool_result("lens_trace_stats", {})
 
     logger.info("Starting LensPR MCP server for: %s", project_path)
     mcp.run(transport="stdio")

@@ -33,6 +33,11 @@ def handle_run_tests(params: dict, ctx: LensContext) -> ToolResponse:
     except ImportError:
         pass
 
+    # Auto-enable runtime tracing when Python 3.12+ is available
+    import sys as _sys
+    if _sys.version_info >= (3, 12):
+        cmd.extend(["-p", "lenspr.pytest_tracer"])
+
     if path:
         cmd.append(path)
     if filter_k:

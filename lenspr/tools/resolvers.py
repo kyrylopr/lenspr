@@ -98,26 +98,26 @@ def handle_db_map(params: dict, ctx: LensContext) -> ToolResponse:
         t = op.table_name
         if t not in table_usage:
             table_usage[t] = {"reads": [], "writes": []}
-        key = "writes" if op.operation.upper() in ("INSERT", "UPDATE", "DELETE", "CREATE") else "reads"
-        table_usage[t][key].append(op.node_id)
+        key = "writes" if op.op_type.upper() in ("INSERT", "UPDATE", "DELETE", "CREATE") else "reads"
+        table_usage[t][key].append(op.caller_node_id)
 
     return ToolResponse(
         success=True,
         data={
             "tables": [
                 {
-                    "name": t.table_name,
-                    "node_id": t.node_id,
+                    "name": t.name,
+                    "node_id": t.model_node_id,
                     "file": t.file_path,
-                    "source": t.source,
+                    "line": t.line,
                 }
                 for t in tables
             ],
             "operations": [
                 {
                     "table": op.table_name,
-                    "operation": op.operation,
-                    "node_id": op.node_id,
+                    "operation": op.op_type,
+                    "node_id": op.caller_node_id,
                     "file": op.file_path,
                     "line": op.line,
                 }

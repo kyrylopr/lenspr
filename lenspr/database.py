@@ -175,7 +175,10 @@ def save_graph(nodes: list[Node], edges: list[Edge], db_path: Path) -> None:
     """
     try:
         with _connect(db_path) as conn:
-            conn.execute("DELETE FROM edges")
+            # Preserve runtime-only edges across syncs.
+            # Static/both edges are re-created from the fresh parse.
+            # Runtime edges (source='runtime') are only produced by the tracer.
+            conn.execute("DELETE FROM edges WHERE source != 'runtime'")
             conn.execute("DELETE FROM nodes")
 
             conn.executemany(
@@ -202,6 +205,78 @@ def save_graph(nodes: list[Node], edges: list[Edge], db_path: Path) -> None:
     except Exception as e:
         logger.error("save_graph failed for %s: %s", db_path, e)
         raise
+
+
+def save_runtime_edges(
+    edges: list[tuple[str, str, int]], db_path: Path,
+) -> dict[str, int]:
+    """Upsert runtime edges without wiping static edges.
+
+    For each runtime edge:
+    - If a matching static edge exists (same from_node, to_node) → upgrade source to 'both'
+    - If no matching edge → insert with source='runtime', confidence='resolved'
+
+    Args:
+        edges: List of (from_node_id, to_node_id, call_count) tuples.
+        db_path: Path to graph.db.
+
+    Returns:
+        Dict with counts: {"new_runtime": N, "upgraded_to_both": N, "total": N}
+    """
+    import json
+    import uuid
+
+    new_count = 0
+    upgraded_count = 0
+
+    with _connect(db_path) as conn:
+        for from_node, to_node, call_count in edges:
+            # Check if a static edge already exists
+            existing = conn.execute(
+                "SELECT id, source FROM edges WHERE from_node = ? AND to_node = ? LIMIT 1",
+                (from_node, to_node),
+            ).fetchone()
+
+            if existing:
+                eid, source = existing
+                if source == "static":
+                    # Upgrade static → both
+                    conn.execute(
+                        "UPDATE edges SET source = 'both', "
+                        "metadata = json_set(COALESCE(metadata, '{}'), '$.runtime_calls', ?) "
+                        "WHERE id = ?",
+                        (call_count, eid),
+                    )
+                    upgraded_count += 1
+                elif source == "runtime":
+                    # Update call count
+                    conn.execute(
+                        "UPDATE edges SET "
+                        "metadata = json_set(COALESCE(metadata, '{}'), '$.runtime_calls', ?) "
+                        "WHERE id = ?",
+                        (call_count, eid),
+                    )
+            else:
+                # Insert new runtime-only edge
+                edge_id = f"rt_{uuid.uuid4().hex[:12]}"
+                conn.execute(
+                    """INSERT INTO edges
+                    (id, from_node, to_node, type, line_number, column,
+                     confidence, source, untracked_reason, metadata)
+                    VALUES (?, ?, ?, 'calls', NULL, NULL,
+                            'resolved', 'runtime', '', ?)""",
+                    (edge_id, from_node, to_node,
+                     json.dumps({"runtime_calls": call_count})),
+                )
+                new_count += 1
+
+    total = new_count + upgraded_count
+    logger.info(
+        "save_runtime_edges: %d new, %d upgraded to 'both' (%d total)",
+        new_count, upgraded_count, total,
+    )
+    return {"new_runtime": new_count, "upgraded_to_both": upgraded_count, "total": total}
+
 
 
 def load_graph(db_path: Path) -> tuple[list[Node], list[Edge]]:
