@@ -240,8 +240,41 @@ def cmd_init(args: argparse.Namespace) -> None:
     if stats:
         print(format_stats_report(stats))
 
-    # Final summary
+    # Final summary — always show file breakdown from the graph
     g = ctx.get_graph()
+
+    from lenspr.database import load_graph
+    all_nodes, all_edges = load_graph(str(ctx.graph_db))
+
+    # Count files by category
+    files_by_lang: dict[str, set[str]] = {"Backend (Python)": set(), "Frontend (TS/JS)": set()}
+    py_exts = {".py"}
+    ts_exts = {".ts", ".tsx", ".js", ".jsx"}
+    for node in all_nodes:
+        fp = node.file_path
+        ext_lower = Path(fp).suffix.lower()
+        if ext_lower in py_exts:
+            files_by_lang["Backend (Python)"].add(fp)
+        elif ext_lower in ts_exts:
+            files_by_lang["Frontend (TS/JS)"].add(fp)
+
+    # Count total source files in project (not just parsed)
+    all_exts = py_exts | ts_exts
+    skip_dirs = {
+        "__pycache__", ".git", ".lens", ".venv", "venv", "env",
+        "node_modules", ".mypy_cache", ".pytest_cache", "dist", "build",
+    }
+    total_source = 0
+    for f in path.rglob("*"):
+        if not f.is_file():
+            continue
+        if any(p in skip_dirs for p in f.relative_to(path).parts):
+            continue
+        if f.suffix.lower() in all_exts:
+            total_source += 1
+
+    parsed_files = sum(len(s) for s in files_by_lang.values())
+
     db_size = (ctx.lens_dir / "graph.db").stat().st_size / 1024  # KB
     if db_size > 1024:
         db_size_str = f"{db_size / 1024:.1f} MB"
@@ -250,6 +283,11 @@ def cmd_init(args: argparse.Namespace) -> None:
 
     print("=" * 50)
     print("Graph created successfully!")
+    print()
+    print(f"  Files parsed:   {parsed_files} / {total_source}")
+    for lang, file_set in sorted(files_by_lang.items()):
+        if file_set:
+            print(f"    {lang}:{' ' * (20 - len(lang))}{len(file_set):>4} files")
     print()
     print(f"  Total nodes:  {g.number_of_nodes()}")
     print(f"  Total edges:  {g.number_of_edges()}")

@@ -788,3 +788,318 @@ class TestParseProjectIntegration:
 
         api_edges = [e for e in edges if e.type == EdgeType.CALLS_API]
         assert len(api_edges) == 0
+
+
+# ---------------------------------------------------------------------------
+# Tests — include_router() prefix extraction
+# ---------------------------------------------------------------------------
+
+
+class TestIncludeRouterPrefix:
+    """Test prefix extraction from FastAPI include_router() calls."""
+
+    def test_include_router_basic(self) -> None:
+        """include_router(auth_router, prefix="/api/auth") + @router.post("/login")."""
+        mapper = ApiMapper()
+        nodes = [
+            # main.py — has the include_router call and import
+            _make_node(
+                "main.block_1",
+                'from app.routers import auth\n'
+                'app.include_router(auth.router, prefix="/api/auth")',
+                file_path="main.py",
+                node_type="block",
+            ),
+            # auth.py — has the route
+            _make_node(
+                "app.routers.auth.block_1",
+                "router = APIRouter()",
+                file_path="app/routers/auth.py",
+                node_type="block",
+            ),
+            _make_node(
+                "app.routers.auth.login",
+                '@router.post("/login")\n'
+                "def login():\n"
+                "    pass",
+                file_path="app/routers/auth.py",
+            ),
+        ]
+        routes = mapper.extract_routes(nodes)
+        assert len(routes) == 1
+        assert routes[0].path == "/api/auth/login"
+        assert routes[0].handler_node_id == "app.routers.auth.login"
+
+    def test_include_router_dotted_ref(self) -> None:
+        """include_router(auth.router, prefix="/api/auth") with dotted reference."""
+        mapper = ApiMapper()
+        nodes = [
+            _make_node(
+                "main.block_1",
+                'from app.routers import auth\n'
+                'app.include_router(auth.router, prefix="/api/auth")',
+                file_path="main.py",
+                node_type="block",
+            ),
+            _make_node(
+                "app.routers.auth.signup",
+                '@router.post("/signup")\n'
+                "def signup():\n"
+                "    pass",
+                file_path="app/routers/auth.py",
+            ),
+        ]
+        routes = mapper.extract_routes(nodes)
+        assert len(routes) == 1
+        assert routes[0].path == "/api/auth/signup"
+
+    def test_include_router_imported_router_object(self) -> None:
+        """from app.routers.auth import router as auth_router."""
+        mapper = ApiMapper()
+        nodes = [
+            _make_node(
+                "main.block_1",
+                'from app.routers.auth import router as auth_router\n'
+                'app.include_router(auth_router, prefix="/api/auth")',
+                file_path="main.py",
+                node_type="block",
+            ),
+            _make_node(
+                "app.routers.auth.login",
+                '@router.post("/login")\n'
+                "def login():\n"
+                "    pass",
+                file_path="app/routers/auth.py",
+            ),
+        ]
+        routes = mapper.extract_routes(nodes)
+        assert len(routes) == 1
+        assert routes[0].path == "/api/auth/login"
+
+    def test_multiple_include_routers(self) -> None:
+        """Multiple include_router calls with different prefixes."""
+        mapper = ApiMapper()
+        nodes = [
+            _make_node(
+                "main.block_1",
+                'from app.routers import auth, chat\n'
+                'app.include_router(auth.router, prefix="/api/auth")\n'
+                'app.include_router(chat.router, prefix="/api/chat")',
+                file_path="main.py",
+                node_type="block",
+            ),
+            _make_node(
+                "app.routers.auth.login",
+                '@router.post("/login")\n'
+                "def login():\n"
+                "    pass",
+                file_path="app/routers/auth.py",
+            ),
+            _make_node(
+                "app.routers.chat.send",
+                '@router.post("/send")\n'
+                "def send():\n"
+                "    pass",
+                file_path="app/routers/chat.py",
+            ),
+        ]
+        routes = mapper.extract_routes(nodes)
+        assert len(routes) == 2
+        paths = {r.path for r in routes}
+        assert "/api/auth/login" in paths
+        assert "/api/chat/send" in paths
+
+    def test_include_router_without_prefix(self) -> None:
+        """include_router(router) without prefix= — no prefix added."""
+        mapper = ApiMapper()
+        nodes = [
+            _make_node(
+                "main.block_1",
+                'from app.routers import auth\n'
+                'app.include_router(auth.router)',
+                file_path="main.py",
+                node_type="block",
+            ),
+            _make_node(
+                "app.routers.auth.login",
+                '@router.post("/login")\n'
+                "def login():\n"
+                "    pass",
+                file_path="app/routers/auth.py",
+            ),
+        ]
+        routes = mapper.extract_routes(nodes)
+        assert len(routes) == 1
+        assert routes[0].path == "/login"
+
+    def test_both_apirouter_and_include_router_prefix(self) -> None:
+        """APIRouter(prefix="/v1") + include_router(prefix="/api") -> /api/v1."""
+        mapper = ApiMapper()
+        nodes = [
+            _make_node(
+                "main.block_1",
+                'from app.routers import auth\n'
+                'app.include_router(auth.router, prefix="/api")',
+                file_path="main.py",
+                node_type="block",
+            ),
+            _make_node(
+                "app.routers.auth.block_1",
+                'router = APIRouter(prefix="/v1")',
+                file_path="app/routers/auth.py",
+                node_type="block",
+            ),
+            _make_node(
+                "app.routers.auth.login",
+                '@router.post("/login")\n'
+                "def login():\n"
+                "    pass",
+                file_path="app/routers/auth.py",
+            ),
+        ]
+        routes = mapper.extract_routes(nodes)
+        assert len(routes) == 1
+        assert routes[0].path == "/api/v1/login"
+
+    def test_include_router_end_to_end(self) -> None:
+        """Frontend fetch matches backend route via include_router prefix."""
+        mapper = ApiMapper()
+        nodes = [
+            # Backend: main.py with include_router
+            _make_node(
+                "main.block_1",
+                'from app.routers import auth\n'
+                'app.include_router(auth.router, prefix="/api/auth")',
+                file_path="main.py",
+                node_type="block",
+            ),
+            # Backend: router file
+            _make_node(
+                "app.routers.auth.login",
+                '@router.post("/login")\n'
+                "def login():\n"
+                "    pass",
+                file_path="app/routers/auth.py",
+            ),
+            # Frontend: fetch call
+            _make_node(
+                "frontend.auth.doLogin",
+                'async function doLogin() {\n'
+                '    const res = await fetch("/api/auth/login", {\n'
+                '        method: "POST"\n'
+                "    });\n"
+                "}",
+                file_path="frontend/auth.ts",
+            ),
+        ]
+        mapper.extract_routes(nodes)
+        mapper.extract_api_calls(nodes)
+        edges = mapper.match()
+
+        assert len(edges) == 1
+        assert edges[0].from_node == "frontend.auth.doLogin"
+        assert edges[0].to_node == "app.routers.auth.login"
+        assert edges[0].type == EdgeType.CALLS_API
+
+    def test_include_router_inherits_parent_prefix(self) -> None:
+        """admin_router.include_router(sub) inherits parent's APIRouter prefix."""
+        mapper = ApiMapper()
+        nodes = [
+            # admin/__init__.py: APIRouter(prefix="/api/admin") + include_router(files_router)
+            _make_node(
+                "app.routers.admin.block_1",
+                'from app.routers.admin import files\n'
+                'admin_router = APIRouter(prefix="/api/admin")\n'
+                'admin_router.include_router(files.router)',
+                file_path="app/routers/admin/__init__.py",
+                node_type="block",
+            ),
+            # admin/files.py: router with NO prefix, just tags
+            _make_node(
+                "app.routers.admin.files.block_1",
+                'router = APIRouter(tags=["Admin - Files"])',
+                file_path="app/routers/admin/files.py",
+                node_type="block",
+            ),
+            _make_node(
+                "app.routers.admin.files.upload",
+                '@router.post("/upload")\n'
+                "def upload():\n"
+                "    pass",
+                file_path="app/routers/admin/files.py",
+            ),
+        ]
+        routes = mapper.extract_routes(nodes)
+        assert len(routes) == 1
+        assert routes[0].path == "/api/admin/upload"
+
+    def test_include_router_parent_prefix_multiple_subrouters(self) -> None:
+        """Parent prefix propagates to all included sub-routers."""
+        mapper = ApiMapper()
+        nodes = [
+            _make_node(
+                "app.routers.admin.block_1",
+                'from app.routers.admin import files, users\n'
+                'admin_router = APIRouter(prefix="/api/admin")\n'
+                'admin_router.include_router(files.router)\n'
+                'admin_router.include_router(users.router)',
+                file_path="app/routers/admin/__init__.py",
+                node_type="block",
+            ),
+            _make_node(
+                "app.routers.admin.files.upload",
+                '@router.post("/upload")\n'
+                "def upload():\n"
+                "    pass",
+                file_path="app/routers/admin/files.py",
+            ),
+            _make_node(
+                "app.routers.admin.users.list_users",
+                '@router.get("/list")\n'
+                "def list_users():\n"
+                "    pass",
+                file_path="app/routers/admin/users.py",
+            ),
+        ]
+        routes = mapper.extract_routes(nodes)
+        assert len(routes) == 2
+        paths = {r.path for r in routes}
+        assert "/api/admin/upload" in paths
+        assert "/api/admin/list" in paths
+
+    def test_include_router_parent_prefix_end_to_end(self) -> None:
+        """Frontend fetch matches backend route via inherited parent prefix."""
+        mapper = ApiMapper()
+        nodes = [
+            # Backend: admin __init__ with APIRouter prefix + include_router
+            _make_node(
+                "app.routers.admin.block_1",
+                'from app.routers.admin import users\n'
+                'admin_router = APIRouter(prefix="/api/admin")\n'
+                'admin_router.include_router(users.router)',
+                file_path="app/routers/admin/__init__.py",
+                node_type="block",
+            ),
+            _make_node(
+                "app.routers.admin.users.get_pending",
+                '@router.get("/pending-users")\n'
+                "def get_pending():\n"
+                "    pass",
+                file_path="app/routers/admin/users.py",
+            ),
+            # Frontend: fetch call
+            _make_node(
+                "frontend.admin.fetchPending",
+                'async function fetchPending() {\n'
+                '    const res = await fetch("/api/admin/pending-users");\n'
+                "}",
+                file_path="frontend/admin.ts",
+            ),
+        ]
+        mapper.extract_routes(nodes)
+        mapper.extract_api_calls(nodes)
+        edges = mapper.match()
+
+        assert len(edges) == 1
+        assert edges[0].from_node == "frontend.admin.fetchPending"
+        assert edges[0].to_node == "app.routers.admin.users.get_pending"

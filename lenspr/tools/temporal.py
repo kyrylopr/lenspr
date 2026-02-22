@@ -57,6 +57,15 @@ def handle_hotspots(params: dict, ctx: LensContext) -> ToolResponse:
     conn = sqlite3.connect(str(ctx.history_db))
     conn.row_factory = sqlite3.Row
     try:
+        # Ensure columns added in later versions exist (Phase 7 migration)
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(changes)")}
+        if "file_path" not in cols:
+            conn.execute("ALTER TABLE changes ADD COLUMN file_path TEXT NOT NULL DEFAULT ''")
+            conn.commit()
+        if "reasoning" not in cols:
+            conn.execute("ALTER TABLE changes ADD COLUMN reasoning TEXT NOT NULL DEFAULT ''")
+            conn.commit()
+
         query = "SELECT node_id, action, timestamp, file_path, reasoning FROM changes WHERE 1=1"
         qparams: list = []
 

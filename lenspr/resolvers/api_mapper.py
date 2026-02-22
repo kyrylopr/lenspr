@@ -76,6 +76,18 @@ _ROUTER_PREFIX_RE = re.compile(
     r"(?:APIRouter|Blueprint)\s*\(\s*(?:prefix\s*=\s*)?[\"']([^\"']+)[\"']",
 )
 
+# FastAPI include_router: app.include_router(auth_router, prefix="/api/auth")
+# Captures everything inside parens to handle multiline calls and kwargs in any order
+_INCLUDE_ROUTER_RE = re.compile(
+    r"""\.include_router\s*\(([^)]+)\)""",
+    re.DOTALL,
+)
+
+# prefix keyword argument: prefix="/api/auth"
+_PREFIX_KWARG_RE = re.compile(
+    r"""prefix\s*=\s*["']([^"']+)["']""",
+)
+
 # URL strings in Python: "/api/something" (inside dicts, variables, etc.)
 _PYTHON_PATH_RE = re.compile(
     r"""[\"'](/api/[a-zA-Z0-9_/{}\-]+)[\"']""",
@@ -148,7 +160,7 @@ class ApiMapper:
         # Skip test files — they contain URL string literals that produce false positives
         nodes = [n for n in nodes if not _is_test_file(n.file_path)]
 
-        # First pass: find router prefixes (skip matches inside comments)
+        # First pass (a): find router prefixes from APIRouter(prefix="...")
         prefixes: dict[str, str] = {}  # file_path → prefix
         for node in nodes:
             if not node.source_code:
@@ -158,6 +170,45 @@ class ApiMapper:
                     continue
                 prefixes[node.file_path] = match.group(1).rstrip("/")
                 break
+
+        # First pass (b): find prefixes from include_router() calls
+        # Handles two patterns:
+        # 1. app.include_router(auth_router, prefix="/api/auth")  — explicit prefix
+        # 2. parent_router.include_router(sub_router)  — inherits parent's APIRouter prefix
+        known_files = {n.file_path for n in nodes}
+        seen_includes: set[tuple[str, str]] = set()  # (file_path, router_ref) dedup
+        for node in nodes:
+            if not node.source_code:
+                continue
+            for ir_match in _INCLUDE_ROUTER_RE.finditer(node.source_code):
+                if self._is_in_comment(node.source_code, ir_match):
+                    continue
+                args_body = ir_match.group(1)
+                # First positional arg = router reference
+                first_arg = args_body.split(",")[0].strip()
+                # Dedup: module and block nodes can contain the same source
+                key = (node.file_path, first_arg)
+                if key in seen_includes:
+                    continue
+                seen_includes.add(key)
+                # Find prefix= kwarg in the include_router call
+                prefix_match = _PREFIX_KWARG_RE.search(args_body)
+                ir_prefix = prefix_match.group(1).rstrip("/") if prefix_match else ""
+                # Parent prefix: the calling file's own APIRouter(prefix=...)
+                parent_prefix = prefixes.get(node.file_path, "")
+                # Combined: parent prefix + include_router prefix
+                combined = parent_prefix + ir_prefix
+                if not combined:
+                    continue
+                # Resolve router reference to target file
+                target_file = self._resolve_router_ref(
+                    first_arg, node, nodes, known_files,
+                )
+                if not target_file:
+                    continue
+                # Apply combined prefix (wraps any existing APIRouter prefix in target)
+                existing = prefixes.get(target_file, "")
+                prefixes[target_file] = combined + existing
 
         # Build index: file_path → [function nodes sorted by start_line]
         func_index: dict[str, list[Node]] = {}
@@ -275,6 +326,115 @@ class ApiMapper:
         line_prefix = source[line_start:match.start()].lstrip()
         return line_prefix.startswith("#") or line_prefix.startswith("//")
 
+    @staticmethod
+    def _build_import_map(
+        file_path: str,
+        all_nodes: list["Node"],
+    ) -> dict[str, str]:
+        """Build local name -> module path mapping from imports in a file.
+
+        Scans block/module nodes in the same file for import statements
+        and returns a dict mapping local variable names to their module paths.
+
+        Examples:
+            from app.routers import auth       -> {"auth": "app.routers.auth"}
+            from app.routers.auth import router -> {"router": "app.routers.auth.router"}
+            import app.routers.auth as auth     -> {"auth": "app.routers.auth"}
+        """
+        import_map: dict[str, str] = {}
+
+        for node in all_nodes:
+            if node.file_path != file_path or not node.source_code:
+                continue
+
+            # from X.Y.Z import A, B as C, ...
+            for m in re.finditer(
+                r"from\s+([\w.]+)\s+import\s+([^#\n]+)", node.source_code,
+            ):
+                module = m.group(1)
+                names_str = m.group(2).strip().rstrip("\\").strip("()")
+                for part in names_str.split(","):
+                    part = part.strip().strip("()")
+                    if not part:
+                        continue
+                    if " as " in part:
+                        _original, alias = part.split(" as ", 1)
+                        import_map[alias.strip()] = module + "." + _original.strip()
+                    else:
+                        name = part.strip()
+                        if name:
+                            import_map[name] = module + "." + name
+
+            # import X.Y.Z [as alias]
+            for m in re.finditer(
+                r"^import\s+([\w.]+)(?:\s+as\s+(\w+))?",
+                node.source_code,
+                re.MULTILINE,
+            ):
+                module = m.group(1)
+                alias = m.group(2) or module.rsplit(".", 1)[-1]
+                import_map[alias] = module
+
+        return import_map
+
+    @staticmethod
+    def _resolve_router_ref(
+        ref: str,
+        source_node: "Node",
+        all_nodes: list["Node"],
+        known_files: set[str],
+    ) -> str | None:
+        """Resolve a router reference to a file path.
+
+        Handles patterns like:
+            auth.router   -> look up 'auth' in import map -> app/routers/auth.py
+            auth_router   -> look up 'auth_router' in import map -> app/routers/auth.py
+        """
+        # Strip .router / .app suffix if present (e.g., auth.router -> auth)
+        base_ref = ref.split(".")[0] if "." in ref else ref
+
+        import_map = ApiMapper._build_import_map(
+            source_node.file_path, all_nodes,
+        )
+
+        if base_ref not in import_map:
+            return None
+
+        module_path = import_map[base_ref]
+
+        # Try converting module path to file path
+        # e.g., app.routers.auth -> app/routers/auth.py
+        candidates = [
+            module_path.replace(".", "/") + ".py",
+            module_path.replace(".", "/") + "/__init__.py",
+        ]
+        # If not found, try parent module — the import might be an object,
+        # not a module.
+        # e.g., from app.routers.auth import router
+        #   -> module_path = app.routers.auth.router
+        #   -> but the file is app/routers/auth.py
+        if "." in module_path:
+            parent = module_path.rsplit(".", 1)[0]
+            candidates.extend([
+                parent.replace(".", "/") + ".py",
+                parent.replace(".", "/") + "/__init__.py",
+            ])
+
+        for candidate in candidates:
+            if candidate in known_files:
+                return candidate
+
+        # Monorepo: file paths have a package prefix (e.g., mosquito-backend/)
+        # that isn't in the Python import path. Try prepending every known
+        # top-level directory as prefix.
+        source_prefix = source_node.file_path.split("/")[0] + "/"
+        for candidate in candidates:
+            prefixed = source_prefix + candidate
+            if prefixed in known_files:
+                return prefixed
+
+        return None
+
     def extract_api_calls(self, nodes: list[Node]) -> list[ApiCallInfo]:
         """Extract frontend API calls from TypeScript/JavaScript nodes."""
         calls: list[ApiCallInfo] = []
@@ -282,10 +442,20 @@ class ApiMapper:
         # Skip test files — they contain URL string literals that produce false positives
         nodes = [n for n in nodes if not _is_test_file(n.file_path)]
 
-        for node in nodes:
+        # Process function/method nodes first (most specific caller), then
+        # module/block nodes (catch API calls in arrow fns inside object literals).
+        # Dedup by (file_path, line, path) so we don't double-count.
+        _type_priority = {"function": 0, "method": 0, "block": 1, "module": 2}
+        sorted_nodes = sorted(
+            nodes,
+            key=lambda n: _type_priority.get(n.type.value, 99),
+        )
+        seen_calls: set[tuple[str, int, str]] = set()  # (file, line, path)
+
+        for node in sorted_nodes:
             if not node.source_code:
                 continue
-            if node.type.value not in ("function", "method"):
+            if node.type.value not in _type_priority:
                 continue
 
             source = node.source_code
@@ -299,10 +469,15 @@ class ApiMapper:
                     path = match.group(1)
                     if not path.startswith("/"):
                         continue
+                    norm_path = self._normalize_path(path)
+                    call_key = (node.file_path, line_num, norm_path)
+                    if call_key in seen_calls:
+                        continue
+                    seen_calls.add(call_key)
                     method = self._extract_method_from_context(lines, i)
                     calls.append(ApiCallInfo(
                         method=method,
-                        path=self._normalize_path(path),
+                        path=norm_path,
                         caller_node_id=node.id,
                         file_path=node.file_path,
                         line=line_num,
@@ -313,10 +488,15 @@ class ApiMapper:
                     path = match.group(1)
                     if not path.startswith("/"):
                         continue
+                    norm_path = self._normalize_path(path)
+                    call_key = (node.file_path, line_num, norm_path)
+                    if call_key in seen_calls:
+                        continue
+                    seen_calls.add(call_key)
                     method = self._extract_method_from_context(lines, i)
                     calls.append(ApiCallInfo(
                         method=method,
-                        path=self._normalize_path(path),
+                        path=norm_path,
                         caller_node_id=node.id,
                         file_path=node.file_path,
                         line=line_num,
@@ -328,9 +508,14 @@ class ApiMapper:
                     path = match.group(2)
                     if not path.startswith("/"):
                         continue
+                    norm_path = self._normalize_path(path)
+                    call_key = (node.file_path, line_num, norm_path)
+                    if call_key in seen_calls:
+                        continue
+                    seen_calls.add(call_key)
                     calls.append(ApiCallInfo(
                         method=method,
-                        path=self._normalize_path(path),
+                        path=norm_path,
                         caller_node_id=node.id,
                         file_path=node.file_path,
                         line=line_num,
@@ -342,9 +527,14 @@ class ApiMapper:
                     path = match.group(2)
                     if not path.startswith("/"):
                         continue
+                    norm_path = self._normalize_path(path)
+                    call_key = (node.file_path, line_num, norm_path)
+                    if call_key in seen_calls:
+                        continue
+                    seen_calls.add(call_key)
                     calls.append(ApiCallInfo(
                         method=method,
-                        path=self._normalize_path(path),
+                        path=norm_path,
                         caller_node_id=node.id,
                         file_path=node.file_path,
                         line=line_num,
@@ -355,10 +545,15 @@ class ApiMapper:
                     path = match.group(1)
                     if not path.startswith("/"):
                         continue
+                    norm_path = self._normalize_path(path)
+                    call_key = (node.file_path, line_num, norm_path)
+                    if call_key in seen_calls:
+                        continue
+                    seen_calls.add(call_key)
                     method = self._extract_method_from_context(lines, i)
                     calls.append(ApiCallInfo(
                         method=method,
-                        path=self._normalize_path(path),
+                        path=norm_path,
                         caller_node_id=node.id,
                         file_path=node.file_path,
                         line=line_num,

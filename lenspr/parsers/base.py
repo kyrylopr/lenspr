@@ -95,16 +95,20 @@ class BaseParser(ABC):
             ".eggs",
             ".tox",
             "site-packages",  # Skip installed packages
-            "lib",  # Skip lib directories (often in venvs)
         }
+
+        # Skip only at project root (src/lib/ is valid in React/Vite)
+        skip_toplevel_only = {"lib"}
 
         # Also skip directories ending with common venv suffixes
         venv_suffixes = ("-env", "-venv", "_env", "_venv")
 
         def should_skip_path(path: Path) -> bool:
             """Check if path should be skipped."""
-            for part in path.parts:
+            for idx, part in enumerate(path.parts):
                 if part in skip_dirs:
+                    return True
+                if part in skip_toplevel_only and idx == 0:
                     return True
                 # Skip directories with venv-like names
                 if any(part.endswith(suffix) for suffix in venv_suffixes):

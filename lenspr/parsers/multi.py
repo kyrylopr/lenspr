@@ -14,18 +14,18 @@ from lenspr.stats import ParseStats, get_language_for_extension
 logger = logging.getLogger(__name__)
 
 
-def normalize_edge_targets(
-    nodes: list[Node], edges: list[Edge],
-) -> list[Edge]:
-    """Normalize edge targets to match actual node IDs via suffix matching.
+def normalize_edges_by_ids(
+    edges: list[Edge], node_ids: set[str],
+) -> int:
+    """Normalize edge endpoints using a pre-built set of node IDs.
 
-    When project root != package root, node IDs have a prefix that raw
-    import paths lack.  E.g. node ID is ``myproject.crawlers.func`` but
-    the import edge targets ``crawlers.func``.  This function resolves
-    the mismatch by matching suffixes.
+    Resolves short import paths (e.g. ``crawlers.func``) to full node IDs
+    (e.g. ``myproject.crawlers.func``) via suffix matching.  Mutates edges
+    in place.
+
+    Returns:
+        Number of endpoints normalized.
     """
-    node_ids: set[str] = {n.id for n in nodes}
-
     # Build suffix index: suffix -> full_id (None if ambiguous)
     suffix_index: dict[str, str | None] = {}
     for nid in node_ids:
@@ -55,6 +55,21 @@ def normalize_edge_targets(
     if normalized:
         logger.info("Normalized %d edge endpoints via suffix matching", normalized)
 
+    return normalized
+
+
+def normalize_edge_targets(
+    nodes: list[Node], edges: list[Edge],
+) -> list[Edge]:
+    """Normalize edge targets to match actual node IDs via suffix matching.
+
+    When project root != package root, node IDs have a prefix that raw
+    import paths lack.  E.g. node ID is ``myproject.crawlers.func`` but
+    the import edge targets ``crawlers.func``.  This function resolves
+    the mismatch by matching suffixes.
+    """
+    node_ids: set[str] = {n.id for n in nodes}
+    normalize_edges_by_ids(edges, node_ids)
     return edges
 
 
@@ -171,7 +186,6 @@ class MultiParser(BaseParser):
             ".eggs",
             ".tox",
             "site-packages",
-            "lib",
             ".next",  # Next.js
             ".nuxt",  # Nuxt.js
             ".output",  # Nuxt 3
@@ -182,6 +196,10 @@ class MultiParser(BaseParser):
         }
 
         venv_suffixes = ("-env", "-venv", "_env", "_venv")
+
+        # Skip only at project root: "lib" is Python stdlib,
+        # but "src/lib/" is a standard React/Vite utility directory
+        skip_toplevel_only = {"lib"}
 
         def should_skip_path(path: Path) -> bool:
             for part in path.parts:
@@ -201,8 +219,12 @@ class MultiParser(BaseParser):
 
             # Check if in skipped directory
             skip_reason = None
-            for part in file_path.relative_to(root_path).parts:
+            rel_parts = file_path.relative_to(root_path).parts
+            for idx, part in enumerate(rel_parts):
                 if part in skip_dirs:
+                    skip_reason = part
+                    break
+                if part in skip_toplevel_only and idx == 0:
                     skip_reason = part
                     break
                 if any(part.endswith(suffix) for suffix in venv_suffixes):

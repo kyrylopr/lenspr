@@ -427,3 +427,43 @@ class TestFullIntegration:
         assert len(env_edges) == 1
         assert env_edges[0].from_node == "app.connect_db"
         assert env_edges[0].to_node == "env.DB_HOST"
+
+
+# ---------------------------------------------------------------------------
+# Tests — Vite import.meta.env detection
+# ---------------------------------------------------------------------------
+
+
+class TestViteImportMetaEnv:
+    def test_import_meta_env_single(self) -> None:
+        """import.meta.env.VITE_API_URL detected."""
+        mapper = InfraMapper()
+        usages = mapper.extract_env_usages([
+            _make_node(
+                "api.getBaseUrl",
+                'function getBaseUrl() {\n'
+                '    return import.meta.env.VITE_API_URL;\n'
+                '}',
+                file_path="src/api.ts",
+            ),
+        ])
+        assert len(usages) == 1
+        assert usages[0].name == "VITE_API_URL"
+        assert usages[0].caller_node_id == "api.getBaseUrl"
+
+    def test_import_meta_env_multiple(self) -> None:
+        """Multiple import.meta.env.VITE_* in same function."""
+        mapper = InfraMapper()
+        usages = mapper.extract_env_usages([
+            _make_node(
+                "config.init",
+                'function init() {\n'
+                '    const url = import.meta.env.VITE_API_URL;\n'
+                '    const key = import.meta.env.VITE_PUBLIC_KEY;\n'
+                '    const mode = import.meta.env.VITE_MODE;\n'
+                '}',
+                file_path="src/config.ts",
+            ),
+        ])
+        names = {u.name for u in usages}
+        assert names == {"VITE_API_URL", "VITE_PUBLIC_KEY", "VITE_MODE"}

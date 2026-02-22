@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 from typing import TYPE_CHECKING
 
+from lenspr import database
 from lenspr.models import ToolResponse
 
 if TYPE_CHECKING:
@@ -131,6 +133,22 @@ def handle_run_tests(params: dict, ctx: LensContext) -> ToolResponse:
     else:
         output = "\n".join(lines)
 
+    # Merge runtime trace edges if tracer produced output
+    trace_output = ctx.project_root / ".lens" / "trace_edges.json"
+    trace_merge: dict | None = None
+    if trace_output.exists():
+        try:
+            trace_data = json.loads(trace_output.read_text(encoding="utf-8"))
+            raw_edges = trace_data.get("edges", [])
+            if raw_edges:
+                edge_tuples = [
+                    (e["from"], e["to"], e.get("count", 1)) for e in raw_edges
+                ]
+                trace_merge = database.save_runtime_edges(edge_tuples, ctx.graph_db)
+                ctx._graph = None  # force graph reload
+        except Exception:
+            pass  # tracing is best-effort
+
     # return_code 5 = no tests collected (not an error)
     all_passed = failed == 0 and errors == 0 and proc.returncode in (0, 5)
 
@@ -145,6 +163,9 @@ def handle_run_tests(params: dict, ctx: LensContext) -> ToolResponse:
         "failures": failures,
         "output": output,
     }
+
+    if trace_merge:
+        data["trace_edges"] = trace_merge
 
     warnings: list[str] = []
     if not all_passed:

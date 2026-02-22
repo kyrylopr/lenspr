@@ -70,6 +70,12 @@ _TABLENAME_RE = re.compile(
     r"""__tablename__\s*=\s*['"]([^'"]+)['"]""",
 )
 
+# SQLAlchemy: class User(Base) or class User(db.Model) or class User(DeclarativeBase)
+# Used as fallback when __tablename__ is absent — infer table name from class name
+_SA_BASE_RE = re.compile(
+    r"""class\s+(\w+)\s*\([^)]*\b(?:Base|DeclarativeBase|db\.Model)\b""",
+)
+
 # Django: class User(models.Model) or class User(Model)
 _DJANGO_MODEL_RE = re.compile(
     r"""class\s+(\w+)\s*\([^)]*\bmodels?\.Model\b[^)]*\)""",
@@ -234,6 +240,22 @@ class SqlMapper:
                     line=node.start_line,
                 ))
                 self._model_to_table[class_name] = table_name
+
+            # SQLAlchemy auto-naming fallback: class User(Base) without
+            # explicit __tablename__. SQLAlchemy infers table name as
+            # class_name.lower(). Only apply if this class wasn't already
+            # matched by _TABLENAME_RE or _DJANGO_MODEL_RE above.
+            if node.name not in self._model_to_table:
+                sa_match = _SA_BASE_RE.search(node.source_code)
+                if sa_match and sa_match.group(1) == node.name:
+                    table_name = node.name.lower()
+                    tables.append(TableInfo(
+                        name=table_name,
+                        model_node_id=node.id,
+                        file_path=node.file_path,
+                        line=node.start_line,
+                    ))
+                    self._model_to_table[node.name] = table_name
 
         self._tables = tables
         return tables

@@ -100,6 +100,11 @@ _TS_PROCESS_ENV_RE = re.compile(
     r"""process\.env\.(\w+)|process\.env\[['"](\w+)['"]\]""",
 )
 
+# Vite: import.meta.env.VITE_API_URL
+_TS_IMPORT_META_ENV_RE = re.compile(
+    r"""import\.meta\.env\.(\w+)""",
+)
+
 # .env file: KEY=value or KEY="value"
 _DOTENV_RE = re.compile(
     r"""^([A-Z][A-Z0-9_]*)\s*=\s*(.*)$""",
@@ -328,6 +333,15 @@ class InfraMapper:
                             file_path=node.file_path,
                             line=line_num,
                         ))
+
+                # Vite: import.meta.env.VITE_API_URL
+                for match in _TS_IMPORT_META_ENV_RE.finditer(line):
+                    usages.append(EnvVarUsage(
+                        name=match.group(1),
+                        caller_node_id=node.id,
+                        file_path=node.file_path,
+                        line=line_num,
+                    ))
 
         self._env_usages = usages
         return usages

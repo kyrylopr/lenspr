@@ -16,7 +16,11 @@ from lenspr import graph as graph_ops
 from lenspr.architecture import compute_all_metrics
 from lenspr.models import Node, SyncResult
 from lenspr.parsers.base import ProgressCallback
-from lenspr.parsers.multi import MultiParser, normalize_edge_targets
+from lenspr.parsers.multi import (
+    MultiParser,
+    normalize_edge_targets,
+    normalize_edges_by_ids,
+)
 from lenspr.patcher import PatchBuffer
 from lenspr.stats import ParseStats
 
@@ -154,7 +158,8 @@ class LensContext:
                 )
         except Exception as e:
             raise RuntimeError(
-                f"Graph sync failed. Cannot proceed with stale data: {e}"
+                f"Graph sync failed on incremental sync: {e}. "
+                "Run `lenspr init --force` to rebuild the graph from scratch."
             ) from e
 
     def reparse_file(self, file_path: Path) -> None:
@@ -173,54 +178,29 @@ class LensContext:
         with open(self._lock_path, "w") as lock_file:
             fcntl.flock(lock_file, fcntl.LOCK_EX)
             try:
-                # Load current graph data
-                all_nodes, all_edges = database.load_graph(self.graph_db)
-
-                # Remove nodes from this file
-                old_node_ids = {n.id for n in all_nodes if n.file_path == rel_path}
-                all_nodes = [n for n in all_nodes if n.file_path != rel_path]
-
-                # Remove only OUTGOING edges from this file's nodes.
-                # Keep incoming edges (from other files) — they'll be
-                # cleaned up below if the target node was deleted.
-                all_edges = [
-                    e for e in all_edges
-                    if e.from_node not in old_node_ids
-                ]
-
                 # Parse fresh
-                new_node_ids: set[str] = set()
+                new_nodes: list[Node] = []
+                new_edges: list = []
                 if file_path.exists():
                     new_nodes, new_edges = self._parser.parse_file(
                         file_path, self.project_root
                     )
-                    new_node_ids = {n.id for n in new_nodes}
-                    all_nodes.extend(new_nodes)
-                    all_edges.extend(new_edges)
 
-                # Remove stale incoming edges to nodes that were deleted
-                # (existed before but not after reparse)
-                deleted_node_ids = old_node_ids - new_node_ids
-                if deleted_node_ids:
-                    all_edges = [
-                        e for e in all_edges
-                        if e.to_node not in deleted_node_ids
-                    ]
+                # Normalize new edges using all node IDs from DB + new nodes
+                if new_edges:
+                    all_node_ids = database.get_all_node_ids(self.graph_db)
+                    all_node_ids.update(n.id for n in new_nodes)
+                    normalize_edges_by_ids(new_edges, all_node_ids)
 
-                # Normalize edge targets (fixes root != package root mismatch)
-                normalize_edge_targets(all_nodes, all_edges)
+                # Compute metrics for classes in this file
+                if new_nodes:
+                    node_metrics, _ = compute_all_metrics(new_nodes, new_edges)
+                    for node in new_nodes:
+                        if node.id in node_metrics:
+                            node.metrics = node_metrics[node.id]
 
-                # Recompute metrics (class method counts, etc.)
-                node_metrics, project_metrics = compute_all_metrics(
-                    all_nodes, all_edges
-                )
-                for node in all_nodes:
-                    if node.id in node_metrics:
-                        node.metrics = node_metrics[node.id]
-
-                # Save
-                database.save_graph(all_nodes, all_edges, self.graph_db)
-                database.save_project_metrics(project_metrics, self.graph_db)
+                # Granular sync: only touches changed nodes' edges
+                database.sync_file(rel_path, new_nodes, new_edges, self.graph_db)
                 self.invalidate_graph()
             finally:
                 fcntl.flock(lock_file, fcntl.LOCK_UN)
@@ -333,13 +313,17 @@ class LensContext:
         skip_dirs = {
             "__pycache__", ".git", ".lens", ".venv", "venv", "env",
             "node_modules", ".mypy_cache", ".pytest_cache", ".ruff_cache",
-            "dist", "build", ".eggs", ".tox", "site-packages", "lib",
+            "dist", "build", ".eggs", ".tox", "site-packages",
         }
+        skip_toplevel_only = {"lib"}
         venv_suffixes = ("-env", "-venv", "_env", "_venv")
 
         def should_skip(path: Path) -> bool:
-            for part in path.parts:
+            rel = path.relative_to(self.project_root)
+            for idx, part in enumerate(rel.parts):
                 if part in skip_dirs:
+                    return True
+                if part in skip_toplevel_only and idx == 0:
                     return True
                 if any(part.endswith(s) for s in venv_suffixes):
                     return True
@@ -387,73 +371,66 @@ class LensContext:
         with open(self._lock_path, "w") as lock_file:
             fcntl.flock(lock_file, fcntl.LOCK_EX)
             try:
-                all_nodes, all_edges = database.load_graph(self.graph_db)
-                old_index = {n.id: n for n in all_nodes}
-
-                # Remove nodes from changed/deleted files
-                files_to_remove = set(changed_files + added_files + deleted_files)
-                removed_node_ids = {
-                    n.id for n in all_nodes if n.file_path in files_to_remove
-                }
-                all_nodes = [n for n in all_nodes if n.file_path not in files_to_remove]
-
-                # Remove only OUTGOING edges from removed nodes.
-                # Keep incoming edges (from other files) — they'll be
-                # cleaned up below if the target node was deleted.
-                all_edges = [
-                    e for e in all_edges
-                    if e.from_node not in removed_node_ids
-                ]
+                # Snapshot old nodes for diff computation
+                old_index: dict[str, Node] = {}
+                for rel in files_to_reparse + deleted_files:
+                    for n in database.get_nodes(self.graph_db, file_filter=rel):
+                        old_index[n.id] = n
 
                 # Refresh jedi project to pick up new/changed files
-                # This ensures full name resolution even for incremental syncs
                 if hasattr(self._parser, "set_project_root"):
                     self._parser.set_project_root(self.project_root)
 
-                # Reparse changed/added files
-                new_node_ids: set[str] = set()
+                # Pass 1: Parse all changed files
+                parsed: dict[str, tuple[list[Node], list]] = {}
                 for rel in files_to_reparse:
-                    file_path = self.project_root / rel
-                    if file_path.exists():
-                        new_nodes, new_edges = self._parser.parse_file(
-                            file_path, self.project_root
+                    fp = self.project_root / rel
+                    if fp.exists():
+                        nodes, edges = self._parser.parse_file(
+                            fp, self.project_root
                         )
-                        new_node_ids.update(n.id for n in new_nodes)
-                        all_nodes.extend(new_nodes)
-                        all_edges.extend(new_edges)
+                        parsed[rel] = (nodes, edges)
+                    else:
+                        parsed[rel] = ([], [])
 
-                # Remove stale incoming edges to nodes that were deleted
-                # (existed before but not after reparse)
-                deleted_node_ids = removed_node_ids - new_node_ids
-                if deleted_node_ids:
-                    all_edges = [
-                        e for e in all_edges
-                        if e.to_node not in deleted_node_ids
-                    ]
+                # Normalize all new edges at once (need full node ID set)
+                all_node_ids = database.get_all_node_ids(self.graph_db)
+                for nodes, _ in parsed.values():
+                    all_node_ids.update(n.id for n in nodes)
+                for _, edges in parsed.values():
+                    if edges:
+                        normalize_edges_by_ids(edges, all_node_ids)
 
-                # Normalize edge targets (fixes root != package root mismatch)
-                normalize_edge_targets(all_nodes, all_edges)
+                # Compute metrics for each file's classes
+                for nodes, edges in parsed.values():
+                    if nodes:
+                        node_metrics, _ = compute_all_metrics(nodes, edges)
+                        for node in nodes:
+                            if node.id in node_metrics:
+                                node.metrics = node_metrics[node.id]
 
-                # Recompute metrics (class method counts, etc.)
-                node_metrics, project_metrics = compute_all_metrics(
-                    all_nodes, all_edges
-                )
-                for node in all_nodes:
-                    if node.id in node_metrics:
-                        node.metrics = node_metrics[node.id]
+                # Pass 2: Granular sync each file
+                for rel, (nodes, edges) in parsed.items():
+                    database.sync_file(rel, nodes, edges, self.graph_db)
 
-                database.save_graph(all_nodes, all_edges, self.graph_db)
-                database.save_project_metrics(project_metrics, self.graph_db)
+                # Handle deleted files
+                for rel in deleted_files:
+                    database.sync_file(rel, [], [], self.graph_db)
+
                 self.invalidate_graph()
             finally:
                 fcntl.flock(lock_file, fcntl.LOCK_UN)
 
-        # Compute diff
-        new_index = {n.id: n for n in all_nodes}
-        added = [n for nid, n in new_index.items() if nid not in old_index]
-        deleted = [n for nid, n in old_index.items() if nid not in new_index]
+        # Compute diff from old snapshot + parsed data
+        all_new_nodes: dict[str, Node] = {}
+        for nodes, _ in parsed.values():
+            for n in nodes:
+                all_new_nodes[n.id] = n
+
+        added = [n for nid, n in all_new_nodes.items() if nid not in old_index]
+        deleted = [n for nid, n in old_index.items() if nid not in all_new_nodes]
         modified = [
-            n for nid, n in new_index.items()
+            n for nid, n in all_new_nodes.items()
             if nid in old_index and n.hash != old_index[nid].hash
         ]
 
@@ -497,15 +474,23 @@ class LensContext:
             fp: dict[str, dict[str, float | int]] = {}
             skip_dirs = {
                 "__pycache__", ".git", ".lens", ".venv", "venv", "env",
-                "node_modules", "site-packages", "lib",
+                "node_modules", "site-packages",
             }
+            skip_toplevel_only = {"lib"}
             venv_suffixes = ("-env", "-venv", "_env", "_venv")
             for file_path in self.project_root.rglob("*"):
                 if not file_path.is_file():
                     continue
                 skip = False
-                for part in file_path.parts:
-                    if part in skip_dirs or any(part.endswith(s) for s in venv_suffixes):
+                rel_parts = file_path.relative_to(self.project_root).parts
+                for idx, part in enumerate(rel_parts):
+                    if part in skip_dirs:
+                        skip = True
+                        break
+                    if part in skip_toplevel_only and idx == 0:
+                        skip = True
+                        break
+                    if any(part.endswith(s) for s in venv_suffixes):
                         skip = True
                         break
                 if skip:

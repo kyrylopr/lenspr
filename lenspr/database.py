@@ -278,6 +278,131 @@ def save_runtime_edges(
     return {"new_runtime": new_count, "upgraded_to_both": upgraded_count, "total": total}
 
 
+def get_all_node_ids(db_path: Path) -> set[str]:
+    """Return all node IDs from the graph. Cheap — loads IDs only, not full nodes."""
+    with _connect(db_path) as conn:
+        rows = conn.execute("SELECT id FROM nodes").fetchall()
+        return {row[0] for row in rows}
+
+
+def sync_file(
+    file_path: str,
+    new_nodes: list[Node],
+    new_edges: list[Edge],
+    db_path: Path,
+) -> dict[str, int]:
+    """Granular sync: update nodes/edges for a single file using node-hash diffing.
+
+    Only outgoing edges from nodes whose hash changed are refreshed.
+    Unchanged nodes keep all their edges (including runtime edges).
+    Node annotations are preserved via ON CONFLICT DO UPDATE (annotation
+    columns are excluded from the UPDATE SET).
+
+    Args:
+        file_path: Relative file path (e.g. "lenspr/context.py").
+        new_nodes: Freshly parsed nodes for this file.
+        new_edges: Freshly parsed edges for this file.
+        db_path: Path to graph.db.
+
+    Returns:
+        Dict with counts: added, modified, deleted, unchanged, edges_refreshed.
+    """
+    new_index = {n.id: n for n in new_nodes}
+    new_node_ids = set(new_index.keys())
+
+    with _connect(db_path) as conn:
+        # 1. Load old node IDs and hashes for this file
+        old_rows = conn.execute(
+            "SELECT id, hash FROM nodes WHERE file_path = ?", (file_path,)
+        ).fetchall()
+        old_hashes = {row[0]: row[1] for row in old_rows}
+        old_node_ids = set(old_hashes.keys())
+
+        # 2. Classify nodes by hash diff
+        added_ids = new_node_ids - old_node_ids
+        deleted_ids = old_node_ids - new_node_ids
+        modified_ids = {
+            nid for nid in (old_node_ids & new_node_ids)
+            if old_hashes[nid] != new_index[nid].hash
+        }
+        unchanged_ids = (old_node_ids & new_node_ids) - modified_ids
+        changed_ids = added_ids | modified_ids  # need edge refresh
+
+        # 3. Delete outgoing edges from changed/deleted nodes
+        ids_to_clear = changed_ids | deleted_ids
+        if ids_to_clear:
+            placeholders = ",".join("?" * len(ids_to_clear))
+            conn.execute(
+                f"DELETE FROM edges WHERE from_node IN ({placeholders})",
+                list(ids_to_clear),
+            )
+
+        # 4. Delete stale incoming edges to deleted nodes
+        if deleted_ids:
+            placeholders = ",".join("?" * len(deleted_ids))
+            conn.execute(
+                f"DELETE FROM edges WHERE to_node IN ({placeholders})",
+                list(deleted_ids),
+            )
+
+        # 5. Delete removed nodes
+        if deleted_ids:
+            placeholders = ",".join("?" * len(deleted_ids))
+            conn.execute(
+                f"DELETE FROM nodes WHERE id IN ({placeholders})",
+                list(deleted_ids),
+            )
+
+        # 6. Upsert nodes — INSERT new, UPDATE existing.
+        #    ON CONFLICT preserves annotation columns (summary, role,
+        #    side_effects, semantic_inputs, semantic_outputs, annotation_hash).
+        if new_nodes:
+            conn.executemany(
+                """INSERT INTO nodes
+                (id, type, name, qualified_name, file_path, start_line, end_line,
+                 source_code, docstring, signature, hash, metadata,
+                 summary, role, side_effects, semantic_inputs, semantic_outputs,
+                 annotation_hash, metrics)
+                VALUES (:id, :type, :name, :qualified_name, :file_path, :start_line,
+                        :end_line, :source_code, :docstring, :signature, :hash, :metadata,
+                        :summary, :role, :side_effects, :semantic_inputs, :semantic_outputs,
+                        :annotation_hash, :metrics)
+                ON CONFLICT(id) DO UPDATE SET
+                    type = excluded.type,
+                    name = excluded.name,
+                    qualified_name = excluded.qualified_name,
+                    file_path = excluded.file_path,
+                    start_line = excluded.start_line,
+                    end_line = excluded.end_line,
+                    source_code = excluded.source_code,
+                    docstring = excluded.docstring,
+                    signature = excluded.signature,
+                    hash = excluded.hash,
+                    metadata = excluded.metadata,
+                    metrics = excluded.metrics""",
+                [n.to_dict() for n in new_nodes],
+            )
+
+        # 7. Insert edges for changed/added nodes only
+        changed_edges = [e for e in new_edges if e.from_node in changed_ids]
+        if changed_edges:
+            conn.executemany(
+                """INSERT INTO edges
+                (id, from_node, to_node, type, line_number, column, confidence, source,
+                 untracked_reason, metadata)
+                VALUES (:id, :from_node, :to_node, :type, :line_number, :column,
+                        :confidence, :source, :untracked_reason, :metadata)""",
+                [e.to_dict() for e in changed_edges],
+            )
+
+    return {
+        "added": len(added_ids),
+        "modified": len(modified_ids),
+        "deleted": len(deleted_ids),
+        "unchanged": len(unchanged_ids),
+        "edges_refreshed": len(changed_edges),
+    }
+
 
 def load_graph(db_path: Path) -> tuple[list[Node], list[Edge]]:
     """Load full graph from database."""

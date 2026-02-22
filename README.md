@@ -54,7 +54,19 @@ tests: 0
 
 The AI sees this and either warns you, changes its approach, or asks for confirmation. No more blind edits.
 
-### 3. Search with context
+### 3. Cross-language visibility
+
+LensPR connects your frontend and backend into a single graph:
+
+```
+Frontend:  LoginModal → fetch("/api/auth/login")
+                              ↓ CALLS_API
+Backend:   @router.post("/login") → def login()
+```
+
+It also tracks database operations, Docker services, and environment variables — so the AI sees the full picture, not just one language at a time.
+
+### 4. Search with context
 
 Normal grep: `utils.py:42: # TODO fix this`
 
@@ -85,16 +97,19 @@ That's it.
 Your code (.py, .ts, .tsx, .js, .jsx)
        │
        ▼
-  AST parser (Python) + tree-sitter (TypeScript)
+  6-pass pipeline:
+    1. AST parsing      (Python ast + tree-sitter for JS/TS)
+    2. Name resolution   (Jedi / Pyright / TS Compiler API)
+    3. Edge normalization (cross-file ID matching)
+    4. API mapping       (frontend HTTP → backend route)
+    5. SQL mapping       (function → database table)
+    6. Infra mapping     (Docker services, env vars)
        │
        ▼
-  Dependency graph (functions, classes, calls, imports)
+  Unified dependency graph (SQLite, local, never leaves your machine)
        │
        ▼
-  SQLite database (local, never leaves your machine)
-       │
-       ▼
-  50 MCP tools for your AI assistant
+  58 MCP tools for your AI assistant
        │
        ▼
   File watcher auto-syncs on every save
@@ -133,8 +148,12 @@ Run yourself: `make benchmark`
 |---------|-------------|
 | **Impact Analysis** | Shows severity (LOW → CRITICAL) before any change |
 | **One-Call Context** | Source + callers + callees + tests in a single request |
+| **Cross-Language Edges** | Frontend HTTP calls matched to backend route handlers (CALLS_API) |
+| **Database Mapping** | Tracks which functions read/write which tables (READS_TABLE / WRITES_TABLE) |
+| **Infra Mapping** | Docker service dependencies, env var usage across code |
 | **Surgical Edits** | `lens_patch_node` for targeted find/replace — no full rewrites needed |
-| **Test Runner** | `lens_run_tests` runs pytest and returns structured pass/fail results |
+| **Test Runner** | `lens_run_tests` runs pytest with auto-tracing and structured results |
+| **Runtime Call Tracing** | Merges runtime edges from test execution into the static graph |
 | **Session Memory** | Persistent notes survive context resets — AI picks up where it left off |
 | **Graph-Aware Search** | Every grep result shows which function contains the match |
 | **Auto-Sync** | Graph updates on every file save, AI always sees latest code |
@@ -147,6 +166,8 @@ Run yourself: `make benchmark`
 | **NFR Checks** | `lens_nfr_check` flags missing error handling, hardcoded secrets, missing auth |
 | **Architecture Rules** | Enforce boundaries between layers — violations block changes automatically |
 | **Security Scanning** | `lens_security_scan` runs Bandit; `lens_dep_audit` checks CVEs in dependencies |
+| **Remediation Plans** | `lens_fix_plan` generates prioritized action list to improve health score |
+| **Hotspot Analysis** | `lens_hotspots` finds functions that change most frequently |
 
 ---
 
@@ -160,8 +181,57 @@ Run yourself: `make benchmark`
 
 | Language | Parser | Resolution |
 |----------|--------|------------|
-| Python | AST + jedi | 96%+ |
+| Python | AST + Jedi (or Pyright) | 95%+ |
 | TypeScript / JavaScript | tree-sitter + TS Compiler API | 90%+ |
+
+### Cross-Language Connections
+
+| Edge Type | What it connects |
+|-----------|-----------------|
+| `CALLS_API` | Frontend `fetch("/api/auth/login")` → Backend `@router.post("/login")` |
+| `READS_TABLE` / `WRITES_TABLE` | Python function → SQLAlchemy/Django table |
+| `DEPENDS_ON` | Docker service → service (from docker-compose.yml) |
+| `USES_ENV` | Code `os.getenv("KEY")` / `import.meta.env.VITE_KEY` → env var |
+
+---
+
+## Node & Edge Model
+
+### 5 Node Types
+
+| Type | What it represents |
+|------|-------------------|
+| `module` | A file (one per parsed file) |
+| `class` | Class definition |
+| `function` | Module-level function |
+| `method` | Class method |
+| `block` | Module-level code outside functions/classes (constants, guards, imports) |
+
+### 12 Edge Types
+
+| Category | Edge Type | Meaning |
+|----------|-----------|---------|
+| **Code** | `calls` | A calls B |
+| | `imports` | A imports B |
+| | `uses` | A references B (attribute access) |
+| | `inherits` | Class A extends class B |
+| | `decorates` | Decorator applied to function |
+| | `contains` | Nested function/class inside another |
+| | `mocks` | Test `@patch("B")` mocks B |
+| **Cross-language** | `calls_api` | Frontend HTTP call → backend route handler |
+| **Database** | `reads_table` | Function SELECTs from table |
+| | `writes_table` | Function INSERTs/UPDATEs/DELETEs table |
+| **Infrastructure** | `depends_on` | Docker service dependency |
+| | `uses_env` | Code reads environment variable |
+
+### Edge Confidence
+
+| Level | Meaning |
+|-------|---------|
+| `resolved` | Confirmed by Jedi/Pyright/TS — target exists in project |
+| `inferred` | AST found the call, resolver didn't confirm |
+| `external` | Target is stdlib or pip/npm package |
+| `unresolved` | Dynamic dispatch (`getattr`, `eval`) — can't determine statically |
 
 ---
 
@@ -177,7 +247,7 @@ lenspr doctor <path>         # Diagnose configuration issues
 ```
 
 <details>
-<summary>All MCP tools (50)</summary>
+<summary>All MCP tools (58)</summary>
 
 ### Navigation & Search
 | Tool | Description |
@@ -211,10 +281,12 @@ lenspr doctor <path>         # Diagnose configuration issues
 | `lens_rename` | Rename across project |
 | `lens_batch` | Atomic multi-node updates |
 
-### Testing
+### Testing & Tracing
 | Tool | Description |
 |------|-------------|
-| `lens_run_tests` | Run pytest, return structured pass/fail + failure details |
+| `lens_run_tests` | Run pytest with structured results + auto-coverage |
+| `lens_trace` | Run tests with runtime call tracing (Python 3.12+) |
+| `lens_trace_stats` | Show static vs runtime edge statistics |
 
 ### Git Integration
 | Tool | Description |
@@ -247,21 +319,31 @@ lenspr doctor <path>         # Diagnose configuration issues
 |------|-------------|
 | `lens_explain` | Human-readable explanation of a node |
 
+### Cross-Language & Infrastructure
+| Tool | Description |
+|------|-------------|
+| `lens_api_map` | Map frontend API calls to backend route handlers |
+| `lens_db_map` | Map database tables to functions that read/write them |
+| `lens_env_map` | Map environment variables across code and config files |
+
 ### Session Memory
 | Tool | Description |
 |------|-------------|
 | `lens_session_write` | Save a persistent note by key |
 | `lens_session_read` | Read all session notes |
 | `lens_session_handoff` | Generate handoff doc for next session |
+| `lens_resume` | Restore context from auto-generated action log |
 
 ### Vibecoding Safety
 | Tool | Description |
 |------|-------------|
 | `lens_vibecheck` | 0-100 health score (grade A–F) across 6 dimensions |
 | `lens_nfr_check` | Flag missing error handling, logging, secrets, auth per function |
-| `lens_test_coverage` | Graph-based coverage report — which functions lack tests |
+| `lens_test_coverage` | Graph-based + pytest-cov coverage report |
 | `lens_security_scan` | Run Bandit security scanner, results mapped to graph nodes |
 | `lens_dep_audit` | Check dependencies for known CVEs (pip-audit / npm audit) |
+| `lens_fix_plan` | Prioritized remediation plan to improve health score |
+| `lens_generate_test_skeleton` | Test spec with scenarios, mocks, and usage examples |
 
 ### Architecture Rules
 | Tool | Description |
@@ -270,6 +352,12 @@ lenspr doctor <path>         # Diagnose configuration issues
 | `lens_arch_rule_list` | List all defined rules |
 | `lens_arch_rule_delete` | Remove a rule by ID |
 | `lens_arch_check` | Check all rules against current codebase |
+
+### Temporal Analysis
+| Tool | Description |
+|------|-------------|
+| `lens_hotspots` | Find functions that change most frequently |
+| `lens_node_timeline` | Unified timeline of changes (LensPR + git) |
 
 </details>
 
@@ -296,17 +384,15 @@ AI agents write a lot of code fast. LensPR adds a safety layer that catches comm
 
 ```
 lens_vibecheck()
-→ score: 58/100
-→ grade: D
+→ score: 85/100
+→ grade: B
 → breakdown:
-    test_coverage:    2/25  — 7% tested
-    dead_code:       16/20  — 4% dead
+    test_coverage:    16/25  — 64% tested
+    dead_code:       20/20  — 0% dead
     circular_imports:15/15  — 0 cycles ✓
-    architecture:     8/15  — no rules defined
-    documentation:    8/10  — 78% have docstrings
-    graph_confidence: 9/15  — 62% edges resolved
-→ top_risks:
-    🔴 Only 7% test coverage — bugs go undetected
+    architecture:    12/15  — 1 violation
+    documentation:    8/10  — 81% have descriptions
+    graph_confidence:14/15  — 95% edges resolved
 ```
 
 Run `lens_vibecheck()` periodically to track whether the codebase is improving or degrading.
@@ -345,6 +431,7 @@ Rules are checked automatically on every `lens_update_node` call. Violations app
 ## Known Limitations
 
 - **Dynamic code** (`getattr`, `eval`, dynamic imports) can't be fully tracked
+- **Instance method dispatch** — `self.method()` calls have limited resolution without runtime tracing
 - **Not tested on >10k files** — works well on projects up to ~500 files
 - **TypeScript needs Node.js 18+** for full type inference
 

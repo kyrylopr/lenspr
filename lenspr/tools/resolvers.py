@@ -153,17 +153,36 @@ def handle_env_map(params: dict, ctx: LensContext) -> ToolResponse:
 
     from lenspr.resolvers.infra_mapper import InfraMapper
 
-    mapper = InfraMapper(project_root)
-    definitions = mapper.extract_env_definitions()
+    mapper = InfraMapper()
+
+    # Find and parse .env files
+    for env_file in sorted(project_root.glob(".env*")):
+        if env_file.is_file():
+            mapper.parse_env_file(env_file)
+
+    # Find and parse docker-compose files
+    for compose_file in sorted(project_root.glob("docker-compose*.yml")):
+        if compose_file.is_file():
+            mapper.parse_compose(compose_file)
+    for compose_file in sorted(project_root.glob("docker-compose*.yaml")):
+        if compose_file.is_file():
+            mapper.parse_compose(compose_file)
+    # Also check compose.yml (Docker Compose v2 convention)
+    for name in ("compose.yml", "compose.yaml"):
+        candidate = project_root / name
+        if candidate.is_file():
+            mapper.parse_compose(candidate)
+
     usages = mapper.extract_env_usages(all_nodes)
     edges = mapper.match()
 
     # Group by env var name
+    definitions = mapper._env_vars
     env_summary: dict[str, dict] = {}
     for d in definitions:
         env_summary[d.name] = {
-            "defined_in": d.source,
-            "default": d.default_value,
+            "defined_in": d.source_file,
+            "default": d.value,
             "used_by": [],
         }
     for u in usages:
