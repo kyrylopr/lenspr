@@ -192,17 +192,39 @@ def get_system_prompt(enabled_tools: set[str] | None = None) -> str:
     except Exception:
         pass
 
-    # 2. Session notes from session.db
+    # 2. Session notes from session.db (budgeted: skip action logs, cap total)
     try:
         from lenspr import database
         if ctx.session_db.exists():
             notes = database.read_session_notes(ctx.session_db)
             if notes:
-                lines = ["## Session Notes"]
-                for note in notes:
-                    lines.append(f"### {note['key']}")
-                    lines.append(note["value"])
-                extra_sections.append("\n".join(lines))
+                # Filter: _log_* entries are for lens_resume(), not system prompt.
+                # handoff_at is an internal timestamp. handoff duplicates recent changes.
+                skip_prefixes = ("_log_", "handoff_at", "handoff")
+                user_notes = [
+                    n for n in notes
+                    if not n["key"].startswith(skip_prefixes)
+                ]
+                if user_notes:
+                    # Priority: current_session first, then alphabetical
+                    user_notes.sort(
+                        key=lambda n: (0 if n["key"] == "current_session" else 1, n["key"])
+                    )
+                    NOTE_MAX = 2048  # per-note cap
+                    TOTAL_MAX = 4096  # total budget
+                    lines = ["## Session Notes"]
+                    total = 0
+                    for note in user_notes:
+                        value = note["value"]
+                        if len(value) > NOTE_MAX:
+                            value = value[:NOTE_MAX] + "\n... (truncated — use lens_session_read() for full text)"
+                        entry = f"### {note['key']}\n{value}"
+                        if total + len(entry) > TOTAL_MAX:
+                            lines.append(f"_({len(user_notes) - len(lines) + 1} more notes — use lens_session_read())_")
+                            break
+                        lines.append(entry)
+                        total += len(entry)
+                    extra_sections.append("\n".join(lines))
     except Exception:
         pass
 
@@ -227,14 +249,18 @@ def handle_tool(name: str, parameters: dict) -> dict:
     ctx = _require_ctx()
     from lenspr.tools import handle_tool_call
     response = handle_tool_call(name, parameters, ctx)
-    return {
-        "success": response.success,
-        "data": response.data,
-        "error": response.error,
-        "hint": response.hint,
-        "warnings": response.warnings,
-        "affected_nodes": response.affected_nodes,
-    }
+    result: dict = {"success": response.success}
+    if response.data is not None:
+        result["data"] = response.data
+    if response.error:
+        result["error"] = response.error
+    if response.hint:
+        result["hint"] = response.hint
+    if response.warnings:
+        result["warnings"] = response.warnings
+    if response.affected_nodes:
+        result["affected_nodes"] = response.affected_nodes
+    return result
 
 
 # -- Direct access functions --
