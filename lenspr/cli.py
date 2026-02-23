@@ -73,6 +73,10 @@ def main() -> None:
         "--global", dest="global_config", action="store_true",
         help="Also update global Claude Desktop config"
     )
+    p_setup.add_argument(
+        "--no-interactive", dest="no_interactive", action="store_true",
+        help="Skip interactive tool group selection"
+    )
 
     # -- doctor --
     p_doctor = subparsers.add_parser(
@@ -135,6 +139,24 @@ def main() -> None:
         help="Output as JSON"
     )
 
+    # -- tools --
+    p_tools = subparsers.add_parser(
+        "tools",
+        help="Manage tool groups (enable/disable to save context window)"
+    )
+    p_tools.add_argument("--path", default=".", help="Project root (default: cwd)")
+    tools_sub = p_tools.add_subparsers(dest="tools_action")
+
+    tools_sub.add_parser("list", help="Show all tool groups with status")
+
+    p_enable = tools_sub.add_parser("enable", help="Enable tool groups")
+    p_enable.add_argument("groups", nargs="+", help="Group names to enable")
+
+    p_disable = tools_sub.add_parser("disable", help="Disable tool groups")
+    p_disable.add_argument("groups", nargs="+", help="Group names to disable")
+
+    tools_sub.add_parser("reset", help="Re-enable all tool groups")
+
     args = parser.parse_args()
 
     if args.command is None:
@@ -153,6 +175,7 @@ def main() -> None:
         "doctor": cmd_doctor,
         "annotate": cmd_annotate,
         "architecture": cmd_architecture,
+        "tools": cmd_tools,
     }
     handlers[args.command](args)
 
@@ -652,6 +675,11 @@ def cmd_setup(args: argparse.Namespace) -> None:
     if args.global_config:
         _update_global_claude_config(str(path), lenspr_bin)
 
+    # Interactive tool group selection
+    if not args.no_interactive and sys.stdin.isatty():
+        print()
+        _configure_tools_interactive(path / ".lens" / "config.json")
+
     print()
     if not mcp_installed:
         print("⚠️  MCP dependencies not installed!")
@@ -674,6 +702,153 @@ def cmd_setup(args: argparse.Namespace) -> None:
     else:
         print("✓ Ready! Restart Claude Code (Cmd+Q / Alt+F4, then reopen)")
         print("  The lens_* tools will be available after restart.")
+
+
+def cmd_tools(args: argparse.Namespace) -> None:
+    """Manage tool groups (enable/disable to save context window)."""
+    from lenspr.tool_groups import (
+        ALL_GROUPS,
+        ALWAYS_ON,
+        TOOL_GROUPS,
+        load_tool_config,
+        save_tool_config,
+    )
+
+    path = Path(args.path).resolve()
+    config_path = path / ".lens" / "config.json"
+
+    action = args.tools_action
+    if action is None:
+        action = "list"
+
+    if action == "list":
+        enabled = load_tool_config(config_path)
+        if enabled is None:
+            enabled = ALL_GROUPS
+        enabled_set = set(enabled) | ALWAYS_ON
+
+        print("Tool Groups")
+        print("=" * 70)
+        total_enabled = 0
+        total_tools = 0
+        for name, info in TOOL_GROUPS.items():
+            count = len(info["tools"])
+            total_tools += count
+            is_on = name in enabled_set
+            if is_on:
+                total_enabled += count
+            always = " (always on)" if name in ALWAYS_ON else ""
+            status = "ON " if is_on else "OFF"
+            tool_word = "tool" if count == 1 else "tools"
+            print(f"  [{status}] {name:<16} ({count:>2} {tool_word})  {info['description']}{always}")
+        print()
+        print(f"  {total_enabled}/{total_tools} tools enabled")
+        print()
+        print("  lenspr tools enable <group>   — enable a group")
+        print("  lenspr tools disable <group>  — disable a group")
+        print("  lenspr tools reset            — re-enable all groups")
+
+    elif action == "enable":
+        enabled = load_tool_config(config_path)
+        if enabled is None:
+            enabled = list(ALL_GROUPS)
+        enabled_set = set(enabled) | ALWAYS_ON
+        for g in args.groups:
+            if g not in TOOL_GROUPS:
+                print(f"Unknown group: {g}")
+                print(f"Available: {', '.join(ALL_GROUPS)}")
+                sys.exit(1)
+            enabled_set.add(g)
+        save_tool_config(config_path, sorted(enabled_set))
+        print(f"✓ Enabled: {', '.join(args.groups)}")
+        print("  Restart MCP server to apply.")
+
+    elif action == "disable":
+        enabled = load_tool_config(config_path)
+        if enabled is None:
+            enabled = list(ALL_GROUPS)
+        enabled_set = set(enabled) | ALWAYS_ON
+        for g in args.groups:
+            if g not in TOOL_GROUPS:
+                print(f"Unknown group: {g}")
+                print(f"Available: {', '.join(ALL_GROUPS)}")
+                sys.exit(1)
+            if g in ALWAYS_ON:
+                print(f"Cannot disable '{g}' — it is always on.")
+                continue
+            enabled_set.discard(g)
+        save_tool_config(config_path, sorted(enabled_set))
+        disabled = sorted(set(ALL_GROUPS) - enabled_set)
+        if disabled:
+            print(f"✓ Disabled: {', '.join(disabled)}")
+        total_on = sum(len(TOOL_GROUPS[g]["tools"]) for g in enabled_set if g in TOOL_GROUPS)
+        total_all = sum(len(info["tools"]) for info in TOOL_GROUPS.values())
+        print(f"  {total_on}/{total_all} tools enabled")
+        print("  Restart MCP server to apply.")
+
+    elif action == "reset":
+        save_tool_config(config_path, list(ALL_GROUPS))
+        total = sum(len(info["tools"]) for info in TOOL_GROUPS.values())
+        print(f"✓ All {total} tools re-enabled.")
+        print("  Restart MCP server to apply.")
+
+
+def _configure_tools_interactive(config_path: Path) -> None:
+    """Interactive tool group selection during setup."""
+    from lenspr.tool_groups import ALL_GROUPS, ALWAYS_ON, TOOL_GROUPS, save_tool_config
+
+    total = sum(len(info["tools"]) for info in TOOL_GROUPS.values())
+    print(f"LensPR has {total} tools organized into {len(TOOL_GROUPS)} groups.")
+    print("All groups are enabled by default. Disable unneeded groups to save context window.")
+    print()
+
+    group_list = list(TOOL_GROUPS.keys())
+    for i, name in enumerate(group_list, 1):
+        info = TOOL_GROUPS[name]
+        count = len(info["tools"])
+        tool_word = "tool" if count == 1 else "tools"
+        suffix = "  [always on]" if name in ALWAYS_ON else "  [ON]"
+        print(f"  [{i:>2}] {name:<16} ({count:>2} {tool_word})  {info['description']}{suffix}")
+    print()
+
+    try:
+        answer = input("Enter numbers to toggle OFF (comma-separated), 'all' to keep all, 'q' to skip: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return
+
+    if not answer or answer.lower() in ("q", "skip"):
+        return
+    if answer.lower() == "all":
+        print("  All groups enabled.")
+        return
+
+    # Parse numbers
+    to_disable: set[str] = set()
+    for part in answer.split(","):
+        part = part.strip()
+        if not part.isdigit():
+            continue
+        idx = int(part) - 1
+        if 0 <= idx < len(group_list):
+            name = group_list[idx]
+            if name in ALWAYS_ON:
+                print(f"  Cannot disable '{name}' — it is always on.")
+            else:
+                to_disable.add(name)
+
+    if not to_disable:
+        print("  No groups disabled.")
+        return
+
+    enabled = sorted(set(ALL_GROUPS) - to_disable)
+    save_tool_config(config_path, enabled)
+
+    disabled_count = sum(len(TOOL_GROUPS[g]["tools"]) for g in to_disable)
+    enabled_count = total - disabled_count
+    print(f"\n  Disabled: {', '.join(sorted(to_disable))}")
+    print(f"  Enabled: {enabled_count}/{total} tools ({disabled_count} disabled)")
+    print(f"  Saved to {config_path}")
 
 
 def cmd_doctor(args: argparse.Namespace) -> None:

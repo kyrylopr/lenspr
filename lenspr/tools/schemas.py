@@ -446,6 +446,21 @@ LENS_TOOLS: list[dict[str, Any]] = [
                         "main(), test_*, and CLI/API handlers."
                     ),
                 },
+                "mode": {
+                    "type": "string",
+                    "enum": ["summary", "full"],
+                    "description": (
+                        "Output mode. 'summary' (default): top 15 dead nodes + "
+                        "file counts. 'full': complete lists grouped by file."
+                    ),
+                },
+                "file_path": {
+                    "type": "string",
+                    "description": (
+                        "Filter dead code to a specific file path. "
+                        "Returns full details for that file only."
+                    ),
+                },
             },
         },
     },
@@ -796,6 +811,21 @@ LENS_TOOLS: list[dict[str, Any]] = [
                     "type": "number",
                     "description": "Minimum cohesion threshold (0.0-1.0). Default: 0.0.",
                 },
+                "mode": {
+                    "type": "string",
+                    "enum": ["summary", "full"],
+                    "description": (
+                        "Output mode. 'summary' (default): counts instead of "
+                        "full node lists. 'full': complete public_api/internal lists."
+                    ),
+                },
+                "component": {
+                    "type": "string",
+                    "description": (
+                        "Drill-down: return full details for a single component "
+                        "by ID (e.g. 'lenspr/tools'). Overrides mode."
+                    ),
+                },
             },
         },
     },
@@ -936,7 +966,23 @@ LENS_TOOLS: list[dict[str, Any]] = [
         ),
         "input_schema": {
             "type": "object",
-            "properties": {},
+            "properties": {
+                "mode": {
+                    "type": "string",
+                    "enum": ["summary", "full"],
+                    "description": (
+                        "Output mode. 'summary' (default): usage counts per var, "
+                        "no edges. 'full': complete used_by lists and edges."
+                    ),
+                },
+                "env_var": {
+                    "type": "string",
+                    "description": (
+                        "Drill-down: return full details for a single env var "
+                        "by name (e.g. 'DATABASE_URL'). Overrides mode."
+                    ),
+                },
+            },
         },
     },
     {
@@ -961,7 +1007,24 @@ LENS_TOOLS: list[dict[str, Any]] = [
         ),
         "input_schema": {
             "type": "object",
-            "properties": {},
+            "properties": {
+                "mode": {
+                    "type": "string",
+                    "enum": ["summary", "full"],
+                    "description": (
+                        "Output mode. 'summary' (default): edge counts by type "
+                        "instead of full edge lists. 'full': complete edges."
+                    ),
+                },
+                "focus": {
+                    "type": "string",
+                    "enum": ["ci", "docker", "compose"],
+                    "description": (
+                        "Drill-down: return full details for one subsystem "
+                        "with relevant edges. Overrides mode."
+                    ),
+                },
+            },
         },
     },
     # -- Temporal tools --

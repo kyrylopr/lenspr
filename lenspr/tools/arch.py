@@ -167,9 +167,15 @@ def handle_components(params: dict, ctx: LensContext) -> ToolResponse:
     - Cohesion score (internal edges / total edges)
     - Public API nodes (called from outside)
     - Internal nodes (only used within component)
+
+    Args:
+        mode: "summary" (default) for counts only, "full" for complete node lists.
+        component: Drill into a specific component by ID to see its full node lists.
     """
     min_cohesion = params.get("min_cohesion", 0.0)
     path_prefix = params.get("path")
+    mode = params.get("mode", "summary")
+    component_filter = params.get("component")
 
     nodes, edges = database.load_graph(ctx.graph_db)
     project_root = Path(ctx.project_root)
@@ -181,9 +187,67 @@ def handle_components(params: dict, ctx: LensContext) -> ToolResponse:
         components = [c for c in components if c.path.startswith(path_prefix)]
     components = [c for c in components if c.cohesion >= min_cohesion]
 
+    # Drill-down: single component with full lists
+    if component_filter:
+        match = [c for c in components if c.id == component_filter]
+        if not match:
+            return ToolResponse(
+                success=False,
+                error=f"Component '{component_filter}' not found.",
+                hint="Use lens_components() to see all component IDs.",
+            )
+        c = match[0]
+        return ToolResponse(
+            success=True,
+            data={
+                "id": c.id,
+                "name": c.name,
+                "path": c.path,
+                "cohesion": c.cohesion,
+                "modules": c.modules,
+                "classes": c.classes,
+                "public_api": c.public_api,
+                "internal_nodes": c.internal_nodes,
+                "internal_edges": c.internal_edges,
+                "external_edges": c.external_edges,
+            },
+        )
+
     # Sort by cohesion descending
     components = sorted(components, key=lambda c: -c.cohesion)
 
+    avg_cohesion = (
+        round(sum(c.cohesion for c in components) / len(components), 2)
+        if components
+        else 0
+    )
+
+    if mode == "summary":
+        return ToolResponse(
+            success=True,
+            data={
+                "components": [
+                    {
+                        "id": c.id,
+                        "name": c.name,
+                        "path": c.path,
+                        "cohesion": c.cohesion,
+                        "module_count": len(c.modules),
+                        "class_count": len(c.classes),
+                        "public_api_count": len(c.public_api),
+                        "internal_count": len(c.internal_nodes),
+                        "internal_edges": c.internal_edges,
+                        "external_edges": c.external_edges,
+                    }
+                    for c in components
+                ],
+                "count": len(components),
+                "avg_cohesion": avg_cohesion,
+                "hint": "Use mode='full' for complete node lists, or component='<id>' to drill into one.",
+            },
+        )
+
+    # mode == "full" — original behavior
     return ToolResponse(
         success=True,
         data={
@@ -203,10 +267,6 @@ def handle_components(params: dict, ctx: LensContext) -> ToolResponse:
                 for c in components
             ],
             "count": len(components),
-            "avg_cohesion": (
-                round(sum(c.cohesion for c in components) / len(components), 2)
-                if components
-                else 0
-            ),
+            "avg_cohesion": avg_cohesion,
         },
     )

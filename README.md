@@ -262,6 +262,7 @@ LoginModal.jsx → authAPI.login() → POST /api/auth/login
 ```bash
 lenspr init <path>           # Build the code graph
 lenspr setup <path>          # Create .mcp.json for your IDE
+lenspr tools list            # Manage tool groups (enable/disable)
 lenspr status <path>         # Show graph stats
 lenspr search <path> "query" # Find functions by name
 lenspr impact <path> <node>  # Check what breaks
@@ -384,6 +385,34 @@ lenspr doctor <path>         # Diagnose configuration issues
 | `lens_resume` | Restore context from auto-generated action log |
 
 </details>
+
+### Tool Groups
+
+LensPR's 60 tools are organized into 12 groups. All groups are enabled by default. Disable unneeded groups to save context window space:
+
+```bash
+lenspr tools list              # Show all groups with status
+lenspr tools disable infrastructure tracing   # Disable groups
+lenspr tools enable git        # Enable groups
+lenspr tools reset             # Re-enable all groups
+```
+
+| Group | Tools | Description |
+|-------|-------|-------------|
+| **core** | 7 | Navigation & search (always on) |
+| **modification** | 6 | Code changes — update, patch, add, delete, rename |
+| **analysis** | 7 | Impact analysis — check what breaks before changes |
+| **quality** | 8 | Vibecoding safety — health score, NFR checks, coverage |
+| **architecture** | 9 | Architecture rules & metrics |
+| **git** | 4 | Blame, history, commit scope at function level |
+| **annotations** | 5 | Semantic annotations — summaries, roles, side effects |
+| **session** | 4 | Session memory — persistent notes across context resets |
+| **infrastructure** | 5 | Cross-language mappers — API routes, DB tables, env vars |
+| **temporal** | 2 | Change hotspots, unified timelines |
+| **tracing** | 2 | Runtime call tracing |
+| **explain** | 1 | Code explanation with usage examples |
+
+The `lenspr setup` command includes interactive group selection. Config is saved in `.lens/config.json`.
 
 ---
 

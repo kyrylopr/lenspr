@@ -160,7 +160,7 @@ class TestTestCoverage:
 
     def test_covered_functions_counted(self, project: LensContext) -> None:
         """Functions called by test_ functions should be covered."""
-        result = handle_test_coverage({}, project)
+        result = handle_test_coverage({"mode": "full"}, project)
 
         assert result.success
         covered_ids = [c["node_id"] for c in result.data["covered"]]
@@ -170,7 +170,7 @@ class TestTestCoverage:
 
     def test_uncovered_functions_counted(self, project: LensContext) -> None:
         """Functions not called from tests should be in uncovered list."""
-        result = handle_test_coverage({}, project)
+        result = handle_test_coverage({"mode": "full"}, project)
 
         assert result.success
         uncovered_ids = [u["node_id"] for u in result.data["uncovered"]]
@@ -179,7 +179,7 @@ class TestTestCoverage:
 
     def test_test_functions_excluded_from_coverage(self, project: LensContext) -> None:
         """test_ functions themselves should not appear as production code."""
-        result = handle_test_coverage({}, project)
+        result = handle_test_coverage({"mode": "full"}, project)
 
         assert result.success
         all_ids = (
@@ -192,7 +192,7 @@ class TestTestCoverage:
 
     def test_eval_directory_excluded(self, project: LensContext) -> None:
         """Functions in eval/ should not appear in coverage report."""
-        result = handle_test_coverage({}, project)
+        result = handle_test_coverage({"mode": "full"}, project)
 
         assert result.success
         all_ids = (

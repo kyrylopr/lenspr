@@ -280,7 +280,7 @@ class TestDeadCode:
 
     def test_groups_by_file(self, project: LensContext) -> None:
         """Dead code is grouped by file path."""
-        result = handle_dead_code({}, project)
+        result = handle_dead_code({"mode": "full"}, project)
 
         assert result.success
         assert "by_file" in result.data

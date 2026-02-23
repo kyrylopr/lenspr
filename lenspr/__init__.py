@@ -132,8 +132,13 @@ def sync(full: bool = False) -> SyncResult:
     return ctx.incremental_sync()
 
 
-def get_system_prompt() -> str:
-    """Generate system prompt for Claude with current project state."""
+def get_system_prompt(enabled_tools: set[str] | None = None) -> str:
+    """Generate system prompt for Claude with current project state.
+
+    Args:
+        enabled_tools: Set of tool names that are registered. If None, all tools
+            are included in the listing (backward compat).
+    """
     ctx = _require_ctx()
 
     prompt_template = _load_prompt_template()
@@ -149,11 +154,15 @@ def get_system_prompt() -> str:
     edge_count = g.number_of_edges()
     file_count = result["pagination"]["total_files"]
 
+    # Generate dynamic tool listing from TOOL_GROUPS
+    tool_listing = _generate_tool_listing(enabled_tools)
+
     base_prompt = prompt_template.format(
         project_structure=structure_text,
         node_count=node_count,
         edge_count=edge_count,
         file_count=file_count,
+        tool_listing=tool_listing,
     )
 
     # Append session context (recent changes + session notes) if available
@@ -277,6 +286,28 @@ def _load_prompt_template() -> str:
     if template_path.exists():
         return template_path.read_text()
     return _DEFAULT_PROMPT
+
+
+def _generate_tool_listing(enabled_tools: set[str] | None = None) -> str:
+    """Generate markdown tool listing from TOOL_GROUPS, filtered to enabled tools."""
+    from lenspr.tool_groups import TOOL_GROUPS, ALWAYS_ON, resolve_enabled_tools
+
+    if enabled_tools is None:
+        enabled_tools = resolve_enabled_tools(None)
+
+    lines = ["## Available Tools", ""]
+
+    for group_name, group_info in TOOL_GROUPS.items():
+        group_tools = [t for t in group_info["tools"] if t in enabled_tools]
+        if not group_tools:
+            continue
+
+        suffix = " (always on)" if group_name in ALWAYS_ON else ""
+        lines.append(f"### {group_name}{suffix} — {group_info['description']}")
+        lines.append(", ".join(f"`{t}`" for t in group_tools))
+        lines.append("")
+
+    return "\n".join(lines)
 
 
 def _format_structure(structure: dict) -> str:

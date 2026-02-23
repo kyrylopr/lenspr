@@ -127,10 +127,17 @@ def handle_env_map(params: dict, ctx: LensContext) -> ToolResponse:
 
     Detects env var definitions (.env, docker-compose) and usages
     (os.environ, os.getenv, process.env) across the codebase.
+
+    Args:
+        mode: "summary" (default) for counts per var, "full" for complete usage details.
+        env_var: Drill into a specific env var by name to see full used_by list.
     """
     ctx.ensure_synced()
     all_nodes = database.get_nodes(ctx.graph_db)
     project_root = ctx.project_root
+
+    mode = params.get("mode", "summary")
+    env_var_filter = params.get("env_var")
 
     from lenspr.resolvers.infra_mapper import EnvVarDef, InfraMapper
 
@@ -211,6 +218,52 @@ def handle_env_map(params: dict, ctx: LensContext) -> ToolResponse:
     defined_names = {d.name for d in definitions}
     undefined = [name for name in env_summary if name not in defined_names and env_summary[name]["used_by"]]
 
+    summary_counts = {
+        "definitions_found": len(definitions),
+        "usages_found": len(usages),
+        "undefined_vars": len(undefined),
+        "edges_created": len(edges),
+    }
+
+    # Drill-down: single env var with full details
+    if env_var_filter:
+        entry = env_summary.get(env_var_filter)
+        if entry is None:
+            return ToolResponse(
+                success=False,
+                error=f"Environment variable '{env_var_filter}' not found.",
+                hint="Use lens_env_map() to see all variable names.",
+            )
+        return ToolResponse(
+            success=True,
+            data={
+                "env_var": env_var_filter,
+                "defined_in": entry["defined_in"],
+                "default": entry["default"],
+                "used_by": entry["used_by"],
+                "usage_count": len(entry["used_by"]),
+            },
+        )
+
+    if mode == "summary":
+        # Compact: replace used_by lists with counts, omit edges
+        compact_vars = {}
+        for name, info in env_summary.items():
+            compact_vars[name] = {
+                "defined_in": info["defined_in"],
+                "usage_count": len(info["used_by"]),
+            }
+        return ToolResponse(
+            success=True,
+            data={
+                "env_vars": compact_vars,
+                "undefined_vars": undefined,
+                "summary": summary_counts,
+                "hint": "Use mode='full' for complete usage details, or env_var='NAME' to drill into one.",
+            },
+        )
+
+    # mode == "full" — original behavior
     return ToolResponse(
         success=True,
         data={
@@ -224,12 +277,7 @@ def handle_env_map(params: dict, ctx: LensContext) -> ToolResponse:
                 }
                 for e in edges
             ],
-            "summary": {
-                "definitions_found": len(definitions),
-                "usages_found": len(usages),
-                "undefined_vars": len(undefined),
-                "edges_created": len(edges),
-            },
+            "summary": summary_counts,
         },
     )
 
@@ -287,10 +335,17 @@ def handle_infra_map(params: dict, ctx: LensContext) -> ToolResponse:
 
     Reads pre-computed infrastructure nodes and edges from graph.db
     (created during init/sync by InfraMapper and CiMapper).
+
+    Args:
+        mode: "summary" (default) for edge counts by type, "full" for complete edge list.
+        focus: Filter to "ci", "docker", or "compose" subsystem with edges.
     """
     import json
 
     ctx.ensure_synced()
+
+    mode = params.get("mode", "summary")
+    focus = params.get("focus")
 
     # Collect infrastructure edges
     infra_edge_types = ["depends_on", "exposes_port", "uses_env"]
@@ -303,7 +358,7 @@ def handle_infra_map(params: dict, ctx: LensContext) -> ToolResponse:
         if n.id.startswith(("infra.", "ci."))
     ]
 
-    # Group edges by category
+    # Group nodes by category
     dockerfiles: list[dict] = []
     ci_workflows: list[dict] = []
     compose_services: list[dict] = []
@@ -339,6 +394,57 @@ def handle_infra_map(params: dict, ctx: LensContext) -> ToolResponse:
             "confidence": edge.get("confidence", ""),
         })
 
+    summary_counts = {
+        "dockerfiles": len(dockerfiles),
+        "ci_workflows": len(ci_workflows),
+        "compose_services": len(compose_services),
+        "edges_total": len(edge_list),
+    }
+
+    # Focus filter: return specific subsystem with relevant edges
+    if focus:
+        focus_lower = focus.lower()
+        if focus_lower == "ci":
+            ci_ids = {w["id"] for w in ci_workflows}
+            focused_edges = [e for e in edge_list if e["from"] in ci_ids or e["to"] in ci_ids]
+            return ToolResponse(success=True, data={
+                "focus": "ci", "ci_workflows": ci_workflows,
+                "edges": focused_edges, "summary": summary_counts,
+            })
+        elif focus_lower == "docker":
+            docker_ids = {d["id"] for d in dockerfiles}
+            focused_edges = [e for e in edge_list if e["from"] in docker_ids or e["to"] in docker_ids]
+            return ToolResponse(success=True, data={
+                "focus": "docker", "dockerfiles": dockerfiles,
+                "edges": focused_edges, "summary": summary_counts,
+            })
+        elif focus_lower == "compose":
+            svc_ids = {s["id"] for s in compose_services}
+            focused_edges = [e for e in edge_list if e["from"] in svc_ids or e["to"] in svc_ids]
+            return ToolResponse(success=True, data={
+                "focus": "compose", "compose_services": compose_services,
+                "edges": focused_edges, "summary": summary_counts,
+            })
+
+    if mode == "summary":
+        # Compact: edge counts by type instead of full list
+        edge_type_counts: dict[str, int] = {}
+        for e in edge_list:
+            edge_type_counts[e["type"]] = edge_type_counts.get(e["type"], 0) + 1
+
+        return ToolResponse(
+            success=True,
+            data={
+                "dockerfiles": dockerfiles,
+                "ci_workflows": ci_workflows,
+                "compose_services": compose_services,
+                "edge_summary": edge_type_counts,
+                "summary": summary_counts,
+                "hint": "Use mode='full' for complete edge list, or focus='ci'|'docker'|'compose' for subsystem detail.",
+            },
+        )
+
+    # mode == "full" — original behavior
     return ToolResponse(
         success=True,
         data={
@@ -346,11 +452,6 @@ def handle_infra_map(params: dict, ctx: LensContext) -> ToolResponse:
             "ci_workflows": ci_workflows,
             "compose_services": compose_services,
             "edges": edge_list,
-            "summary": {
-                "dockerfiles": len(dockerfiles),
-                "ci_workflows": len(ci_workflows),
-                "compose_services": len(compose_services),
-                "edges_total": len(edge_list),
-            },
+            "summary": summary_counts,
         },
     )

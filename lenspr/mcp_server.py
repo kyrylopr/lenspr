@@ -316,9 +316,15 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
     """
     import lenspr
     from lenspr.tools import enable_hot_reload
+    from lenspr.tool_groups import resolve_enabled_tools, load_tool_config
 
     lenspr.init(project_path)
-    instructions = lenspr.get_system_prompt()
+
+    # -- Resolve enabled tool groups (needed for both prompt and registration) --
+    _config_path = Path(project_path) / ".lens" / "config.json"
+    enabled_tools = resolve_enabled_tools(load_tool_config(_config_path))
+
+    instructions = lenspr.get_system_prompt(enabled_tools=enabled_tools)
 
     # Enable hot-reload in tool dispatch if requested
     if hot_reload:
@@ -332,6 +338,12 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
         name="lenspr",
         instructions=instructions,
     )
+
+    def _tool(name: str):
+        """Register tool only if its group is enabled; otherwise no-op."""
+        if name in enabled_tools:
+            return mcp.tool()
+        return lambda fn: fn
 
     # --- MCP Resources ---
     # These provide read-only access to graph data
@@ -352,7 +364,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
             "hint": "Use lens_get_structure with limit/offset for pagination",
         }, indent=2)
 
-    @mcp.tool()
+    @_tool("lens_list_nodes")
     def lens_list_nodes(
         type: str | None = None,
         file_path: str | None = None,
@@ -374,7 +386,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
             params["name"] = name
         return _tool_result("lens_list_nodes", params)
 
-    @mcp.tool()
+    @_tool("lens_get_node")
     def lens_get_node(node_id: str) -> str:
         """Get full details of a specific node including its source code.
 
@@ -383,7 +395,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
         """
         return _tool_result("lens_get_node", {"node_id": node_id})
 
-    @mcp.tool()
+    @_tool("lens_get_connections")
     def lens_get_connections(
         node_id: str,
         direction: str = "both",
@@ -400,7 +412,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
         })
         return json.dumps(result, indent=2)
 
-    @mcp.tool()
+    @_tool("lens_check_impact")
     def lens_check_impact(
         node_id: str,
         depth: int = 2,
@@ -416,7 +428,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
             "depth": depth,
         })
 
-    @mcp.tool()
+    @_tool("lens_update_node")
     def lens_update_node(
         node_id: str,
         new_source: str,
@@ -436,7 +448,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
         })
         return json.dumps(result, indent=2)
 
-    @mcp.tool()
+    @_tool("lens_patch_node")
     def lens_patch_node(
         node_id: str,
         old_fragment: str,
@@ -459,7 +471,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
         })
         return json.dumps(result, indent=2)
 
-    @mcp.tool()
+    @_tool("lens_add_node")
     def lens_add_node(
         file_path: str,
         source_code: str,
@@ -478,7 +490,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
         result = lenspr.handle_tool("lens_add_node", params)
         return json.dumps(result, indent=2)
 
-    @mcp.tool()
+    @_tool("lens_delete_node")
     def lens_delete_node(node_id: str) -> str:
         """Delete a node from the codebase. Check impact first!
 
@@ -488,7 +500,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
         result = lenspr.handle_tool("lens_delete_node", {"node_id": node_id})
         return json.dumps(result, indent=2)
 
-    @mcp.tool()
+    @_tool("lens_search")
     def lens_search(
         query: str,
         search_in: str = "all",
@@ -504,7 +516,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
             "search_in": search_in,
         })
 
-    @mcp.tool()
+    @_tool("lens_get_structure")
     def lens_get_structure(
         max_depth: int = 2,
         mode: str = "summary",
@@ -527,7 +539,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
             params["path_prefix"] = path_prefix
         return _tool_result("lens_get_structure", params)
 
-    @mcp.tool()
+    @_tool("lens_rename")
     def lens_rename(
         node_id: str,
         new_name: str,
@@ -544,7 +556,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
         })
         return json.dumps(result, indent=2)
 
-    @mcp.tool()
+    @_tool("lens_context")
     def lens_context(
         node_id: str,
         include_callers: bool = True,
@@ -575,7 +587,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
             "include_source": include_source,
         })
 
-    @mcp.tool()
+    @_tool("lens_grep")
     def lens_grep(
         pattern: str,
         file_glob: str = "",
@@ -597,7 +609,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
             "max_results": max_results,
         })
 
-    @mcp.tool()
+    @_tool("lens_diff")
     def lens_diff() -> str:
         """Show what changed since last sync without syncing.
 
@@ -606,7 +618,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
         """
         return _tool_result("lens_diff", {})
 
-    @mcp.tool()
+    @_tool("lens_batch")
     def lens_batch(
         updates: list[dict],
         verify_tests: bool = False,
@@ -627,7 +639,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
             params["verify_tests"] = True
         return _tool_result("lens_batch", params)
 
-    @mcp.tool()
+    @_tool("lens_health")
     def lens_health() -> str:
         """Get health report for the code graph.
 
@@ -637,7 +649,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
         result = lenspr.handle_tool("lens_health", {})
         return json.dumps(result, indent=2)
 
-    @mcp.tool()
+    @_tool("lens_dependencies")
     def lens_dependencies(group_by: str = "package") -> str:
         """List all external dependencies (stdlib and third-party packages).
 
@@ -647,7 +659,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
         result = lenspr.handle_tool("lens_dependencies", {"group_by": group_by})
         return json.dumps(result, indent=2)
 
-    @mcp.tool()
+    @_tool("lens_validate_change")
     def lens_validate_change(node_id: str, new_source: str) -> str:
         """Dry-run validation: check what would happen if you update a node.
 
@@ -664,22 +676,30 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
         })
         return json.dumps(result, indent=2)
 
-    @mcp.tool()
-    def lens_dead_code(entry_points: list[str] | None = None) -> str:
+    @_tool("lens_dead_code")
+    def lens_dead_code(
+        entry_points: list[str] | None = None,
+        mode: str = "summary",
+        file_path: str | None = None,
+    ) -> str:
         """Find potentially dead code not reachable from entry points.
 
         Entry points are auto-detected (main, CLI commands, test functions, API handlers).
 
         Args:
             entry_points: Additional entry point node IDs. If empty, auto-detects.
+            mode: "summary" (default) for top 15 + file counts, "full" for complete lists.
+            file_path: Filter dead code to a specific file path.
         """
-        params: dict = {}
+        params: dict = {"mode": mode}
         if entry_points is not None:
             params["entry_points"] = entry_points
+        if file_path is not None:
+            params["file_path"] = file_path
         result = lenspr.handle_tool("lens_dead_code", params)
         return json.dumps(result, indent=2)
 
-    @mcp.tool()
+    @_tool("lens_find_usages")
     def lens_find_usages(
         node_id: str = "", include_tests: bool = True,
         node_ids: list[str] | None = None,
@@ -704,7 +724,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
 
     # -- Semantic Annotation Tools --
 
-    @mcp.tool()
+    @_tool("lens_annotate")
     def lens_annotate(node_id: str) -> str:
         """Generate semantic annotations for a node.
 
@@ -716,7 +736,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
         result = lenspr.handle_tool("lens_annotate", {"node_id": node_id})
         return json.dumps(result, indent=2)
 
-    @mcp.tool()
+    @_tool("lens_save_annotation")
     def lens_save_annotation(
         node_id: str,
         summary: str | None = None,
@@ -749,7 +769,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
         result = lenspr.handle_tool("lens_save_annotation", params)
         return json.dumps(result, indent=2)
 
-    @mcp.tool()
+    @_tool("lens_batch_save_annotations")
     def lens_batch_save_annotations(
         annotations: list[dict],
     ) -> str:
@@ -774,7 +794,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
         result = lenspr.handle_tool("lens_batch_save_annotations", {"annotations": annotations})
         return json.dumps(result, indent=2)
 
-    @mcp.tool()
+    @_tool("lens_annotate_batch")
     def lens_annotate_batch(
         type_filter: str | None = None,
         file_path: str | None = None,
@@ -802,7 +822,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
             params["file_path"] = file_path
         return _tool_result("lens_annotate_batch", params)
 
-    @mcp.tool()
+    @_tool("lens_annotation_stats")
     def lens_annotation_stats() -> str:
         """Get annotation coverage statistics for the codebase.
 
@@ -814,7 +834,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
 
     # -- Git Integration Tools --
 
-    @mcp.tool()
+    @_tool("lens_blame")
     def lens_blame(node_id: str) -> str:
         """Get git blame information for a node's source lines.
 
@@ -826,7 +846,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
         result = lenspr.handle_tool("lens_blame", {"node_id": node_id})
         return json.dumps(result, indent=2)
 
-    @mcp.tool()
+    @_tool("lens_node_history")
     def lens_node_history(node_id: str, limit: int = 10) -> str:
         """Get commit history for a specific node.
 
@@ -842,7 +862,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
         })
         return json.dumps(result, indent=2)
 
-    @mcp.tool()
+    @_tool("lens_commit_scope")
     def lens_commit_scope(commit: str) -> str:
         """Analyze what nodes were affected by a specific commit.
 
@@ -854,7 +874,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
         result = lenspr.handle_tool("lens_commit_scope", {"commit": commit})
         return json.dumps(result, indent=2)
 
-    @mcp.tool()
+    @_tool("lens_recent_changes")
     def lens_recent_changes(limit: int = 5, file_path: str | None = None) -> str:
         """Get recently changed nodes based on git history.
 
@@ -872,7 +892,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
 
     # -- Explanation Tool --
 
-    @mcp.tool()
+    @_tool("lens_explain")
     def lens_explain(node_id: str, include_examples: bool = True) -> str:
         """Generate a human-readable explanation of what a function/class does.
 
@@ -891,7 +911,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
 
     # -- Architecture Metrics Tools --
 
-    @mcp.tool()
+    @_tool("lens_class_metrics")
     def lens_class_metrics(node_id: str) -> str:
         """Get pre-computed metrics for a class: method count, lines,
         public/private methods, dependencies, internal calls, method prefixes,
@@ -903,7 +923,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
         """
         return _tool_result("lens_class_metrics", {"node_id": node_id})
 
-    @mcp.tool()
+    @_tool("lens_project_metrics")
     def lens_project_metrics() -> str:
         """Get project-wide class metrics: total classes, avg/median/min/max methods,
         and percentiles (p90, p95). Use this to understand the distribution
@@ -911,7 +931,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
         """
         return _tool_result("lens_project_metrics", {})
 
-    @mcp.tool()
+    @_tool("lens_largest_classes")
     def lens_largest_classes(limit: int = 10) -> str:
         """Get classes sorted by method count (descending).
         Returns the N largest classes with their metrics.
@@ -922,7 +942,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
         """
         return _tool_result("lens_largest_classes", {"limit": limit})
 
-    @mcp.tool()
+    @_tool("lens_compare_classes")
     def lens_compare_classes(node_ids: list[str]) -> str:
         """Compare metrics between multiple classes.
         Returns metrics side-by-side for easy comparison.
@@ -932,10 +952,12 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
         """
         return _tool_result("lens_compare_classes", {"node_ids": node_ids})
 
-    @mcp.tool()
+    @_tool("lens_components")
     def lens_components(
         path: str | None = None,
         min_cohesion: float = 0.0,
+        mode: str = "summary",
+        component: str | None = None,
     ) -> str:
         """Analyze components (directory-based modules) with cohesion metrics.
         Components are directories containing related code. Returns cohesion score
@@ -944,17 +966,21 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
         Args:
             path: Filter to components under this path.
             min_cohesion: Minimum cohesion threshold (0.0-1.0). Default: 0.0.
+            mode: "summary" (default) for counts, "full" for complete node lists.
+            component: Drill-down into a single component by ID for full details.
         """
-        params: dict = {}
+        params: dict = {"mode": mode}
         if path is not None:
             params["path"] = path
         if min_cohesion > 0:
             params["min_cohesion"] = min_cohesion
+        if component is not None:
+            params["component"] = component
         return _tool_result("lens_components", params)
 
     # -- Session Memory Tools --
 
-    @mcp.tool()
+    @_tool("lens_session_write")
     def lens_session_write(key: str, value: str) -> str:
         """Write or overwrite a persistent session note by key.
 
@@ -967,7 +993,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
         """
         return _tool_result("lens_session_write", {"key": key, "value": value})
 
-    @mcp.tool()
+    @_tool("lens_session_read")
     def lens_session_read() -> str:
         """Read all persistent session notes.
 
@@ -975,7 +1001,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
         """
         return _tool_result("lens_session_read", {})
 
-    @mcp.tool()
+    @_tool("lens_session_handoff")
     def lens_session_handoff(limit: int = 10) -> str:
         """Generate a handoff document combining recent changes and session notes.
 
@@ -988,7 +1014,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
         """
         return _tool_result("lens_session_handoff", {"limit": limit})
 
-    @mcp.tool()
+    @_tool("lens_resume")
     def lens_resume() -> str:
         """Reconstruct previous session context from the auto-generated action log.
 
@@ -1002,7 +1028,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
         """
         return _tool_result("lens_resume", {})
 
-    @mcp.tool()
+    @_tool("lens_run_tests")
     def lens_run_tests(
         path: str = "",
         filter_k: str = "",
@@ -1027,7 +1053,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
 
     # -- Safety & Vibecoding Tools --
 
-    @mcp.tool()
+    @_tool("lens_nfr_check")
     def lens_nfr_check(node_id: str) -> str:
         """Check a function for missing non-functional requirements (NFRs).
 
@@ -1039,8 +1065,11 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
         """
         return _tool_result("lens_nfr_check", {"node_id": node_id})
 
-    @mcp.tool()
-    def lens_test_coverage(file_path: str | None = None) -> str:
+    @_tool("lens_test_coverage")
+    def lens_test_coverage(
+        file_path: str | None = None,
+        mode: str = "summary",
+    ) -> str:
         """Report which functions/methods have test coverage (graph-based).
 
         Uses the call graph: a function is 'covered' if at least one test
@@ -1049,13 +1078,15 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
 
         Args:
             file_path: Optional filter to a specific file or directory.
+            mode: "summary" (default) for by-file aggregation + top 10 uncovered,
+                  "full" for complete covered/uncovered lists.
         """
-        params: dict = {}
+        params: dict = {"mode": mode}
         if file_path is not None:
             params["file_path"] = file_path
         return _tool_result("lens_test_coverage", params)
 
-    @mcp.tool()
+    @_tool("lens_security_scan")
     def lens_security_scan(file_path: str | None = None) -> str:
         """Run Bandit security scanner and map results to graph nodes.
 
@@ -1072,7 +1103,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
             params["file_path"] = file_path
         return _tool_result("lens_security_scan", params)
 
-    @mcp.tool()
+    @_tool("lens_dep_audit")
     def lens_dep_audit() -> str:
         """Audit project dependencies for known vulnerabilities.
 
@@ -1083,7 +1114,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
         """
         return _tool_result("lens_dep_audit", {})
 
-    @mcp.tool()
+    @_tool("lens_arch_rule_add")
     def lens_arch_rule_add(
         rule_type: str,
         description: str = "",
@@ -1113,12 +1144,12 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
         result = lenspr.handle_tool("lens_arch_rule_add", params)
         return json.dumps(result, indent=2)
 
-    @mcp.tool()
+    @_tool("lens_arch_rule_list")
     def lens_arch_rule_list() -> str:
         """List all defined architecture rules with their IDs and config."""
         return _tool_result("lens_arch_rule_list", {})
 
-    @mcp.tool()
+    @_tool("lens_arch_rule_delete")
     def lens_arch_rule_delete(rule_id: str) -> str:
         """Delete an architecture rule by ID.
 
@@ -1128,7 +1159,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
         result = lenspr.handle_tool("lens_arch_rule_delete", {"rule_id": rule_id})
         return json.dumps(result, indent=2)
 
-    @mcp.tool()
+    @_tool("lens_arch_check")
     def lens_arch_check() -> str:
         """Check all architecture rules against the current codebase.
 
@@ -1137,7 +1168,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
         """
         return _tool_result("lens_arch_check", {})
 
-    @mcp.tool()
+    @_tool("lens_vibecheck")
     def lens_vibecheck() -> str:
         """Comprehensive vibecoding health score for the project (0-100, grade A–F).
 
@@ -1150,7 +1181,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
         """
         return _tool_result("lens_vibecheck", {})
 
-    @mcp.tool()
+    @_tool("lens_fix_plan")
     def lens_fix_plan(
         target_grade: str = "B",
         max_items: int = 20,
@@ -1175,7 +1206,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
             params["focus"] = focus
         return _tool_result("lens_fix_plan", params)
 
-    @mcp.tool()
+    @_tool("lens_generate_test_skeleton")
     def lens_generate_test_skeleton(node_id: str) -> str:
         """Generate a structured test specification for a function using graph context.
 
@@ -1191,7 +1222,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
 
     # -- Resolver Tools (cross-language mappers) --
 
-    @mcp.tool()
+    @_tool("lens_api_map")
     def lens_api_map() -> str:
         """Map API routes to frontend calls and create cross-language edges.
 
@@ -1200,7 +1231,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
         """
         return _tool_result("lens_api_map", {})
 
-    @mcp.tool()
+    @_tool("lens_db_map")
     def lens_db_map() -> str:
         """Map database tables to the functions that read/write them.
 
@@ -1210,17 +1241,27 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
         """
         return _tool_result("lens_db_map", {})
 
-    @mcp.tool()
-    def lens_env_map() -> str:
+    @_tool("lens_env_map")
+    def lens_env_map(
+        mode: str = "summary",
+        env_var: str | None = None,
+    ) -> str:
         """Map environment variables and infrastructure dependencies.
 
         Detects env var definitions (.env, docker-compose) and usages
         (os.environ, os.getenv, process.env) across the codebase.
         Highlights undefined env vars (used but not defined anywhere).
-        """
-        return _tool_result("lens_env_map", {})
 
-    @mcp.tool()
+        Args:
+            mode: "summary" (default) for usage counts, "full" for complete used_by lists.
+            env_var: Drill-down into a single env var by name for full details.
+        """
+        params: dict = {"mode": mode}
+        if env_var is not None:
+            params["env_var"] = env_var
+        return _tool_result("lens_env_map", params)
+
+    @_tool("lens_ffi_map")
     def lens_ffi_map() -> str:
         """Map FFI bridges between TS/JS and native code.
 
@@ -1230,18 +1271,28 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
         """
         return _tool_result("lens_ffi_map", {})
 
-    @mcp.tool()
-    def lens_infra_map() -> str:
+    @_tool("lens_infra_map")
+    def lens_infra_map(
+        mode: str = "summary",
+        focus: str | None = None,
+    ) -> str:
         """Map infrastructure: Dockerfiles, CI/CD workflows, compose services.
 
         Shows Docker build stages, exposed ports, CI job dependencies,
         secret/env references, and service topology.
+
+        Args:
+            mode: "summary" (default) for edge counts, "full" for complete edges.
+            focus: Drill-down into "ci", "docker", or "compose" subsystem with edges.
         """
-        return _tool_result("lens_infra_map", {})
+        params: dict = {"mode": mode}
+        if focus is not None:
+            params["focus"] = focus
+        return _tool_result("lens_infra_map", params)
 
     # -- Temporal Tools --
 
-    @mcp.tool()
+    @_tool("lens_hotspots")
     def lens_hotspots(
         limit: int = 20,
         since: str | None = None,
@@ -1264,7 +1315,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
             params["file_path"] = file_path
         return _tool_result("lens_hotspots", params)
 
-    @mcp.tool()
+    @_tool("lens_node_timeline")
     def lens_node_timeline(node_id: str, limit: int = 20) -> str:
         """Show unified timeline of changes for a specific node.
 
@@ -1281,7 +1332,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
 
     # -- Runtime Tracing Tools --
 
-    @mcp.tool()
+    @_tool("lens_trace")
     def lens_trace(
         path: str = "",
         filter_k: str = "",
@@ -1308,7 +1359,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
             params["filter_k"] = filter_k
         return _tool_result("lens_trace", params)
 
-    @mcp.tool()
+    @_tool("lens_trace_stats")
     def lens_trace_stats() -> str:
         """Show runtime tracing statistics from the current graph.
 

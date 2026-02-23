@@ -340,8 +340,13 @@ def handle_test_coverage(params: dict, ctx: LensContext) -> ToolResponse:
 
     Tries pytest-cov (runtime line coverage) first, falls back to
     static call graph analysis if pytest-cov is unavailable.
+
+    Args:
+        mode: "summary" (default) for by-file aggregates, "full" for function-level lists.
+        file_path: Filter to a specific file or directory.
     """
     file_path_filter = params.get("file_path")
+    mode = params.get("mode", "summary")
 
     ctx.ensure_synced()
     nodes = database.get_nodes(ctx.graph_db, file_filter=file_path_filter)
@@ -409,6 +414,41 @@ def handle_test_coverage(params: dict, ctx: LensContext) -> ToolResponse:
 
     grade = "A" if pct >= 80 else "B" if pct >= 60 else "C" if pct >= 40 else "D" if pct >= 20 else "F"
 
+    warnings = [
+        f"\u26a0\ufe0f Only {pct}% test coverage (grade {grade}) — "
+        f"{len(uncovered)} functions untested"
+    ] if pct < 50 else []
+
+    if mode == "summary":
+        # Aggregate by file
+        by_file: dict[str, dict] = {}
+        for item in covered:
+            f = item.get("file") or "unknown"
+            by_file.setdefault(f, {"covered": 0, "uncovered": 0})
+            by_file[f]["covered"] += 1
+        for item in uncovered:
+            f = item.get("file") or "unknown"
+            by_file.setdefault(f, {"covered": 0, "uncovered": 0})
+            by_file[f]["uncovered"] += 1
+
+        return ToolResponse(
+            success=True,
+            data={
+                "source": source,
+                "coverage_pct": pct,
+                "grade": grade,
+                "covered_count": len(covered),
+                "uncovered_count": len(uncovered),
+                "by_file": by_file,
+                "top_uncovered": uncovered[:10],
+                "filter": file_path_filter,
+                "analysis_method": method_desc,
+                "hint": "Use mode='full' or file_path='path' for function-level detail.",
+            },
+            warnings=warnings,
+        )
+
+    # mode == "full" — original behavior
     return ToolResponse(
         success=True,
         data={
@@ -426,10 +466,7 @@ def handle_test_coverage(params: dict, ctx: LensContext) -> ToolResponse:
                 f"{len(uncovered)} functions have no tests — consider adding them."
             ) if uncovered else "Great — all functions have test coverage.",
         },
-        warnings=[
-            f"⚠️ Only {pct}% test coverage (grade {grade}) — "
-            f"{len(uncovered)} functions untested"
-        ] if pct < 50 else [],
+        warnings=warnings,
     )
 
 

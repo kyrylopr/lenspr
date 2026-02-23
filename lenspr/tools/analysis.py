@@ -432,11 +432,18 @@ def handle_dependencies(params: dict, ctx: LensContext) -> ToolResponse:
 
 
 def handle_dead_code(params: dict, ctx: LensContext) -> ToolResponse:
-    """Find potentially dead code not reachable from entry points."""
+    """Find potentially dead code not reachable from entry points.
+
+    Args:
+        mode: "summary" (default) for file-aggregated counts + top 15, "full" for complete list.
+        file_path: Filter dead code to a specific file or directory prefix.
+    """
     ctx.ensure_synced()
     nx_graph = ctx.get_graph()
 
     entry_points: list[str] = params.get("entry_points", [])
+    mode = params.get("mode", "summary")
+    file_filter = params.get("file_path")
 
     if not entry_points:
         public_api = collect_public_api(nx_graph)
@@ -460,6 +467,47 @@ def handle_dead_code(params: dict, ctx: LensContext) -> ToolResponse:
             "start_line": node_data.get("start_line", 0),
         })
 
+    # Apply file filter
+    if file_filter:
+        dead_by_file = {k: v for k, v in dead_by_file.items() if k.startswith(file_filter)}
+        dead_code = [
+            nid for nid in dead_code
+            if nx_graph.nodes.get(nid, {}).get("file_path", "").startswith(file_filter)
+        ]
+
+    static_warning = (
+        "Static graph analysis only. Verify with lens_grep before deleting. "
+        "False positives possible for: dynamic dispatch (getattr/eval), "
+        "string-based imports, subprocess entry points, and framework "
+        "callbacks not traceable at parse time."
+    )
+
+    if mode == "summary":
+        # File-aggregated counts + top 15 items
+        by_file_summary = {f: len(nodes) for f, nodes in dead_by_file.items()}
+        top_dead: list[dict] = []
+        for f, nodes in sorted(dead_by_file.items()):
+            for n in nodes:
+                top_dead.append({**n, "file": f})
+                if len(top_dead) >= 15:
+                    break
+            if len(top_dead) >= 15:
+                break
+
+        return ToolResponse(
+            success=True,
+            data={
+                "dead_code": dead_code,
+                "count": len(dead_code),
+                "by_file_summary": by_file_summary,
+                "top_dead": top_dead,
+                "entry_points_used": len(entry_points),
+                "hint": "Use mode='full' for complete list, or file_path='path' to filter.",
+            },
+            warnings=[static_warning] if dead_code else [],
+        )
+
+    # mode == "full" — original behavior
     return ToolResponse(
         success=True,
         data={
@@ -468,12 +516,7 @@ def handle_dead_code(params: dict, ctx: LensContext) -> ToolResponse:
             "by_file": dead_by_file,
             "entry_points_used": len(entry_points),
         },
-        warnings=[
-            "Static graph analysis only. Verify with lens_grep before deleting. "
-            "False positives possible for: dynamic dispatch (getattr/eval), "
-            "string-based imports, subprocess entry points, and framework "
-            "callbacks not traceable at parse time."
-        ] if dead_code else [],
+        warnings=[static_warning] if dead_code else [],
     )
 
 
