@@ -61,10 +61,11 @@ LensPR connects your frontend and backend into a single graph:
 ```
 Frontend:  LoginModal → fetch("/api/auth/login")
                               ↓ CALLS_API
-Backend:   @router.post("/login") → def login()
+Backend:   @router.post("/login") → def login()       # FastAPI/Flask
+           app.post("/login", handler)                 # Express/Fastify/Hono
 ```
 
-It also tracks database operations, Docker services, and environment variables — so the AI sees the full picture, not just one language at a time.
+It also tracks database operations, Docker services, environment variables, FFI bridges (NAPI/koffi/WASM), CI/CD workflows, and raw SQL migrations — so the AI sees the full picture, not just one language at a time.
 
 ### 4. Search with context
 
@@ -94,22 +95,24 @@ That's it.
 ## How It Works
 
 ```
-Your code (.py, .ts, .tsx, .js, .jsx)
+Your code (.py, .ts, .tsx, .js, .jsx) + infra (.sql, Dockerfile, CI workflows)
        │
        ▼
-  6-pass pipeline:
-    1. AST parsing      (Python ast + tree-sitter for JS/TS)
+  8-pass pipeline:
+    1. AST parsing       (Python ast + tree-sitter for JS/TS)
     2. Name resolution   (Jedi / Pyright / TS Compiler API)
     3. Edge normalization (cross-file ID matching)
     4. API mapping       (frontend HTTP → backend route)
-    5. SQL mapping       (function → database table)
-    6. Infra mapping     (Docker services, env vars)
+    5. SQL mapping       (function → database table + raw .sql files)
+    6. Infra mapping     (Docker services, Dockerfiles, env vars)
+    7. FFI mapping       (NAPI, koffi, ffi-napi, WASM bridges)
+    8. CI/CD mapping     (GitHub Actions workflows, jobs, secrets)
        │
        ▼
   Unified dependency graph (SQLite, local, never leaves your machine)
        │
        ▼
-  58 MCP tools for your AI assistant
+  60 MCP tools for your AI assistant  (see full list below)
        │
        ▼
   File watcher auto-syncs on every save
@@ -175,7 +178,8 @@ LoginModal.jsx → authAPI.login() → POST /api/auth/login
 | **One-Call Context** | Source + callers + callees + tests in a single request |
 | **Cross-Language Edges** | Frontend HTTP calls matched to backend route handlers (CALLS_API) |
 | **Database Mapping** | Tracks which functions read/write which tables (READS_TABLE / WRITES_TABLE) |
-| **Infra Mapping** | Docker service dependencies, env var usage across code |
+| **Infra Mapping** | Docker services, Dockerfiles, env vars, CI/CD workflows |
+| **FFI Mapping** | Detects NAPI, koffi, ffi-napi, WASM bridges between JS/TS and native code |
 | **Surgical Edits** | `lens_patch_node` for targeted find/replace — no full rewrites needed |
 | **Test Runner** | `lens_run_tests` runs pytest with auto-tracing and structured results |
 | **Runtime Call Tracing** | Merges runtime edges from test execution into the static graph |
@@ -209,14 +213,26 @@ LoginModal.jsx → authAPI.login() → POST /api/auth/login
 | Python | AST + Jedi (or Pyright) | 95%+ |
 | TypeScript / JavaScript | tree-sitter + TS Compiler API | 90%+ |
 
+### Infrastructure & Config Files
+
+| File Type | What gets extracted |
+|-----------|-------------------|
+| `.sql` files | CREATE TABLE, INSERT, SELECT, ALTER, DROP, pg_cron schedules |
+| `Dockerfile*` | Base images, stages, ENV/ARG, EXPOSE, COPY --from, entrypoint |
+| `.github/workflows/*.yml` | Workflow name, triggers, jobs, needs, steps, uses, secrets/env refs |
+| `docker-compose.yml` | Services, ports, depends_on, environment |
+| `.env` files | Variable definitions |
+
 ### Cross-Language Connections
 
 | Edge Type | What it connects |
 |-----------|-----------------|
-| `CALLS_API` | Frontend `fetch("/api/auth/login")` → Backend `@router.post("/login")` |
+| `CALLS_API` | Frontend `fetch("/api/auth/login")` → Backend `@router.post("/login")` or `app.get("/path", handler)` |
+| `CALLS_NATIVE` | TS/JS `require("./addon.node")` / `koffi.load("lib.so")` → Native module |
 | `READS_TABLE` / `WRITES_TABLE` | Python function → SQLAlchemy/Django table |
-| `DEPENDS_ON` | Docker service → service (from docker-compose.yml) |
-| `USES_ENV` | Code `os.getenv("KEY")` / `import.meta.env.VITE_KEY` → env var |
+| `MIGRATES` | SQL migration → table (from raw `.sql` files) |
+| `DEPENDS_ON` | Docker service / CI job → dependency (from compose, Dockerfiles, GitHub Actions) |
+| `USES_ENV` | Code `os.getenv("KEY")` / `import.meta.env.VITE_KEY` / `${{ secrets.KEY }}` → env var |
 
 ---
 
@@ -232,7 +248,7 @@ LoginModal.jsx → authAPI.login() → POST /api/auth/login
 | `method` | Class method |
 | `block` | Module-level code outside functions/classes (constants, guards, imports) |
 
-### 12 Edge Types
+### 16 Edge Types
 
 | Category | Edge Type | Meaning |
 |----------|-----------|---------|
@@ -244,10 +260,14 @@ LoginModal.jsx → authAPI.login() → POST /api/auth/login
 | | `contains` | Nested function/class inside another |
 | | `mocks` | Test `@patch("B")` mocks B |
 | **Cross-language** | `calls_api` | Frontend HTTP call → backend route handler |
+| | `calls_native` | TS/JS calls native code via NAPI/koffi/FFI/WASM |
 | **Database** | `reads_table` | Function SELECTs from table |
 | | `writes_table` | Function INSERTs/UPDATEs/DELETEs table |
-| **Infrastructure** | `depends_on` | Docker service dependency |
+| | `migrates` | SQL migration creates/alters a table |
+| **Infrastructure** | `depends_on` | Docker/CI service/job dependency |
+| | `exposes_port` | Service exposes a network port |
 | | `uses_env` | Code reads environment variable |
+| | `handles_route` | Route decorator → handler function |
 
 ### Edge Confidence
 
@@ -272,117 +292,119 @@ lenspr doctor <path>         # Diagnose configuration issues
 ```
 
 <details>
-<summary>All MCP tools (58)</summary>
+<summary>All 60 MCP tools by category</summary>
 
-### Navigation & Search
+### Navigation & Search (8 tools)
 | Tool | Description |
 |------|-------------|
 | `lens_context` | Source + callers + callees + tests in one call |
-| `lens_get_node` | Get source code of a node |
+| `lens_get_node` | Get source code of a specific node |
 | `lens_search` | Search by name, code, or docstring |
-| `lens_grep` | Regex search with graph context |
-| `lens_find_usages` | All callers, importers, inheritors |
-| `lens_get_structure` | Project overview |
-| `lens_list_nodes` | List all nodes with filters |
-| `lens_get_connections` | Direct callers/callees |
+| `lens_grep` | Regex search with graph context (shows containing function) |
+| `lens_find_usages` | All callers, importers, inheritors (batch mode supported) |
+| `lens_get_structure` | Project overview (compact/summary/full modes) |
+| `lens_list_nodes` | List all nodes with type/file/name filters |
+| `lens_get_connections` | Direct callers and callees for a node |
 
-### Analysis & Safety
+### Modification (6 tools)
 | Tool | Description |
 |------|-------------|
-| `lens_check_impact` | Severity + affected nodes before changes |
-| `lens_validate_change` | Dry-run validation without applying |
-| `lens_health` | Graph quality stats |
-| `lens_dead_code` | Find unreachable code |
-| `lens_dependencies` | External packages used |
-| `lens_diff` | Changes since last sync |
+| `lens_update_node` | Replace full node source with syntax validation |
+| `lens_patch_node` | Surgical find/replace within a node (safer for small changes) |
+| `lens_add_node` | Add new function or class to a file |
+| `lens_delete_node` | Remove a node from the codebase |
+| `lens_rename` | Rename a function/class/method across entire project |
+| `lens_batch` | Atomic multi-node updates with rollback on failure |
 
-### Modification
+### Analysis (6 tools)
 | Tool | Description |
 |------|-------------|
-| `lens_update_node` | Replace full node source with validation |
-| `lens_patch_node` | Surgical find/replace within a node |
-| `lens_add_node` | Add new function/class |
-| `lens_delete_node` | Remove a node |
-| `lens_rename` | Rename across project |
-| `lens_batch` | Atomic multi-node updates |
+| `lens_check_impact` | Severity (LOW→CRITICAL) + affected nodes before any change |
+| `lens_validate_change` | Dry-run validation without applying changes |
+| `lens_health` | Graph quality: nodes/edges, confidence %, docstrings, circular imports |
+| `lens_dead_code` | Find unreachable code (auto-detects entry points) |
+| `lens_dependencies` | External packages used, grouped by package or file |
+| `lens_diff` | Show what changed since last sync |
 
-### Testing & Tracing
+### Testing & Runtime Tracing (3 tools)
 | Tool | Description |
 |------|-------------|
-| `lens_run_tests` | Run pytest with structured results + auto-coverage |
-| `lens_trace` | Run tests with runtime call tracing (Python 3.12+) |
-| `lens_trace_stats` | Show static vs runtime edge statistics |
+| `lens_run_tests` | Run pytest with structured results, auto-coverage, auto-tracing |
+| `lens_trace` | Run tests with runtime call tracing (Python 3.12+, ~5% overhead) |
+| `lens_trace_stats` | Static vs runtime edge statistics and confirmation rate |
 
-### Git Integration
+### Vibecoding Safety (7 tools)
 | Tool | Description |
 |------|-------------|
-| `lens_blame` | Who wrote each line |
-| `lens_node_history` | Commits per function |
-| `lens_commit_scope` | What a commit affected |
-| `lens_recent_changes` | Recently modified nodes |
-
-### Semantic Annotations
-| Tool | Description |
-|------|-------------|
-| `lens_annotate` | Generate annotation context |
-| `lens_save_annotation` | Save summary + role |
-| `lens_batch_save_annotations` | Annotate many nodes at once |
-| `lens_annotate_batch` | Get nodes needing annotation |
-| `lens_annotation_stats` | Coverage statistics |
-
-### Architecture Metrics
-| Tool | Description |
-|------|-------------|
-| `lens_class_metrics` | Pre-computed class metrics |
-| `lens_project_metrics` | Project-wide statistics |
-| `lens_largest_classes` | Classes sorted by size |
-| `lens_compare_classes` | Compare class metrics |
-| `lens_components` | Component cohesion analysis |
-
-### Explanation
-| Tool | Description |
-|------|-------------|
-| `lens_explain` | Human-readable explanation of a node |
-
-### Cross-Language & Infrastructure
-| Tool | Description |
-|------|-------------|
-| `lens_api_map` | Map frontend API calls to backend route handlers |
-| `lens_db_map` | Map database tables to functions that read/write them |
-| `lens_env_map` | Map environment variables across code and config files |
-
-### Session Memory
-| Tool | Description |
-|------|-------------|
-| `lens_session_write` | Save a persistent note by key |
-| `lens_session_read` | Read all session notes |
-| `lens_session_handoff` | Generate handoff doc for next session |
-| `lens_resume` | Restore context from auto-generated action log |
-
-### Vibecoding Safety
-| Tool | Description |
-|------|-------------|
-| `lens_vibecheck` | 0-100 health score (grade A–F) across 6 dimensions |
+| `lens_vibecheck` | 0–100 health score (grade A–F) across 6 dimensions |
 | `lens_nfr_check` | Flag missing error handling, logging, secrets, auth per function |
-| `lens_test_coverage` | Graph-based + pytest-cov coverage report |
+| `lens_test_coverage` | Runtime (pytest-cov) + graph-based coverage report |
 | `lens_security_scan` | Run Bandit security scanner, results mapped to graph nodes |
 | `lens_dep_audit` | Check dependencies for known CVEs (pip-audit / npm audit) |
-| `lens_fix_plan` | Prioritized remediation plan to improve health score |
-| `lens_generate_test_skeleton` | Test spec with scenarios, mocks, and usage examples |
+| `lens_fix_plan` | Prioritized remediation plan (CRITICAL→LOW) to improve health score |
+| `lens_generate_test_skeleton` | Test spec with scenarios, mocks, and real usage examples |
 
-### Architecture Rules
+### Architecture Rules (4 tools)
 | Tool | Description |
 |------|-------------|
 | `lens_arch_rule_add` | Define a rule enforced on every code change |
-| `lens_arch_rule_list` | List all defined rules |
+| `lens_arch_rule_list` | List all defined rules with config |
 | `lens_arch_rule_delete` | Remove a rule by ID |
 | `lens_arch_check` | Check all rules against current codebase |
 
-### Temporal Analysis
+### Architecture Metrics (5 tools)
 | Tool | Description |
 |------|-------------|
-| `lens_hotspots` | Find functions that change most frequently |
-| `lens_node_timeline` | Unified timeline of changes (LensPR + git) |
+| `lens_class_metrics` | Pre-computed class metrics (methods, lines, percentile rank) |
+| `lens_project_metrics` | Project-wide class statistics (avg/median/p90/p95) |
+| `lens_largest_classes` | Classes sorted by method count (descending) |
+| `lens_compare_classes` | Side-by-side metrics comparison of multiple classes |
+| `lens_components` | Directory-based component cohesion analysis |
+
+### Cross-Language & Infrastructure (5 tools)
+| Tool | Description |
+|------|-------------|
+| `lens_api_map` | Frontend API calls → backend route handlers (Flask/FastAPI/Express/Fastify/Hono/Koa) |
+| `lens_db_map` | Database tables → functions that read/write them (SQLAlchemy/Django/raw SQL) |
+| `lens_env_map` | Environment variables: definitions, usages, undefined vars |
+| `lens_ffi_map` | FFI bridges: NAPI, koffi, ffi-napi, WASM between TS/JS and native code |
+| `lens_infra_map` | Dockerfiles, CI/CD workflows, compose services, secrets |
+
+### Git Integration (4 tools)
+| Tool | Description |
+|------|-------------|
+| `lens_blame` | Who wrote each line of a function |
+| `lens_node_history` | Commits that modified a specific function |
+| `lens_commit_scope` | What nodes a specific commit affected |
+| `lens_recent_changes` | Recently modified nodes from git history |
+
+### Temporal Analysis (2 tools)
+| Tool | Description |
+|------|-------------|
+| `lens_hotspots` | Functions that change most frequently (risk indicator) |
+| `lens_node_timeline` | Unified timeline: LensPR history (with reasoning) + git commits |
+
+### Explanation (1 tool)
+| Tool | Description |
+|------|-------------|
+| `lens_explain` | Human-readable explanation with callers, callees, usage examples |
+
+### Semantic Annotations (5 tools)
+| Tool | Description |
+|------|-------------|
+| `lens_annotate` | Generate annotation suggestion for a node |
+| `lens_save_annotation` | Save summary, role, and side effects to a node |
+| `lens_batch_save_annotations` | Annotate many nodes in one call |
+| `lens_annotate_batch` | Get nodes that need annotation |
+| `lens_annotation_stats` | Annotation coverage statistics |
+
+### Session Memory (4 tools)
+| Tool | Description |
+|------|-------------|
+| `lens_session_write` | Save a persistent note (survives context resets) |
+| `lens_session_read` | Read all session notes to restore context |
+| `lens_session_handoff` | Generate handoff doc for next session |
+| `lens_resume` | Restore context from auto-generated action log |
 
 </details>
 
@@ -409,15 +431,15 @@ AI agents write a lot of code fast. LensPR adds a safety layer that catches comm
 
 ```
 lens_vibecheck()
-→ score: 85/100
+→ score: 86/100
 → grade: B
 → breakdown:
-    test_coverage:    16/25  — 64% tested
-    dead_code:       20/20  — 0% dead
-    circular_imports:15/15  — 0 cycles ✓
-    architecture:    12/15  — 1 violation
-    documentation:    8/10  — 81% have descriptions
-    graph_confidence:14/15  — 95% edges resolved
+    test_coverage:    17/25  — 67% tested (410/614 functions)
+    dead_code:        20/20  — 0% dead in production code
+    circular_imports: 15/15  — 0 cycles
+    architecture:     12/15  — 1 violation
+    documentation:     8/10  — 81% have descriptions
+    graph_confidence: 14/15  — 94% internal edges resolved
 ```
 
 Run `lens_vibecheck()` periodically to track whether the codebase is improving or degrading.
@@ -455,10 +477,10 @@ Rules are checked automatically on every `lens_update_node` call. Violations app
 
 ## Known Limitations
 
-- **Dynamic code** (`getattr`, `eval`, dynamic imports) can't be fully tracked — accounts for ~0.1% of edges in practice
-- **Instance method dispatch** — `self.method()` calls have limited resolution without runtime tracing (`lens_trace` resolves these on Python 3.12+)
-- **Not tested on >10k files** — validated on projects up to 257 files / 3,222 nodes
+- **Dynamic code** (`getattr`, `eval`, dynamic imports) can't be fully tracked — accounts for ~0.1% of edges in practice (9 unresolved out of 9,090 total)
+- **Instance method dispatch** — `self.method()` calls have limited resolution without runtime tracing (`lens_trace` on Python 3.12+ resolves these; 15.9% runtime confirmation rate observed)
 - **TypeScript needs Node.js 18+** for full type inference
+- **Security scanning** requires optional dependencies (`pip install bandit` and/or `pip install pip-audit`)
 
 ---
 
@@ -466,6 +488,7 @@ Rules are checked automatically on every `lens_update_node` call. Violations app
 
 Contributions welcome:
 - **Language parsers** — Go, Rust, Java (BaseParser interface is ready)
+- **Mapper plugins** — GitLab CI, Terraform, Kubernetes manifests
 - **Bug reports** — even "this doesn't work" is helpful
 - **Ideas** — [open an issue](https://github.com/kyrylopr/lenspr/issues)
 
