@@ -1,10 +1,8 @@
 # LensPR
 
-**AI coding assistants break code because they don't see dependencies. LensPR fixes that.**
+AI coding assistants work with code as text — they grep, read, and guess at dependencies. This works for simple changes but breaks down when a function has callers across multiple files.
 
-Your AI assistant treats code as text files. It greps, reads, and guesses. When it changes a function, it has no idea that 12 other functions depend on it.
-
-LensPR parses your codebase into a dependency graph and gives your AI the tools to understand it — before making changes.
+LensPR parses your codebase into a dependency graph and gives your AI the tools to see what depends on what — before making changes.
 
 <!-- TODO: Add demo GIF here -->
 <!-- ![Demo](assets/demo.gif) -->
@@ -121,27 +119,6 @@ Your code (.py, .ts, .tsx, .js, .jsx) + infra (.sql, Dockerfile, CI workflows)
 Everything runs locally. Your code never leaves your machine.
 
 ---
-
-## Benchmarks
-
-| Metric | Without LensPR | With LensPR | Improvement |
-|--------|----------------|-------------|-------------|
-| **Task Completion** | 33% (1/3) | 100% (3/3) | **+200%** |
-| **Tokens Used** | 1.27M | 388K | **-70%** |
-| **API Calls** | 84 | 38 | **-55%** |
-
-<details>
-<summary>Detailed results</summary>
-
-| Task | Without | With | Status |
-|------|---------|------|--------|
-| Understand Function | 602K tokens | 131K tokens | Both passed |
-| Find All Usages | 623K tokens | 137K tokens | With: passed, Without: failed |
-| Safe Code Change | Rate limit | 121K tokens | With: passed, Without: failed |
-
-Run yourself: `make benchmark`
-
-</details>
 
 ### Real-World Validation
 
