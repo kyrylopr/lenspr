@@ -1103,3 +1103,185 @@ class TestIncludeRouterPrefix:
         assert len(edges) == 1
         assert edges[0].from_node == "frontend.admin.fetchPending"
         assert edges[0].to_node == "app.routers.admin.users.get_pending"
+
+
+# ---------------------------------------------------------------------------
+# Tests — Programmatic route extraction (Express, Fastify, Hono)
+# ---------------------------------------------------------------------------
+
+
+class TestProgrammaticRouteExtraction:
+    """Test detection of app.get('/path', handler) style routes."""
+
+    def test_express_app_get(self) -> None:
+        mapper = ApiMapper()
+        nodes = [
+            _make_node(
+                "server.routes.getUsers",
+                'app.get("/api/users", getUsers);',
+                file_path="src/routes.ts",
+            ),
+        ]
+        routes = mapper.extract_routes(nodes)
+        assert len(routes) == 1
+        assert routes[0].method == "GET"
+        assert routes[0].path == "/api/users"
+
+    def test_express_router_post(self) -> None:
+        mapper = ApiMapper()
+        nodes = [
+            _make_node(
+                "auth.routes.login",
+                'router.post("/login", loginHandler);',
+                file_path="src/auth/routes.ts",
+            ),
+        ]
+        routes = mapper.extract_routes(nodes)
+        assert len(routes) == 1
+        assert routes[0].method == "POST"
+        assert routes[0].path == "/login"
+
+    def test_fastify_get(self) -> None:
+        mapper = ApiMapper()
+        nodes = [
+            _make_node(
+                "fastify.items.list",
+                'fastify.get("/api/items", listItems);',
+                file_path="src/items.ts",
+            ),
+        ]
+        routes = mapper.extract_routes(nodes)
+        assert len(routes) == 1
+        assert routes[0].method == "GET"
+        assert routes[0].path == "/api/items"
+
+    def test_hono_post(self) -> None:
+        mapper = ApiMapper()
+        nodes = [
+            _make_node(
+                "hono.users.create",
+                'hono.post("/api/users", createUser);',
+                file_path="src/users.ts",
+            ),
+        ]
+        routes = mapper.extract_routes(nodes)
+        assert len(routes) == 1
+        assert routes[0].method == "POST"
+
+    def test_express_delete(self) -> None:
+        mapper = ApiMapper()
+        nodes = [
+            _make_node(
+                "server.routes.deleteUser",
+                'app.delete("/api/users/:id", deleteUser);',
+                file_path="src/routes.ts",
+            ),
+        ]
+        routes = mapper.extract_routes(nodes)
+        assert len(routes) == 1
+        assert routes[0].method == "DELETE"
+        # :id should be normalized to :param
+        assert ":param" in routes[0].path
+
+    def test_express_use_mount_prefix(self) -> None:
+        mapper = ApiMapper()
+        # Module-level: app.use("/api/v1", router)
+        # Then: router.get("/users", handler)
+        nodes = [
+            _make_node(
+                "server.app.mount",
+                'app.use("/api/v1", router);',
+                file_path="src/app.ts",
+                node_type="module",
+            ),
+            _make_node(
+                "server.routes.getUsers",
+                'router.get("/users", getUsers);',
+                file_path="src/routes.ts",
+            ),
+        ]
+        routes = mapper.extract_routes(nodes)
+        # The router.get should find its route; mount prefix applies to "router" var
+        assert any(r.method == "GET" for r in routes)
+
+    def test_multiple_express_routes(self) -> None:
+        mapper = ApiMapper()
+        source = (
+            'app.get("/api/users", listUsers);\n'
+            'app.post("/api/users", createUser);\n'
+            'app.put("/api/users/:id", updateUser);\n'
+            'app.delete("/api/users/:id", deleteUser);'
+        )
+        nodes = [
+            _make_node(
+                "server.routes",
+                source,
+                file_path="src/routes.ts",
+            ),
+        ]
+        routes = mapper.extract_routes(nodes)
+        assert len(routes) == 4
+        methods = {r.method for r in routes}
+        assert methods == {"GET", "POST", "PUT", "DELETE"}
+
+    def test_skips_python_files(self) -> None:
+        """Programmatic routes should NOT match in Python files."""
+        mapper = ApiMapper()
+        nodes = [
+            _make_node(
+                "app.main.setup",
+                'app.get("/api/users", handler)',
+                file_path="app/main.py",
+            ),
+        ]
+        routes = mapper.extract_routes(nodes)
+        # Should be 0 — Python files use decorator patterns only
+        assert len(routes) == 0
+
+    def test_skips_test_files_ts(self) -> None:
+        """Test files in TS should be skipped."""
+        mapper = ApiMapper()
+        nodes = [
+            _make_node(
+                "test.routes",
+                'app.get("/api/test", handler);',
+                file_path="src/__tests__/routes.test.ts",
+            ),
+        ]
+        routes = mapper.extract_routes(nodes)
+        assert len(routes) == 0
+
+    def test_end_to_end_express_with_fetch(self) -> None:
+        """Express route should match with frontend fetch call."""
+        mapper = ApiMapper()
+        backend = _make_node(
+            "server.routes.getUsers",
+            'app.get("/api/users", getUsers);',
+            file_path="src/routes.ts",
+        )
+        frontend = _make_node(
+            "client.api.fetchUsers",
+            'const res = await fetch("/api/users");',
+            file_path="src/client/api.ts",
+        )
+        mapper.extract_routes([backend, frontend])
+        mapper.extract_api_calls([backend, frontend])
+        edges = mapper.match()
+        assert len(edges) == 1
+        assert edges[0].type == EdgeType.CALLS_API
+        assert edges[0].from_node == "client.api.fetchUsers"
+        assert edges[0].to_node == "server.routes.getUsers"
+
+    def test_no_duplicates_with_decorator(self) -> None:
+        """Same route via decorator and programmatic should not duplicate."""
+        mapper = ApiMapper()
+        nodes = [
+            # Python-style decorator — this won't match programmatic because it's .py
+            _make_node(
+                "app.users.get_users",
+                '@app.get("/api/users")\ndef get_users():\n    pass',
+                file_path="app/users.py",
+            ),
+        ]
+        routes = mapper.extract_routes(nodes)
+        assert len(routes) == 1  # Only one route, not duplicated

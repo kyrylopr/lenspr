@@ -606,6 +606,81 @@ def get_annotation_stats(db_path: Path) -> dict:
         }
 
 
+def get_edges_by_types(
+    edge_types: list[str], db_path: Path,
+) -> list[dict]:
+    """Return all edges matching given types from the edges table.
+
+    Used by api_map / db_map tools to read pre-computed cross-language and
+    database edges instead of re-scanning source code.
+    """
+    if not edge_types:
+        return []
+    placeholders = ",".join("?" * len(edge_types))
+    sql = f"SELECT * FROM edges WHERE type IN ({placeholders}) ORDER BY from_node"
+    with _connect(db_path) as conn:
+        rows = conn.execute(sql, edge_types).fetchall()
+        return [dict(r) for r in rows]
+
+
+def resolve_node_id(
+    query: str, db_path: Path, max_suggestions: int = 5,
+) -> tuple[str | None, list[str]]:
+    """Resolve a fuzzy query to an exact node_id.
+
+    Strategy chain (stops at first match):
+      1. Exact match:   WHERE id = ?
+      2. Suffix match:  WHERE id LIKE '%.<query>'  (e.g. "auth.login" → "backend.routers.auth.login")
+      3. Contains match: WHERE id LIKE '%<query>%'
+      4. Name match:    WHERE name = ?             (e.g. "login" → node whose name == "login")
+
+    Returns:
+        (resolved_id, [])           — unique match found
+        (None, [candidate, ...])    — ambiguous: multiple matches (top N returned)
+        (None, [])                  — not found at all
+    """
+    with _connect(db_path) as conn:
+        # 1. Exact match
+        row = conn.execute("SELECT id FROM nodes WHERE id = ?", (query,)).fetchone()
+        if row:
+            return row[0], []
+
+        # 2. Suffix match (qualified tail, e.g. "auth.login")
+        rows = conn.execute(
+            "SELECT id FROM nodes WHERE id LIKE ? ORDER BY length(id)",
+            (f"%.{query}",),
+        ).fetchall()
+        ids = [r[0] for r in rows]
+        if len(ids) == 1:
+            return ids[0], []
+        if ids:
+            return None, ids[:max_suggestions]
+
+        # 3. Contains match
+        rows = conn.execute(
+            "SELECT id FROM nodes WHERE id LIKE ? ORDER BY length(id)",
+            (f"%{query}%",),
+        ).fetchall()
+        ids = [r[0] for r in rows]
+        if len(ids) == 1:
+            return ids[0], []
+        if ids:
+            return None, ids[:max_suggestions]
+
+        # 4. Name match (unqualified function name)
+        rows = conn.execute(
+            "SELECT id FROM nodes WHERE name = ? ORDER BY length(id)",
+            (query,),
+        ).fetchall()
+        ids = [r[0] for r in rows]
+        if len(ids) == 1:
+            return ids[0], []
+        if ids:
+            return None, ids[:max_suggestions]
+
+    return None, []
+
+
 def search_nodes(query: str, db_path: Path, search_in: str = "all") -> list[Node]:
     """Search nodes by name, code, or docstring."""
     conditions = []

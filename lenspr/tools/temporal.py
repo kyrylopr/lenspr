@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from lenspr import database
 from lenspr.models import ToolResponse
+from lenspr.tools.helpers import resolve_or_fail
 
 if TYPE_CHECKING:
     from lenspr.context import LensContext
@@ -229,7 +230,9 @@ def handle_node_timeline(params: dict, ctx: LensContext) -> ToolResponse:
     """
     ctx.ensure_synced()
 
-    node_id = params["node_id"]
+    node_id, err = resolve_or_fail(params["node_id"], ctx)
+    if err:
+        return err
     limit = params.get("limit", 20)
 
     node = database.get_node(node_id, ctx.graph_db)

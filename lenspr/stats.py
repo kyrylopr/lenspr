@@ -56,8 +56,10 @@ class ParseStats:
     languages: dict[str, LanguageStats] = field(default_factory=dict)
     skipped_dirs: dict[str, int] = field(default_factory=dict)  # dir_name -> file_count
     unparsed_extensions: dict[str, int] = field(default_factory=dict)  # ext -> file_count
+    infra_files: dict[str, int] = field(default_factory=dict)  # label -> file_count
     warnings: list[str] = field(default_factory=list)
     total_time_ms: float = 0.0
+    total_project_files: int = 0  # All files found (code + non-code + in skipped dirs)
 
     @property
     def total_files(self) -> int:
@@ -222,22 +224,43 @@ def format_stats_report(stats: ParseStats) -> str:
 
     lines.append("")
 
-    # Unparsed file types
-    if stats.unparsed_extensions:
+    # Infrastructure files processed by mappers
+    if stats.infra_files:
+        lines.append("Infrastructure files:")
+        for infra_label, count in sorted(stats.infra_files.items()):
+            display = f"  {infra_label}:".ljust(28)
+            lines.append(f"{display}{count:>6} files")
+        lines.append("")
+
+    # Unparsed file types (exclude extensions handled by infrastructure mappers)
+    infra_exts: set[str] = set()
+    if stats.infra_files:
+        ext_map = {
+            "SQL files (.sql)": {".sql"},
+            "Docker Compose": {".yml", ".yaml"},
+            "CI workflows (.yml)": {".yml", ".yaml"},
+        }
+        for infra_label in stats.infra_files:
+            infra_exts |= ext_map.get(infra_label, set())
+
+    unparsed = {
+        ext: count for ext, count in stats.unparsed_extensions.items()
+        if ext not in infra_exts
+    }
+    if unparsed:
         lines.append("Not parsed (no parser):")
-        # Sort by count descending, show top entries
         sorted_exts = sorted(
-            stats.unparsed_extensions.items(), key=lambda x: x[1], reverse=True
+            unparsed.items(), key=lambda x: x[1], reverse=True
         )
         shown = sorted_exts[:12]
         for ext, count in shown:
-            label = f"  {ext}:".ljust(16)
-            lines.append(f"{label}{count:>6} files")
+            ext_label = f"  {ext}:".ljust(16)
+            lines.append(f"{ext_label}{count:>6} files")
         if len(sorted_exts) > 12:
             rest_count = sum(c for _, c in sorted_exts[12:])
             rest_types = len(sorted_exts) - 12
             lines.append(f"  ... +{rest_types} other types ({rest_count} files)")
-        total_unparsed = sum(stats.unparsed_extensions.values())
+        total_unparsed = sum(unparsed.values())
         lines.append("  " + "-" * 35)
         lines.append(f"  {'Total skipped:'.ljust(12)}{total_unparsed:>6} files")
         lines.append("")

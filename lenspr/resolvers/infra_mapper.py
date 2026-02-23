@@ -78,6 +78,63 @@ class EnvVarUsage:
     line: int
 
 
+@dataclass
+class DockerfileInfo:
+    """Parsed Dockerfile information."""
+
+    file_path: str
+    node_id: str  # e.g., "infra.dockerfile.backend"
+    name: str  # derived from path
+    base_images: list[str] = field(default_factory=list)
+    stages: list[str] = field(default_factory=list)
+    exposed_ports: list[str] = field(default_factory=list)
+    env_vars: dict[str, str] = field(default_factory=dict)
+    arg_vars: dict[str, str] = field(default_factory=dict)
+    copy_from_stages: list[str] = field(default_factory=list)
+    entrypoint: str = ""
+
+
+# ---------------------------------------------------------------------------
+# Dockerfile patterns
+# ---------------------------------------------------------------------------
+
+# FROM image[:tag] [AS stage]
+_DOCKERFILE_FROM_RE = re.compile(
+    r"""^FROM\s+(\S+)(?:\s+AS\s+(\w+))?""",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+# EXPOSE port [port...]
+_DOCKERFILE_EXPOSE_RE = re.compile(
+    r"""^EXPOSE\s+(.+)$""",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+# ENV key=value or ENV key value
+_DOCKERFILE_ENV_RE = re.compile(
+    r"""^ENV\s+(\w+)(?:\s*=\s*|\s+)(\S.*)$""",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+# ARG name[=default]
+_DOCKERFILE_ARG_RE = re.compile(
+    r"""^ARG\s+(\w+)(?:=(.*))?$""",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+# COPY [--from=stage] source dest
+_DOCKERFILE_COPY_FROM_RE = re.compile(
+    r"""^COPY\s+--from=(\w+)""",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+# ENTRYPOINT or CMD
+_DOCKERFILE_ENTRY_RE = re.compile(
+    r"""^(?:ENTRYPOINT|CMD)\s+(.+)$""",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
 # ---------------------------------------------------------------------------
 # Patterns for env var usage in code
 # ---------------------------------------------------------------------------
@@ -515,3 +572,158 @@ class InfraMapper:
             ))
 
         return nodes
+
+    # ------------------------------------------------------------------
+    # Dockerfile parsing
+    # ------------------------------------------------------------------
+
+    def parse_dockerfile(self, file_path: Path, root_path: Path) -> DockerfileInfo | None:
+        """Parse a Dockerfile and extract infrastructure information.
+
+        Detects: base images (FROM), build stages, EXPOSE ports, ENV/ARG vars,
+        COPY --from multi-stage references, ENTRYPOINT/CMD.
+        """
+        if not file_path.exists():
+            return None
+        try:
+            text = file_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            return None
+
+        # Derive node name from path
+        rel = file_path.relative_to(root_path)
+        # E.g., "backend/Dockerfile" → "backend", "Dockerfile.dev" → "dev"
+        if rel.name == "Dockerfile":
+            name = str(rel.parent) if str(rel.parent) != "." else "root"
+        else:
+            # Dockerfile.dev → "dev", Dockerfile.prod → "prod"
+            suffix = rel.name.replace("Dockerfile.", "").replace("Dockerfile", "root")
+            parent = str(rel.parent)
+            name = f"{parent}.{suffix}" if parent != "." else suffix
+
+        name = name.replace("/", ".").replace("\\", ".")
+        node_id = f"infra.dockerfile.{name}"
+
+        info = DockerfileInfo(
+            file_path=str(rel),
+            node_id=node_id,
+            name=name,
+        )
+
+        # FROM
+        for m in _DOCKERFILE_FROM_RE.finditer(text):
+            info.base_images.append(m.group(1))
+            stage = m.group(2)
+            if stage:
+                info.stages.append(stage)
+
+        # EXPOSE
+        for m in _DOCKERFILE_EXPOSE_RE.finditer(text):
+            for port in m.group(1).split():
+                port = port.strip()
+                if port:
+                    info.exposed_ports.append(port)
+
+        # ENV
+        for m in _DOCKERFILE_ENV_RE.finditer(text):
+            key = m.group(1)
+            value = m.group(2).strip()
+            info.env_vars[key] = value
+            # Also add to env definitions for matching
+            self._env_vars.append(EnvVarDef(
+                name=key,
+                value=value,
+                source_file=str(rel),
+                line=text[: m.start()].count("\n") + 1,
+            ))
+
+        # ARG
+        for m in _DOCKERFILE_ARG_RE.finditer(text):
+            info.arg_vars[m.group(1)] = m.group(2) or ""
+
+        # COPY --from=stage
+        for m in _DOCKERFILE_COPY_FROM_RE.finditer(text):
+            info.copy_from_stages.append(m.group(1))
+
+        # ENTRYPOINT/CMD
+        for m in _DOCKERFILE_ENTRY_RE.finditer(text):
+            info.entrypoint = m.group(1).strip()
+            break  # Take the last one? Actually take first.
+
+        if not hasattr(self, "_dockerfiles"):
+            self._dockerfiles: list[DockerfileInfo] = []
+        self._dockerfiles.append(info)
+
+        return info
+
+    def get_dockerfile_nodes(self) -> list[Node]:
+        """Create virtual nodes for parsed Dockerfiles."""
+        if not hasattr(self, "_dockerfiles"):
+            return []
+
+        nodes: list[Node] = []
+        for df in self._dockerfiles:
+            source_parts = [f"# Dockerfile: {df.name}"]
+            if df.base_images:
+                source_parts.append(f"FROM {df.base_images[0]}")
+            if df.stages:
+                source_parts.append(f"# Stages: {', '.join(df.stages)}")
+            if df.exposed_ports:
+                source_parts.append(f"EXPOSE {' '.join(df.exposed_ports)}")
+            if df.env_vars:
+                for k, v in list(df.env_vars.items())[:5]:
+                    source_parts.append(f"ENV {k}={v}")
+            if df.entrypoint:
+                source_parts.append(f"ENTRYPOINT {df.entrypoint}")
+
+            metadata: dict = {"is_virtual": True}
+            if df.base_images:
+                metadata["base_images"] = df.base_images
+            if df.stages:
+                metadata["stages"] = df.stages
+            if df.exposed_ports:
+                metadata["exposed_ports"] = df.exposed_ports
+
+            nodes.append(Node(
+                id=df.node_id,
+                type=NodeType.BLOCK,
+                name=df.name,
+                qualified_name=df.node_id,
+                file_path=df.file_path,
+                start_line=1,
+                end_line=1,
+                source_code="\n".join(source_parts),
+                docstring=f"Dockerfile: {df.name}",
+                metadata=metadata,
+            ))
+
+        return nodes
+
+    def get_dockerfile_edges(self) -> list[Edge]:
+        """Create edges from Dockerfile relationships.
+
+        Creates:
+        - DEPENDS_ON: multi-stage COPY --from=stage
+        """
+        if not hasattr(self, "_dockerfiles"):
+            return []
+
+        edges: list[Edge] = []
+        for df in self._dockerfiles:
+            # Multi-stage COPY --from edges
+            for stage in df.copy_from_stages:
+                self._edge_counter += 1
+                edges.append(Edge(
+                    id=f"infra_edge_{self._edge_counter}",
+                    from_node=df.node_id,
+                    to_node=f"{df.node_id}.{stage}",
+                    type=EdgeType.DEPENDS_ON,
+                    confidence=EdgeConfidence.RESOLVED,
+                    source=EdgeSource.STATIC,
+                    metadata={
+                        "relationship": "copy_from_stage",
+                        "stage": stage,
+                    },
+                ))
+
+        return edges

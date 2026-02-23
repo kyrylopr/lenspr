@@ -11,7 +11,7 @@ from lenspr.tools.entry_points import (
     collect_public_api,
     expand_entry_points,
 )
-from lenspr.tools.helpers import get_proactive_warnings
+from lenspr.tools.helpers import get_proactive_warnings, resolve_or_fail
 from lenspr.validator import validate_full
 
 if TYPE_CHECKING:
@@ -22,7 +22,9 @@ def handle_check_impact(params: dict, ctx: LensContext) -> ToolResponse:
     """Analyze what would be affected by changing a node."""
     ctx.ensure_synced()
     nx_graph = ctx.get_graph()
-    node_id = params["node_id"]
+    node_id, err = resolve_or_fail(params["node_id"], ctx)
+    if err:
+        return err
     depth = params.get("depth", 2)
     impact = graph.get_impact_zone(nx_graph, node_id, depth)
 
@@ -97,7 +99,9 @@ def handle_check_impact(params: dict, ctx: LensContext) -> ToolResponse:
 def handle_validate_change(params: dict, ctx: LensContext) -> ToolResponse:
     """Dry-run validation without applying changes."""
     ctx.ensure_synced()
-    node_id = params["node_id"]
+    node_id, err = resolve_or_fail(params["node_id"], ctx)
+    if err:
+        return err
     new_source = params["new_source"]
 
     node = database.get_node(node_id, ctx.graph_db)
@@ -304,6 +308,25 @@ def handle_dependencies(params: dict, ctx: LensContext) -> ToolResponse:
 
     from lenspr.parsers.python_parser import _BUILTINS
 
+    # Node.js built-in modules (not third-party)
+    _NODE_BUILTINS = {
+        "assert", "async_hooks", "buffer", "child_process", "cluster",
+        "console", "constants", "crypto", "dgram", "diagnostics_channel",
+        "dns", "domain", "events", "fs", "http", "http2", "https",
+        "inspector", "module", "net", "os", "path", "perf_hooks",
+        "process", "punycode", "querystring", "readline", "repl",
+        "stream", "string_decoder", "timers", "tls", "trace_events",
+        "tty", "url", "util", "v8", "vm", "wasi", "worker_threads",
+        "zlib",
+        # Node.js globals (not modules but treated as builtins)
+        "Promise", "Array", "Object", "Map", "Set", "WeakMap", "WeakSet",
+        "Symbol", "Proxy", "Reflect", "JSON", "Math", "Number", "String",
+        "Boolean", "Date", "RegExp", "Error", "TypeError", "RangeError",
+        "setTimeout", "setInterval", "clearTimeout", "clearInterval",
+        "setImmediate", "clearImmediate", "queueMicrotask",
+        "console", "Buffer",
+    }
+
     deps_by_package: dict[str, dict] = defaultdict(
         lambda: {"usages": 0, "files": set()}
     )
@@ -343,6 +366,8 @@ def handle_dependencies(params: dict, ctx: LensContext) -> ToolResponse:
             pkg_type = "builtin"
         elif package in stdlib_names:
             pkg_type = "stdlib"
+        elif package in _NODE_BUILTINS:
+            pkg_type = "node_builtin"
         else:
             pkg_type = "third-party"
 
@@ -375,6 +400,7 @@ def handle_dependencies(params: dict, ctx: LensContext) -> ToolResponse:
     else:
         builtin_deps = []
         stdlib_deps = []
+        node_builtin_deps = []
         third_party_deps = []
         for pkg, info in sorted(deps_by_package.items()):
             entry = {
@@ -387,16 +413,19 @@ def handle_dependencies(params: dict, ctx: LensContext) -> ToolResponse:
                 builtin_deps.append(entry)
             elif info["type"] == "stdlib":
                 stdlib_deps.append(entry)
+            elif info["type"] == "node_builtin":
+                node_builtin_deps.append(entry)
             else:
                 third_party_deps.append(entry)
 
         return ToolResponse(
             success=True,
             data={
-                "dependencies": builtin_deps + stdlib_deps + third_party_deps,
+                "dependencies": builtin_deps + stdlib_deps + node_builtin_deps + third_party_deps,
                 "total_packages": len(deps_by_package),
                 "builtin_count": len(builtin_deps),
                 "stdlib_count": len(stdlib_deps),
+                "node_builtin_count": len(node_builtin_deps),
                 "third_party_count": len(third_party_deps),
             },
         )
@@ -523,7 +552,9 @@ def handle_find_usages(params: dict, ctx: LensContext) -> ToolResponse:
         results = []
         not_found = []
         for nid in node_ids:
-            result = _find_usages_for_node(nid, nx_graph, ctx.graph_db, include_tests)
+            resolved, _ = resolve_or_fail(nid, ctx)
+            actual_id = resolved if resolved else nid
+            result = _find_usages_for_node(actual_id, nx_graph, ctx.graph_db, include_tests)
             if result:
                 results.append(result)
             else:
@@ -543,12 +574,15 @@ def handle_find_usages(params: dict, ctx: LensContext) -> ToolResponse:
         )
 
     # Single mode: node_id parameter
-    node_id = params.get("node_id", "")
-    if not node_id:
+    raw_id = params.get("node_id", "")
+    if not raw_id:
         return ToolResponse(
             success=False,
             error="Either node_id or node_ids is required.",
         )
+    node_id, err = resolve_or_fail(raw_id, ctx)
+    if err:
+        return err
 
     result = _find_usages_for_node(node_id, nx_graph, ctx.graph_db, include_tests)
     if not result:

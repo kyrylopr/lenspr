@@ -15,6 +15,7 @@ from lenspr.architecture import (
     get_class_analysis_from_stored,
 )
 from lenspr.models import NodeType, ToolResponse
+from lenspr.tools.helpers import resolve_or_fail
 
 if TYPE_CHECKING:
     from lenspr.context import LensContext
@@ -28,9 +29,12 @@ def handle_class_metrics(params: dict, ctx: LensContext) -> ToolResponse:
 
     Metrics are computed during init/sync - this is O(1) read.
     """
-    node_id = params.get("node_id")
-    if not node_id:
+    raw_id = params.get("node_id")
+    if not raw_id:
         return ToolResponse(success=False, error="node_id is required")
+    node_id, err = resolve_or_fail(raw_id, ctx)
+    if err:
+        return err
 
     node = database.get_node(node_id, ctx.graph_db)
     if not node:

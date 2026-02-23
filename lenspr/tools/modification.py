@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from lenspr import database, graph
 from lenspr.models import PatchError, ToolResponse
 from lenspr.patcher import insert_code, remove_lines
-from lenspr.tools.helpers import get_proactive_warnings
+from lenspr.tools.helpers import get_proactive_warnings, resolve_or_fail
 from lenspr.validator import validate_full, validate_syntax
 
 logger = logging.getLogger(__name__)
@@ -20,7 +20,9 @@ if TYPE_CHECKING:
 
 def handle_update_node(params: dict, ctx: LensContext) -> ToolResponse:
     """Update the source code of a node."""
-    node_id = params["node_id"]
+    node_id, err = resolve_or_fail(params["node_id"], ctx)
+    if err:
+        return err
     new_source = params["new_source"]
     reasoning = params.get("reasoning", "")
 
@@ -196,7 +198,9 @@ def handle_patch_node(params: dict, ctx: LensContext) -> ToolResponse:
         new_fragment: Text to replace old_fragment with.
         reasoning: Why this change is being made.
     """
-    node_id = params["node_id"]
+    node_id, err = resolve_or_fail(params["node_id"], ctx)
+    if err:
+        return err
     old_fragment = params["old_fragment"]
     new_fragment = params["new_fragment"]
     reasoning = params.get("reasoning", "")
@@ -340,7 +344,9 @@ def handle_add_node(params: dict, ctx: LensContext) -> ToolResponse:
 
 def handle_delete_node(params: dict, ctx: LensContext) -> ToolResponse:
     """Delete a node from the codebase."""
-    node_id = params["node_id"]
+    node_id, err = resolve_or_fail(params["node_id"], ctx)
+    if err:
+        return err
     node = database.get_node(node_id, ctx.graph_db)
 
     if not node:
@@ -400,7 +406,9 @@ def handle_rename(params: dict, ctx: LensContext) -> ToolResponse:
     """Rename a function/class/method across the entire project."""
     from lenspr.parsers import get_supported_extensions
 
-    node_id = params["node_id"]
+    node_id, err = resolve_or_fail(params["node_id"], ctx)
+    if err:
+        return err
     new_name = params["new_name"]
 
     node = database.get_node(node_id, ctx.graph_db)

@@ -5,9 +5,41 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from lenspr import database, graph
+from lenspr.models import ToolResponse
 
 if TYPE_CHECKING:
     from lenspr.context import LensContext
+
+
+def resolve_or_fail(
+    node_id: str, ctx: LensContext,
+) -> tuple[str, ToolResponse | None]:
+    """Resolve a possibly-fuzzy node_id to an exact ID.
+
+    Returns:
+        (resolved_id, None)              — success
+        (original_id, ToolResponse)      — failure (not found or ambiguous)
+    """
+    resolved, suggestions = database.resolve_node_id(node_id, ctx.graph_db)
+    if resolved:
+        return resolved, None
+    if suggestions:
+        hint_lines = "\n".join(f"  • {s}" for s in suggestions)
+        return node_id, ToolResponse(
+            success=False,
+            error=(
+                f"Ambiguous node_id '{node_id}'. Did you mean one of:\n{hint_lines}\n"
+                "Provide a more specific identifier."
+            ),
+        )
+    return node_id, ToolResponse(
+        success=False,
+        error=(
+            f"Node not found: '{node_id}'. "
+            "Use lens_search or lens_list_nodes to find valid node IDs."
+        ),
+        hint="Use lens_search or lens_list_nodes to find valid node IDs.",
+    )
 
 
 def find_containing_node(

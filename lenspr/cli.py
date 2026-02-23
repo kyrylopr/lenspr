@@ -174,7 +174,6 @@ def _cli_progress(current: int, total: int, file_path: str) -> None:
 def cmd_init(args: argparse.Namespace) -> None:
     import lenspr
     from lenspr.monorepo import find_packages, install_dependencies
-    from lenspr.stats import format_stats_report
 
     path = Path(args.path).resolve()
     print(f"Initializing LensPR at {path}")
@@ -236,57 +235,105 @@ def cmd_init(args: argparse.Namespace) -> None:
 
     print()  # After progress line
 
-    # Show detailed stats if available
-    if stats:
-        print(format_stats_report(stats))
+    _print_init_summary(ctx, stats, path)
 
-    # Final summary — show file breakdown + edge types from the graph
-    g = ctx.get_graph()
 
+def _print_init_summary(ctx, stats, path: Path) -> None:
+    """Print clean summary after lenspr init."""
     from lenspr.database import load_graph
+
+    g = ctx.get_graph()
     all_nodes, all_edges = load_graph(str(ctx.graph_db))
 
-    # Count files by category
-    files_by_lang: dict[str, set[str]] = {"Backend (Python)": set(), "Frontend (TS/JS)": set()}
+    # ── Section 1: Project files ──────────────────────────────────────
+
+    code_files = stats.total_files if stats else 0
+    unparsed_count = sum(stats.unparsed_extensions.values()) if stats else 0
+    skipped_in_dirs = stats.total_skipped if stats else 0
+    total_project = stats.total_project_files if stats else 0
+    other_files = total_project - code_files - skipped_in_dirs
+
+    # Per-language file counts
+    lang_files: dict[str, int] = {}
     py_exts = {".py"}
-    ts_exts = {".ts", ".tsx", ".js", ".jsx"}
+    ts_exts = {".ts", ".tsx"}
+    js_exts = {".js", ".jsx"}
     for node in all_nodes:
-        fp = node.file_path
-        ext_lower = Path(fp).suffix.lower()
-        if ext_lower in py_exts:
-            files_by_lang["Backend (Python)"].add(fp)
-        elif ext_lower in ts_exts:
-            files_by_lang["Frontend (TS/JS)"].add(fp)
-
-    # Count total parseable source files in project
-    all_exts = py_exts | ts_exts
-    skip_dirs = {
-        "__pycache__", ".git", ".lens", ".venv", "venv", "env",
-        "node_modules", ".mypy_cache", ".pytest_cache", "dist", "build",
-    }
-    total_source = 0
-    for f in path.rglob("*"):
-        if not f.is_file():
+        if not node.file_path:
             continue
-        if any(p in skip_dirs for p in f.relative_to(path).parts):
-            continue
-        if f.suffix.lower() in all_exts:
-            total_source += 1
+        ext = Path(node.file_path).suffix.lower()
+        if ext in py_exts:
+            lang_files.setdefault("Python (.py)", set()).add(node.file_path)
+        elif ext in ts_exts:
+            lang_files.setdefault("TypeScript (.ts/.tsx)", set()).add(node.file_path)
+        elif ext in js_exts:
+            lang_files.setdefault("JavaScript (.js/.jsx)", set()).add(node.file_path)
 
-    parsed_files = sum(len(s) for s in files_by_lang.values())
-    unparsed_total = sum(stats.unparsed_extensions.values()) if stats else 0
+    print("  ── Project files ──────────────────────────────────")
+    print()
+    print(f"  Total files found:        {total_project:,}")
+    print()
 
-    db_size = (ctx.lens_dir / "graph.db").stat().st_size / 1024  # KB
-    if db_size > 1024:
-        db_size_str = f"{db_size / 1024:.1f} MB"
-    else:
-        db_size_str = f"{db_size:.0f} KB"
+    code_pct = round(code_files / total_project * 100) if total_project else 0
+    print(f"  Code files (parseable):   {code_files:,}  ({code_pct}%)")
+    for lang_name in ["Python (.py)", "TypeScript (.ts/.tsx)", "JavaScript (.js/.jsx)"]:
+        fset = lang_files.get(lang_name)
+        if fset:
+            print(f"    {lang_name}:{' ' * max(1, 25 - len(lang_name))}{len(fset):>5}")
+    print()
 
-    # Count edges by type for the summary
-    edge_type_counts: dict[str, int] = {}
-    for edge in all_edges:
-        etype = edge.type.value
-        edge_type_counts[etype] = edge_type_counts.get(etype, 0) + 1
+    # Infrastructure files (processed by mappers, not AST parsers)
+    if stats and stats.infra_files:
+        infra_total = sum(stats.infra_files.values())
+        infra_pct = round(infra_total / total_project * 100) if total_project else 0
+        print(f"  Infrastructure files:      {infra_total:,}  ({infra_pct}%)")
+        parts = [f"{label}: {cnt}" for label, cnt in sorted(stats.infra_files.items())]
+        print(f"    {', '.join(parts)}")
+        print()
+
+    # Filter infra-tracked extensions from "Other files"
+    infra_exts: set[str] = set()
+    if stats and stats.infra_files:
+        _ext_map = {
+            "SQL files (.sql)": {".sql"},
+            "Docker Compose": {".yml", ".yaml"},
+            "CI workflows (.yml)": {".yml", ".yaml"},
+        }
+        for infra_label in stats.infra_files:
+            infra_exts |= _ext_map.get(infra_label, set())
+
+    remaining_unparsed = {
+        ext: cnt for ext, cnt in (stats.unparsed_extensions if stats else {}).items()
+        if ext not in infra_exts
+    } if stats else {}
+
+    remaining_count = sum(remaining_unparsed.values())
+    other_adjusted = max(0, other_files) - (unparsed_count - remaining_count)
+    other_pct = round(max(0, other_adjusted) / total_project * 100) if total_project else 0
+    if remaining_unparsed:
+        print(f"  Other files (not parsed): {max(0, other_adjusted):,}  ({other_pct}%)")
+        sorted_exts = sorted(remaining_unparsed.items(), key=lambda x: -x[1])
+        top = sorted_exts[:6]
+        parts = [f"{ext}: {cnt}" for ext, cnt in top]
+        remaining = len(sorted_exts) - len(top)
+        line = "    " + "  ".join(parts)
+        if remaining > 0:
+            line += f"  +{remaining} more"
+        print(line)
+        print()
+
+    if stats and stats.skipped_dirs:
+        sorted_dirs = sorted(stats.skipped_dirs.items(), key=lambda x: -x[1])
+        parts = [f"{name} ({cnt:,})" for name, cnt in sorted_dirs[:5]]
+        remaining = len(sorted_dirs) - 5
+        line = ", ".join(parts)
+        if remaining > 0:
+            line += f", +{remaining} more"
+        print(f"  Skipped directories:      {skipped_in_dirs:,} files")
+        print(f"    {line}")
+        print()
+
+    # ── Section 2: Graph ──────────────────────────────────────────────
 
     # Count nodes by type
     node_type_counts: dict[str, int] = {}
@@ -294,71 +341,91 @@ def cmd_init(args: argparse.Namespace) -> None:
         ntype = node.type.value
         node_type_counts[ntype] = node_type_counts.get(ntype, 0) + 1
 
-    print("=" * 50)
-    print("Graph created successfully!")
-    print()
-    print(f"  Files parsed:     {parsed_files} / {parsed_files + unparsed_total}")
-    for lang, file_set in sorted(files_by_lang.items()):
-        if file_set:
-            print(f"    {lang}:{' ' * (20 - len(lang))}{len(file_set):>4} files")
+    # Count edges by type
+    edge_type_counts: dict[str, int] = {}
+    for edge in all_edges:
+        etype = edge.type.value
+        edge_type_counts[etype] = edge_type_counts.get(etype, 0) + 1
+
+    print("  ── Graph ──────────────────────────────────────────")
     print()
 
-    # Node breakdown
-    print(f"  Nodes:  {g.number_of_nodes()}")
-    for ntype in ["module", "function", "method", "class", "block"]:
+    # Nodes
+    print(f"  Nodes:  {g.number_of_nodes():,}")
+    node_parts = []
+    for ntype in ["function", "class", "method", "module", "block"]:
         count = node_type_counts.get(ntype, 0)
         if count > 0:
-            print(f"    {ntype + ':'.ljust(12)}{count:>6}")
+            node_parts.append(f"{ntype}: {count:,}")
+    # Print in rows of 2
+    for i in range(0, len(node_parts), 2):
+        pair = node_parts[i:i + 2]
+        print(f"    {'    '.join(f'{p:<22}' for p in pair)}")
     print()
 
-    # Edge breakdown — grouped by category
+    # Edges — grouped by category
     total_edges = g.number_of_edges()
-    print(f"  Edges:  {total_edges}")
+    print(f"  Edges:  {total_edges:,}")
 
-    # Code edges
-    code_types = ["calls", "imports", "uses", "inherits", "decorates", "contains", "mocks"]
-    code_edges = [(t, edge_type_counts.get(t, 0)) for t in code_types if edge_type_counts.get(t, 0) > 0]
-    if code_edges:
-        print("    Code:")
-        for etype, count in code_edges:
-            print(f"      {etype + ':'.ljust(14)}{count:>6}")
-
-    # Cross-language edges
-    cross_types = ["calls_api", "handles_route"]
-    cross_edges = [(t, edge_type_counts.get(t, 0)) for t in cross_types if edge_type_counts.get(t, 0) > 0]
-    if cross_edges:
-        print("    Cross-language:")
-        for etype, count in cross_edges:
-            print(f"      {etype + ':'.ljust(14)}{count:>6}")
-
-    # Database edges
-    db_types = ["reads_table", "writes_table", "migrates"]
-    db_edges = [(t, edge_type_counts.get(t, 0)) for t in db_types if edge_type_counts.get(t, 0) > 0]
-    if db_edges:
-        print("    Database:")
-        for etype, count in db_edges:
-            print(f"      {etype + ':'.ljust(14)}{count:>6}")
-
-    # Infrastructure edges
-    infra_types = ["depends_on", "uses_env", "exposes_port"]
-    infra_edges = [(t, edge_type_counts.get(t, 0)) for t in infra_types if edge_type_counts.get(t, 0) > 0]
-    if infra_edges:
-        print("    Infrastructure:")
-        for etype, count in infra_edges:
-            print(f"      {etype + ':'.ljust(14)}{count:>6}")
-
+    edge_categories = [
+        ("Code", ["calls", "imports", "uses", "inherits", "decorates", "contains", "mocks"]),
+        ("Cross-language", ["calls_api", "handles_route", "calls_native"]),
+        ("Database", ["reads_table", "writes_table", "migrates"]),
+        ("Infrastructure", ["depends_on", "uses_env", "exposes_port"]),
+    ]
+    for cat_name, types in edge_categories:
+        cat_edges = [(t, edge_type_counts.get(t, 0)) for t in types if edge_type_counts.get(t, 0) > 0]
+        if not cat_edges:
+            continue
+        first = True
+        for etype, count in cat_edges:
+            label = f"{cat_name}:" if first else ""
+            print(f"    {label:<20} {etype} {count:,}")
+            first = False
     print()
+
+    # Confidence — overall + per-language breakdown
     if stats:
-        print(f"  Confidence:   {stats.overall_resolution_pct:.0f}%")
-        print(f"  Parse time:   {stats.total_time_ms / 1000:.1f}s")
-    print(f"  Database:     .lens/graph.db ({db_size_str})")
-    print("=" * 50)
+        overall_pct = stats.overall_resolution_pct
+        print(f"  Confidence: {overall_pct:.0f}%")
+        print("  (= resolved edges / total internal edges)")
+
+        # Per-language breakdown
+        for lang_name, lang_stats in sorted(stats.languages.items()):
+            total_lang = lang_stats.total_edges
+            if total_lang == 0:
+                continue
+            resolved = lang_stats.resolved_edges
+            external = lang_stats.external_edges
+            resolved_total = resolved + external
+            pct = round(resolved_total / total_lang * 100) if total_lang else 0
+            warn = " ⚠" if pct < 80 else ""
+            print(
+                f"    {lang_name + ':':<16} {pct:>3}% resolved"
+                f" ({resolved_total:,} / {total_lang:,}){warn}"
+            )
+        print()
+
+    # ── Section 3: Footer ─────────────────────────────────────────────
+
+    db_size = (ctx.lens_dir / "graph.db").stat().st_size / 1024
+    db_size_str = f"{db_size / 1024:.1f} MB" if db_size > 1024 else f"{db_size:.0f} KB"
+
+    if stats:
+        print(f"  Parse time: {stats.total_time_ms / 1000:.1f}s")
+    print(f"  Database:   .lens/graph.db ({db_size_str})")
     print()
-    print("Next steps:")
-    print("  lenspr setup .     # Configure for Claude Code")
-    print("  lenspr status .    # View detailed stats")
-    print()
-    print("In Claude Code, ask: \"Annotate my codebase\" for semantic annotations")
+
+    # Warnings
+    if stats and stats.warnings:
+        print("  Warnings:")
+        for w in stats.warnings:
+            print(f"    {w}")
+        print()
+
+    print("  Next steps:")
+    print("    lenspr setup .     Configure for Claude Code")
+    print("    lenspr status .    View detailed stats")
 
 
 def cmd_sync(args: argparse.Namespace) -> None:

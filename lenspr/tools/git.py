@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from lenspr import database
 from lenspr.models import ToolResponse
+from lenspr.tools.helpers import resolve_or_fail
 
 if TYPE_CHECKING:
     from lenspr.context import LensContext
@@ -43,7 +44,9 @@ def handle_blame(params: dict, ctx: LensContext) -> ToolResponse:
 
     Returns who wrote each line and when.
     """
-    node_id = params["node_id"]
+    node_id, err = resolve_or_fail(params["node_id"], ctx)
+    if err:
+        return err
 
     if not _is_git_repo(str(ctx.project_root)):
         return ToolResponse(
@@ -136,7 +139,9 @@ def handle_node_history(params: dict, ctx: LensContext) -> ToolResponse:
 
     Shows commits that modified the lines where this node is defined.
     """
-    node_id = params["node_id"]
+    node_id, err = resolve_or_fail(params["node_id"], ctx)
+    if err:
+        return err
     limit = params.get("limit", 10)
 
     if not _is_git_repo(str(ctx.project_root)):

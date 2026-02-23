@@ -467,3 +467,113 @@ class TestViteImportMetaEnv:
         ])
         names = {u.name for u in usages}
         assert names == {"VITE_API_URL", "VITE_PUBLIC_KEY", "VITE_MODE"}
+
+
+# ---------------------------------------------------------------------------
+# Tests — Dockerfile parsing
+# ---------------------------------------------------------------------------
+
+
+class TestDockerfileParsing:
+    def test_from_image(self, tmp_path):
+        df = tmp_path / "Dockerfile"
+        df.write_text("FROM python:3.12-slim\nRUN pip install flask")
+        mapper = InfraMapper()
+        info = mapper.parse_dockerfile(df, tmp_path)
+        assert info is not None
+        assert info.base_images == ["python:3.12-slim"]
+
+    def test_multistage_build(self, tmp_path):
+        df = tmp_path / "Dockerfile"
+        df.write_text(
+            "FROM node:20 AS builder\nRUN npm ci\n\n"
+            "FROM node:20-slim AS runner\nCOPY --from=builder /app /app\n"
+        )
+        mapper = InfraMapper()
+        info = mapper.parse_dockerfile(df, tmp_path)
+        assert len(info.base_images) == 2
+        assert info.stages == ["builder", "runner"]
+        assert "builder" in info.copy_from_stages
+
+    def test_expose_ports(self, tmp_path):
+        df = tmp_path / "Dockerfile"
+        df.write_text("FROM node:20\nEXPOSE 3000\nEXPOSE 8080 9090")
+        mapper = InfraMapper()
+        info = mapper.parse_dockerfile(df, tmp_path)
+        assert sorted(info.exposed_ports) == ["3000", "8080", "9090"]
+
+    def test_env_vars(self, tmp_path):
+        df = tmp_path / "Dockerfile"
+        df.write_text("FROM python:3.12\nENV APP_ENV=production\nENV PORT 8080")
+        mapper = InfraMapper()
+        info = mapper.parse_dockerfile(df, tmp_path)
+        assert info.env_vars["APP_ENV"] == "production"
+        assert info.env_vars["PORT"] == "8080"
+
+    def test_arg_vars(self, tmp_path):
+        df = tmp_path / "Dockerfile"
+        df.write_text("FROM python:3.12\nARG VERSION=latest\nARG BUILD_DATE")
+        mapper = InfraMapper()
+        info = mapper.parse_dockerfile(df, tmp_path)
+        assert info.arg_vars["VERSION"] == "latest"
+        assert info.arg_vars["BUILD_DATE"] == ""
+
+    def test_entrypoint(self, tmp_path):
+        df = tmp_path / "Dockerfile"
+        df.write_text('FROM python:3.12\nENTRYPOINT ["python", "app.py"]')
+        mapper = InfraMapper()
+        info = mapper.parse_dockerfile(df, tmp_path)
+        assert "python" in info.entrypoint
+
+    def test_virtual_node_created(self, tmp_path):
+        df = tmp_path / "Dockerfile"
+        df.write_text("FROM python:3.12\nEXPOSE 8080")
+        mapper = InfraMapper()
+        mapper.parse_dockerfile(df, tmp_path)
+        nodes = mapper.get_dockerfile_nodes()
+        assert len(nodes) == 1
+        assert nodes[0].id == "infra.dockerfile.root"
+        assert nodes[0].metadata["is_virtual"] is True
+
+    def test_nested_dockerfile_node_id(self, tmp_path):
+        (tmp_path / "backend").mkdir()
+        df = tmp_path / "backend" / "Dockerfile"
+        df.write_text("FROM python:3.12")
+        mapper = InfraMapper()
+        mapper.parse_dockerfile(df, tmp_path)
+        nodes = mapper.get_dockerfile_nodes()
+        assert nodes[0].id == "infra.dockerfile.backend"
+
+    def test_dockerfile_dev_suffix(self, tmp_path):
+        df = tmp_path / "Dockerfile.dev"
+        df.write_text("FROM node:20")
+        mapper = InfraMapper()
+        mapper.parse_dockerfile(df, tmp_path)
+        nodes = mapper.get_dockerfile_nodes()
+        assert nodes[0].id == "infra.dockerfile.dev"
+
+    def test_copy_from_creates_edge(self, tmp_path):
+        df = tmp_path / "Dockerfile"
+        df.write_text(
+            "FROM golang:1.21 AS builder\nRUN go build\n\n"
+            "FROM alpine:3.19\nCOPY --from=builder /app /app"
+        )
+        mapper = InfraMapper()
+        mapper.parse_dockerfile(df, tmp_path)
+        edges = mapper.get_dockerfile_edges()
+        assert len(edges) == 1
+        assert edges[0].type == EdgeType.DEPENDS_ON
+        assert edges[0].metadata["stage"] == "builder"
+
+    def test_env_vars_added_to_definitions(self, tmp_path):
+        df = tmp_path / "Dockerfile"
+        df.write_text("FROM python:3.12\nENV DATABASE_URL=postgres://localhost/db")
+        mapper = InfraMapper()
+        mapper.parse_dockerfile(df, tmp_path)
+        env_names = {e.name for e in mapper._env_vars}
+        assert "DATABASE_URL" in env_names
+
+    def test_nonexistent_file_returns_none(self, tmp_path):
+        mapper = InfraMapper()
+        result = mapper.parse_dockerfile(tmp_path / "nonexistent", tmp_path)
+        assert result is None

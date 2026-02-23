@@ -90,13 +90,13 @@ class TestCheckImpact:
     def test_nonexistent_node_returns_zero_impact(
         self, project: LensContext
     ) -> None:
-        """Non-existent node → total_affected=0 (graph.get_impact_zone handles gracefully)."""
+        """Non-existent node → returns error via fuzzy resolution."""
         result = handle_check_impact(
             {"node_id": "does.not.exist"}, project
         )
 
-        assert result.success
-        assert result.data["total_affected"] == 0
+        assert not result.success
+        assert "not found" in result.error.lower()
 
     def test_has_tests_flag(self, project: LensContext) -> None:
         """Function called by test → has_tests=True."""

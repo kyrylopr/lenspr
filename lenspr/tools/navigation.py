@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from lenspr import database, graph
 from lenspr.models import ToolResponse
-from lenspr.tools.helpers import find_containing_node
+from lenspr.tools.helpers import find_containing_node, resolve_or_fail
 
 if TYPE_CHECKING:
     from lenspr.context import LensContext
@@ -43,11 +43,14 @@ def handle_list_nodes(params: dict, ctx: LensContext) -> ToolResponse:
 def handle_get_node(params: dict, ctx: LensContext) -> ToolResponse:
     """Get full details of a specific node including its source code."""
     ctx.ensure_synced()
-    node = database.get_node(params["node_id"], ctx.graph_db)
+    node_id, err = resolve_or_fail(params["node_id"], ctx)
+    if err:
+        return err
+    node = database.get_node(node_id, ctx.graph_db)
     if not node:
         return ToolResponse(
             success=False,
-            error=f"Node not found: {params['node_id']}",
+            error=f"Node not found: {node_id}",
             hint="Use lens_search or lens_list_nodes to find valid node IDs.",
         )
 
@@ -118,12 +121,15 @@ def handle_get_node(params: dict, ctx: LensContext) -> ToolResponse:
 def handle_get_connections(params: dict, ctx: LensContext) -> ToolResponse:
     """Get all connections (edges) for a node."""
     ctx.ensure_synced()
+    node_id, err = resolve_or_fail(params["node_id"], ctx)
+    if err:
+        return err
     direction = params.get("direction", "both")
-    edges = database.get_edges(params["node_id"], ctx.graph_db, direction)
+    edges = database.get_edges(node_id, ctx.graph_db, direction)
     return ToolResponse(
         success=True,
         data={
-            "node_id": params["node_id"],
+            "node_id": node_id,
             "direction": direction,
             "edges": [
                 {
@@ -181,7 +187,9 @@ def handle_get_structure(params: dict, ctx: LensContext) -> ToolResponse:
 def handle_context(params: dict, ctx: LensContext) -> ToolResponse:
     """Get full context for a node in one call."""
     ctx.ensure_synced()
-    node_id = params["node_id"]
+    node_id, err = resolve_or_fail(params["node_id"], ctx)
+    if err:
+        return err
     include_callers = params.get("include_callers", True)
     include_callees = params.get("include_callees", True)
     include_tests = params.get("include_tests", True)
@@ -461,7 +469,7 @@ def handle_grep(params: dict, ctx: LensContext) -> ToolResponse:
     from lenspr.parsers import is_supported_file
 
     pattern_str = params["pattern"]
-    file_glob = params.get("file_glob")  # None = all supported languages
+    file_glob = params.get("file_glob") or None  # None/empty = all supported languages
     max_results = params.get("max_results", 50)
 
     try:

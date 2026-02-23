@@ -234,6 +234,8 @@ _HANDLER_MAP: dict[str, tuple[str, str]] = {
     "lens_api_map": ("lenspr.tools.resolvers", "handle_api_map"),
     "lens_db_map": ("lenspr.tools.resolvers", "handle_db_map"),
     "lens_env_map": ("lenspr.tools.resolvers", "handle_env_map"),
+    "lens_ffi_map": ("lenspr.tools.resolvers", "handle_ffi_map"),
+    "lens_infra_map": ("lenspr.tools.resolvers", "handle_infra_map"),
     # Temporal
     "lens_hotspots": ("lenspr.tools.temporal", "handle_hotspots"),
     "lens_node_timeline": ("lenspr.tools.temporal", "handle_node_timeline"),

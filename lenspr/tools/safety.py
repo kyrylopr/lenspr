@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 from lenspr import database
 from lenspr import graph as graph_module
 from lenspr.models import ToolResponse
+from lenspr.tools.helpers import resolve_or_fail
 
 if TYPE_CHECKING:
     from lenspr.context import LensContext
@@ -245,9 +246,12 @@ def handle_nfr_check(params: dict, ctx: LensContext) -> ToolResponse:
     Checks: error handling, logging, hardcoded secrets, input validation,
     auth on sensitive operations.
     """
-    node_id = params.get("node_id")
-    if not node_id:
+    raw_id = params.get("node_id")
+    if not raw_id:
         return ToolResponse(success=False, error="node_id is required")
+    node_id, err = resolve_or_fail(raw_id, ctx)
+    if err:
+        return err
     node = database.get_node(node_id, ctx.graph_db)
     if not node:
         return ToolResponse(success=False, error=f"Node not found: {node_id}")
@@ -1177,9 +1181,12 @@ def handle_generate_test_skeleton(params: dict, ctx: LensContext) -> ToolRespons
 
     The spec includes: scenarios, setup_hints, example_callers, mocks_needed.
     """
-    node_id = params.get("node_id")
-    if not node_id:
+    raw_id = params.get("node_id")
+    if not raw_id:
         return ToolResponse(success=False, error="node_id is required")
+    node_id, err = resolve_or_fail(raw_id, ctx)
+    if err:
+        return err
 
     ctx.ensure_synced()
     node = database.get_node(node_id, ctx.graph_db)

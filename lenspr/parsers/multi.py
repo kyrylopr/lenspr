@@ -211,11 +211,14 @@ class MultiParser(BaseParser):
 
         # Collect files and track skipped directories
         files_to_parse: list[Path] = []
-        skipped_counts: dict[str, int] = {}
+        skipped_counts: dict[str, int] = {}  # dir_name -> ALL file count (code + non-code)
+        total_file_count = 0
 
         for file_path in sorted(root_path.rglob("*")):
             if not file_path.is_file():
                 continue
+
+            total_file_count += 1
 
             # Check if in skipped directory
             skip_reason = None
@@ -232,8 +235,7 @@ class MultiParser(BaseParser):
                     break
 
             if skip_reason:
-                if file_path.suffix.lower() in extensions:
-                    skipped_counts[skip_reason] = skipped_counts.get(skip_reason, 0) + 1
+                skipped_counts[skip_reason] = skipped_counts.get(skip_reason, 0) + 1
                 continue
 
             if file_path.suffix.lower() not in extensions:
@@ -247,8 +249,9 @@ class MultiParser(BaseParser):
 
             files_to_parse.append(file_path)
 
-        # Track skipped dirs in stats
+        # Track skipped dirs and total file count in stats
         if stats:
+            stats.total_project_files = total_file_count
             for dir_name, count in skipped_counts.items():
                 stats.add_skipped_dir(dir_name, count)
 
@@ -315,6 +318,20 @@ class MultiParser(BaseParser):
             sql_mapper = SqlMapper()
             sql_mapper.extract_tables(all_nodes)
             sql_mapper.extract_operations(all_nodes)
+
+            # Parse raw .sql files (migrations, seeds, etc.)
+            sql_file_count = 0
+            for sql_file in sorted(root_path.rglob("*.sql")):
+                if should_skip_path(sql_file):
+                    continue
+                sql_mapper.parse_sql_file(sql_file, root_path)
+                sql_file_count += 1
+            sql_file_nodes = sql_mapper.get_sql_file_nodes()
+            if sql_file_nodes:
+                all_nodes.extend(sql_file_nodes)
+            if stats and sql_file_count:
+                stats.infra_files["SQL files (.sql)"] = sql_file_count
+
             db_edges = sql_mapper.match()
             if db_edges:
                 all_edges.extend(db_edges)
@@ -330,25 +347,71 @@ class MultiParser(BaseParser):
 
             infra_mapper = InfraMapper()
 
-            # Parse docker-compose files
-            for name in ("docker-compose.yml", "docker-compose.yaml", "compose.yml"):
-                compose_path = root_path / name
-                if compose_path.exists():
-                    infra_mapper.parse_compose(compose_path)
+            # Parse docker-compose files (recursive for monorepos)
+            compose_count = 0
+            compose_patterns = [
+                "docker-compose*.yml", "docker-compose*.yaml",
+                "compose.yml", "compose.yaml",
+            ]
+            for pattern in compose_patterns:
+                for compose_path in sorted(root_path.rglob(pattern)):
+                    if compose_path.is_file() and not should_skip_path(
+                        compose_path.relative_to(root_path)
+                    ):
+                        infra_mapper.parse_compose(compose_path)
+                        compose_count += 1
 
-            # Parse .env files
-            for name in (".env", ".env.example", ".env.local"):
-                env_path = root_path / name
-                if env_path.exists():
-                    infra_mapper.parse_env_file(env_path)
+            # Parse .env files (recursive for monorepos)
+            env_count = 0
+            for env_file in sorted(root_path.rglob(".env*")):
+                if env_file.is_file() and not should_skip_path(
+                    env_file.relative_to(root_path)
+                ):
+                    infra_mapper.parse_env_file(env_file)
+                    env_count += 1
+
+            # Extract env var definitions from compose environment: sections
+            from lenspr.resolvers.infra_mapper import EnvVarDef
+
+            for svc in infra_mapper._services.values():
+                for key, val in svc.environment.items():
+                    infra_mapper._env_vars.append(
+                        EnvVarDef(
+                            name=key,
+                            value=val or "",
+                            source_file=svc.file_path,
+                            line=0,
+                        )
+                    )
 
             # Extract env var usages from code
             infra_mapper.extract_env_usages(all_nodes)
+
+            # Parse Dockerfiles
+            dockerfile_count = 0
+            for df_path in sorted(root_path.rglob("Dockerfile*")):
+                if should_skip_path(df_path):
+                    continue
+                infra_mapper.parse_dockerfile(df_path, root_path)
+                dockerfile_count += 1
+            for df_path in sorted(root_path.rglob("*.dockerfile")):
+                if should_skip_path(df_path):
+                    continue
+                infra_mapper.parse_dockerfile(df_path, root_path)
+                dockerfile_count += 1
 
             # Create virtual service nodes
             service_nodes = infra_mapper.get_service_nodes()
             if service_nodes:
                 all_nodes.extend(service_nodes)
+
+            # Create virtual Dockerfile nodes and edges
+            dockerfile_nodes = infra_mapper.get_dockerfile_nodes()
+            if dockerfile_nodes:
+                all_nodes.extend(dockerfile_nodes)
+            dockerfile_edges = infra_mapper.get_dockerfile_edges()
+            if dockerfile_edges:
+                all_edges.extend(dockerfile_edges)
 
             # Create edges
             infra_edges = infra_mapper.match()
@@ -357,8 +420,60 @@ class MultiParser(BaseParser):
                 logger.info(
                     "Infra mapper: added %d infrastructure edges", len(infra_edges),
                 )
+
+            # Track infra files in stats
+            if stats:
+                if compose_count:
+                    stats.infra_files["Docker Compose"] = compose_count
+                if env_count:
+                    stats.infra_files["Environment (.env)"] = env_count
+                if dockerfile_count:
+                    stats.infra_files["Dockerfiles"] = dockerfile_count
         except Exception as e:
             logger.debug("Infra mapper skipped: %s", e)
+
+        # Seventh pass: FFI bridge mapping (NAPI, koffi, WASM)
+        try:
+            from lenspr.resolvers.ffi_mapper import FfiMapper
+
+            ffi_mapper = FfiMapper()
+            ffi_mapper.extract_bindings(all_nodes)
+            native_nodes = ffi_mapper.get_native_nodes()
+            if native_nodes:
+                all_nodes.extend(native_nodes)
+            ffi_edges = ffi_mapper.match()
+            if ffi_edges:
+                all_edges.extend(ffi_edges)
+                logger.info(
+                    "FFI mapper: added %d native bridge edges", len(ffi_edges),
+                )
+        except Exception as e:
+            logger.debug("FFI mapper skipped: %s", e)
+
+        # Eighth pass: CI/CD workflow mapping (GitHub Actions)
+        try:
+            from lenspr.resolvers.ci_mapper import CiMapper
+
+            ci_mapper = CiMapper()
+            wf_count = 0
+            gh_dir = root_path / ".github" / "workflows"
+            if gh_dir.is_dir():
+                for wf_path in sorted(gh_dir.glob("*.y*ml")):
+                    ci_mapper.parse_github_workflow(wf_path, root_path)
+                    wf_count += 1
+            ci_nodes = ci_mapper.get_ci_nodes()
+            if ci_nodes:
+                all_nodes.extend(ci_nodes)
+            ci_edges = ci_mapper.match()
+            if ci_edges:
+                all_edges.extend(ci_edges)
+                logger.info(
+                    "CI mapper: added %d CI/CD edges", len(ci_edges),
+                )
+            if stats and wf_count:
+                stats.infra_files["CI workflows (.yml)"] = wf_count
+        except Exception as e:
+            logger.debug("CI mapper skipped: %s", e)
 
         # Update stats with resolved edges (recalculate resolution percentages)
         if stats:

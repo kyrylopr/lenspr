@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 from lenspr import database
 from lenspr.models import ToolResponse
+from lenspr.tools.helpers import resolve_or_fail
 from lenspr.tools.patterns import VALID_ROLES, auto_annotate
 
 if TYPE_CHECKING:
@@ -23,7 +24,9 @@ __all__ = ["VALID_ROLES"]
 
 def handle_annotate(params: dict, ctx: LensContext) -> ToolResponse:
     """Get node context for annotation. Use lens_save_annotation to save the result."""
-    node_id = params["node_id"]
+    node_id, err = resolve_or_fail(params["node_id"], ctx)
+    if err:
+        return err
 
     node = database.get_node(node_id, ctx.graph_db)
     if not node:
@@ -89,7 +92,9 @@ def handle_save_annotation(params: dict, ctx: LensContext) -> ToolResponse:
 
     Claude provides summary; role and side_effects are auto-detected if not provided.
     """
-    node_id = params["node_id"]
+    node_id, err = resolve_or_fail(params["node_id"], ctx)
+    if err:
+        return err
 
     node = database.get_node(node_id, ctx.graph_db)
     if not node:

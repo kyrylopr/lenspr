@@ -523,3 +523,149 @@ class TestEndToEndMatching:
         assert edges[0].type == EdgeType.READS_TABLE
         assert edges[0].from_node == "views.list_articles"
         assert edges[0].to_node == "models.Article"
+
+
+# ---------------------------------------------------------------------------
+# Tests — Raw SQL file parsing
+# ---------------------------------------------------------------------------
+
+
+class TestRawSqlFileParsing:
+    """Test parsing of raw .sql files."""
+
+    def test_create_table(self, tmp_path):
+        sql = "CREATE TABLE users (\n    id SERIAL PRIMARY KEY,\n    email TEXT NOT NULL\n);"
+        sql_file = tmp_path / "init.sql"
+        sql_file.write_text(sql)
+
+        mapper = SqlMapper()
+        mapper.parse_sql_file(sql_file, tmp_path)
+        edges = mapper.match()
+
+        assert len(edges) == 1
+        assert edges[0].type == EdgeType.MIGRATES
+        assert edges[0].to_node == "db.table.users"
+
+    def test_insert(self, tmp_path):
+        sql = "INSERT INTO orders (user_id, total) VALUES (1, 99.99);"
+        sql_file = tmp_path / "seed.sql"
+        sql_file.write_text(sql)
+
+        mapper = SqlMapper()
+        mapper.parse_sql_file(sql_file, tmp_path)
+        edges = mapper.match()
+
+        assert len(edges) == 1
+        assert edges[0].type == EdgeType.WRITES_TABLE
+        assert edges[0].to_node == "db.table.orders"
+
+    def test_select(self, tmp_path):
+        sql = "SELECT u.email, o.total FROM users u JOIN orders o ON u.id = o.user_id;"
+        sql_file = tmp_path / "query.sql"
+        sql_file.write_text(sql)
+
+        mapper = SqlMapper()
+        mapper.parse_sql_file(sql_file, tmp_path)
+        edges = mapper.match()
+
+        assert any(e.type == EdgeType.READS_TABLE for e in edges)
+        table_names = {e.metadata["table"] for e in edges}
+        assert "users" in table_names
+
+    def test_multi_statement_file(self, tmp_path):
+        sql = (
+            "CREATE TABLE events (\n    id SERIAL PRIMARY KEY,\n    name TEXT\n);\n\n"
+            "CREATE INDEX idx_events_name ON events (name);\n\n"
+            "INSERT INTO events (name) VALUES ('signup');\n\n"
+            "SELECT * FROM events WHERE name = 'signup';"
+        )
+        sql_file = tmp_path / "migrations" / "001.sql"
+        (tmp_path / "migrations").mkdir()
+        sql_file.write_text(sql)
+
+        mapper = SqlMapper()
+        mapper.parse_sql_file(sql_file, tmp_path)
+        edges = mapper.match()
+
+        op_types = {e.type for e in edges}
+        assert EdgeType.MIGRATES in op_types
+        assert EdgeType.WRITES_TABLE in op_types
+        assert EdgeType.READS_TABLE in op_types
+
+    def test_sql_comments_ignored(self, tmp_path):
+        sql = (
+            "-- This is a comment\n"
+            "/* Block comment:\n"
+            "   CREATE TABLE fake_table (id INT);\n"
+            "*/\n"
+            "CREATE TABLE real_table (id SERIAL PRIMARY KEY);"
+        )
+        sql_file = tmp_path / "with_comments.sql"
+        sql_file.write_text(sql)
+
+        mapper = SqlMapper()
+        mapper.parse_sql_file(sql_file, tmp_path)
+        edges = mapper.match()
+
+        table_names = {e.metadata["table"] for e in edges}
+        assert "real_table" in table_names
+        assert "fake_table" not in table_names
+
+    def test_pg_cron_scheduled_job(self, tmp_path):
+        sql = (
+            "SELECT cron.schedule(\n"
+            "    '*/5 * * * *',\n"
+            "    'DELETE FROM expired_sessions WHERE created_at < NOW() - INTERVAL ''1 day'''\n"
+            ");"
+        )
+        sql_file = tmp_path / "cron.sql"
+        sql_file.write_text(sql)
+
+        mapper = SqlMapper()
+        mapper.parse_sql_file(sql_file, tmp_path)
+        edges = mapper.match()
+
+        # Should detect DELETE FROM expired_sessions inside cron job
+        table_names = {e.metadata["table"] for e in edges}
+        assert "expired_sessions" in table_names
+
+    def test_virtual_node_created(self, tmp_path):
+        sql = "CREATE TABLE users (id SERIAL PRIMARY KEY);"
+        sql_file = tmp_path / "init.sql"
+        sql_file.write_text(sql)
+
+        mapper = SqlMapper()
+        mapper.parse_sql_file(sql_file, tmp_path)
+        nodes = mapper.get_sql_file_nodes()
+
+        assert len(nodes) == 1
+        assert nodes[0].id == "sql.init"
+        assert nodes[0].metadata["is_virtual"] is True
+        assert "users" in nodes[0].metadata["tables"]
+
+    def test_nested_sql_file_node_id(self, tmp_path):
+        (tmp_path / "db" / "migrations").mkdir(parents=True)
+        sql_file = tmp_path / "db" / "migrations" / "001_init.sql"
+        sql_file.write_text("CREATE TABLE users (id SERIAL);")
+
+        mapper = SqlMapper()
+        mapper.parse_sql_file(sql_file, tmp_path)
+        nodes = mapper.get_sql_file_nodes()
+
+        assert nodes[0].id == "sql.db.migrations.001_init"
+
+    def test_no_sql_files_returns_empty(self):
+        mapper = SqlMapper()
+        nodes = mapper.get_sql_file_nodes()
+        assert nodes == []
+
+    def test_create_index_on_table(self, tmp_path):
+        sql = "CREATE UNIQUE INDEX idx_users_email ON users (email);"
+        sql_file = tmp_path / "indexes.sql"
+        sql_file.write_text(sql)
+
+        mapper = SqlMapper()
+        mapper.parse_sql_file(sql_file, tmp_path)
+        edges = mapper.match()
+
+        assert any(e.metadata["table"] == "users" for e in edges)

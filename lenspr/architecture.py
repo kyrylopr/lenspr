@@ -167,13 +167,16 @@ def compute_all_metrics(
             # Lines of code
             lines = node.end_line - node.start_line + 1
 
-            # Dependencies (unique classes called)
-            node_outgoing = outgoing.get(node.id, [])
+            # Dependencies (unique external classes/modules called by this class or its methods)
             dependencies: set[str] = set()
-            for edge in node_outgoing:
-                if edge.type == EdgeType.CALLS:
+            # Check edges from the class node itself AND all its methods
+            all_class_edges = list(outgoing.get(node.id, []))
+            for method in methods:
+                all_class_edges.extend(outgoing.get(method.id, []))
+            for edge in all_class_edges:
+                if edge.type in (EdgeType.CALLS, EdgeType.IMPORTS):
                     target = all_nodes.get(edge.to_node)
-                    if target and target.type in (NodeType.METHOD, NodeType.FUNCTION):
+                    if target and target.type in (NodeType.METHOD, NodeType.FUNCTION, NodeType.CLASS):
                         parts = edge.to_node.rsplit(".", 1)
                         if len(parts) == 2 and parts[0] != node.id:
                             dependencies.add(parts[0])

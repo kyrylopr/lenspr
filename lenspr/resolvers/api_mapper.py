@@ -126,11 +126,45 @@ _TS_METHOD_RE = re.compile(
     re.IGNORECASE,
 )
 
+# ---------------------------------------------------------------------------
+# Programmatic route registration (Express, Fastify, Hono, Koa)
+# ---------------------------------------------------------------------------
+
+# app.get("/path", handler), router.post("/path", handler), crawlRouter.get("/path", handler)
+# Match any identifier (camelCase, snake_case) followed by .get/.post/... with a path string.
+_PROGRAMMATIC_ROUTE_RE = re.compile(
+    r"""\b\w+\.(get|post|put|delete|patch|options|all)\s*\(\s*[`"']([^`"']*)[`"']""",
+    re.IGNORECASE,
+)
+
+# Express/Hono/Koa: app.use("/prefix", router) or app.route("/prefix").get(handler)
+_APP_USE_MOUNT_RE = re.compile(
+    r"""\.use\s*\(\s*[`"']([^`"']+)[`"']\s*,\s*(\w+)""",
+)
+
+# TS/JS file extensions for programmatic route scanning
+_TS_JS_EXTENSIONS = {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"}
+
 def _is_test_file(file_path: str) -> bool:
     """Check if a file path belongs to a test file."""
     import os
     basename = os.path.basename(file_path)
-    return basename.startswith("test_") or basename == "conftest.py"
+    parts = file_path.replace("\\", "/").split("/")
+    return (
+        basename.startswith("test_")
+        or basename == "conftest.py"
+        or basename.endswith(".test.ts")
+        or basename.endswith(".test.js")
+        or basename.endswith(".spec.ts")
+        or basename.endswith(".spec.js")
+        or "__tests__" in parts
+    )
+
+
+def _is_ts_js_file(file_path: str) -> bool:
+    """Check if file is TypeScript or JavaScript."""
+    from pathlib import PurePosixPath
+    return PurePosixPath(file_path).suffix.lower() in _TS_JS_EXTENSIONS
 
 
 
@@ -276,6 +310,78 @@ class ApiMapper:
                     handler_node_id=handler.id,
                     file_path=handler.file_path,
                     line=handler.start_line,
+                ))
+
+        # Third pass: programmatic routes (Express, Fastify, Hono, Koa)
+        # These use app.get("/path", handler) style — no decorators.
+        # Only scan TS/JS files.
+
+        # Build mount prefix map: app.use("/prefix", routerVar) → routerVar → prefix
+        mount_prefixes: dict[str, str] = {}  # variable name → mount prefix
+        for node in nodes:
+            if not node.source_code or not _is_ts_js_file(node.file_path):
+                continue
+            for m in _APP_USE_MOUNT_RE.finditer(node.source_code):
+                prefix = m.group(1).rstrip("/")
+                router_var = m.group(2)
+                mount_prefixes[router_var] = prefix
+
+        for node in nodes:
+            if not node.source_code:
+                continue
+            if not _is_ts_js_file(node.file_path):
+                continue
+
+            source = node.source_code
+
+            for match in _PROGRAMMATIC_ROUTE_RE.finditer(source):
+                if self._is_in_comment(source, match):
+                    continue
+                method = match.group(1).upper()
+                raw_path = match.group(2)
+
+                # Filter false positives: path must look like a route
+                # (starts with /, *, or is empty for root routes).
+                # Skip non-route calls like map.get("key"), env.get("VAR").
+                if raw_path and not raw_path.startswith(("/", "*", ":")):
+                    continue
+
+                # Determine prefix: check if the variable before .get() has a mount
+                # e.g., "router.get(...)" — look for router in mount_prefixes
+                line_start = source.rfind("\n", 0, match.start()) + 1
+                line_text = source[line_start : match.start()]
+                caller_var = line_text.strip().split(".")[-1] if "." in line_text else ""
+                # Also try the full word before the dot
+                var_match = re.search(r"(\w+)\.\w+\s*\(", source[line_start:])
+                if var_match:
+                    caller_var = var_match.group(1)
+
+                prefix = mount_prefixes.get(caller_var, "")
+                path = prefix + raw_path
+
+                # Handler: for TS/JS, the node containing the route IS the handler
+                # (or the closest function containing this code)
+                handler_id = node.id
+                # If node is a module/block, try to find the containing function
+                if node.type.value in ("module", "block"):
+                    abs_line = node.start_line + source[: match.start()].count("\n")
+                    funcs = func_index.get(node.file_path, [])
+                    # Find function that contains this line
+                    for fn in reversed(funcs):
+                        if fn.start_line <= abs_line <= fn.end_line:
+                            handler_id = fn.id
+                            break
+
+                key = (handler_id, method, path)
+                if key in seen:
+                    continue
+                seen.add(key)
+                routes.append(RouteInfo(
+                    method=method,
+                    path=self._normalize_path(path),
+                    handler_node_id=handler_id,
+                    file_path=node.file_path,
+                    line=node.start_line + source[: match.start()].count("\n"),
                 ))
 
         self._routes = routes

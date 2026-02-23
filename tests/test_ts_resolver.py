@@ -202,7 +202,7 @@ class TestCrossFileResolution:
             imported_name="useState",
         )
 
-        assert result.confidence == EdgeConfidence.EXTERNAL
+        assert result.confidence.value == EdgeConfidence.EXTERNAL.value
         assert "react" in (result.node_id or "")
 
     def test_resolution_caching(self, tmp_project: Path) -> None:

@@ -939,6 +939,31 @@ LENS_TOOLS: list[dict[str, Any]] = [
             "properties": {},
         },
     },
+    {
+        "name": "lens_ffi_map",
+        "description": (
+            "Map FFI bridges between TS/JS and native code. "
+            "Detects NAPI (.node imports), koffi (koffi.load), ffi-napi "
+            "(ffi.Library), and WASM (WebAssembly.instantiate) bindings. "
+            "Shows which JS/TS code calls native modules."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+    {
+        "name": "lens_infra_map",
+        "description": (
+            "Map infrastructure: Dockerfiles, CI/CD workflows, compose services. "
+            "Shows Docker build stages, exposed ports, CI job dependencies, "
+            "secret/env references, and service topology."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
     # -- Temporal tools --
     {
         "name": "lens_hotspots",

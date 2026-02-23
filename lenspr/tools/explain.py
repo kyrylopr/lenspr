@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 from lenspr import database
 from lenspr.models import ToolResponse
+from lenspr.tools.helpers import resolve_or_fail
 
 if TYPE_CHECKING:
     from lenspr.context import LensContext
@@ -19,7 +20,9 @@ def handle_explain(params: dict, ctx: LensContext) -> ToolResponse:
     plus rule-based analysis as a starting point.
     """
     ctx.ensure_synced()
-    node_id = params["node_id"]
+    node_id, err = resolve_or_fail(params["node_id"], ctx)
+    if err:
+        return err
     include_examples = params.get("include_examples", True)
 
     node = database.get_node(node_id, ctx.graph_db)

@@ -578,7 +578,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
     @mcp.tool()
     def lens_grep(
         pattern: str,
-        file_glob: str = "*.py",
+        file_glob: str = "",
         max_results: int = 50,
     ) -> str:
         """Search for a text pattern across all project files with graph context.
@@ -588,7 +588,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
 
         Args:
             pattern: Text or regex pattern to search for.
-            file_glob: Glob pattern to filter files (e.g. '*.py', 'tests/**').
+            file_glob: Glob pattern to filter files (e.g. '*.py', 'tests/**'). Empty = all supported languages.
             max_results: Maximum number of results to return.
         """
         return _tool_result("lens_grep", {
@@ -1219,6 +1219,25 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
         Highlights undefined env vars (used but not defined anywhere).
         """
         return _tool_result("lens_env_map", {})
+
+    @mcp.tool()
+    def lens_ffi_map() -> str:
+        """Map FFI bridges between TS/JS and native code.
+
+        Detects NAPI (.node imports), koffi (koffi.load), ffi-napi
+        (ffi.Library), and WASM (WebAssembly.instantiate) bindings.
+        Shows which JS/TS code calls native modules.
+        """
+        return _tool_result("lens_ffi_map", {})
+
+    @mcp.tool()
+    def lens_infra_map() -> str:
+        """Map infrastructure: Dockerfiles, CI/CD workflows, compose services.
+
+        Shows Docker build stages, exposed ports, CI job dependencies,
+        secret/env references, and service topology.
+        """
+        return _tool_result("lens_infra_map", {})
 
     # -- Temporal Tools --
 

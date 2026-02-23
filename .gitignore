@@ -42,5 +42,8 @@ eval/results/
 eval/results_v2/
 !eval/results/*.png
 
+# Node.js
+node_modules/
+
 # Claude Code (temporary files, plans)
 .claude/plans/

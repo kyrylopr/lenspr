@@ -193,9 +193,9 @@ _SA2_WRITE_RE = re.compile(
     r"""\b(?:insert|update|delete)\s*\(\s*(\w+)""",
 )
 
-# Supabase / PostgREST client: .table("table_name").select/insert/update/delete/upsert
+# Supabase / PostgREST client: .table("table_name") or .from("table_name")
 _SUPABASE_TABLE_RE = re.compile(
-    r"""\.table\s*\(\s*['"]([^'"]+)['"]\s*\)""",
+    r"""\.(?:table|from)\s*\(\s*['"]([^'"]+)['"]\s*\)""",
 )
 _SUPABASE_READ_METHODS = {"select", "rpc"}
 _SUPABASE_WRITE_METHODS = {"insert", "update", "upsert", "delete"}
@@ -226,6 +226,22 @@ _SQL_NOISE = {
     "supabase", "firebase", "dynamo", "redis", "mongo", "postgres",
     "database", "storage", "server", "cloud",
 }
+
+# pg_cron: cron.schedule('*/5 * * * *', 'DELETE FROM events WHERE ...')
+_PG_CRON_RE = re.compile(
+    r"""cron\.schedule\s*\(\s*['"]([^'"]+)['"]\s*,\s*(?:\$\$|['"])(.+?)(?:\$\$|['"])""",
+    re.DOTALL,
+)
+
+# SQL comments: -- line comments and /* block comments */
+_SQL_LINE_COMMENT_RE = re.compile(r"--[^\n]*")
+_SQL_BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
+
+# CREATE INDEX
+_SQL_CREATE_INDEX_RE = re.compile(
+    r"""\bCREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?\w+\s+ON\s+[`"']?(\w+)[`"']?""",
+    re.IGNORECASE,
+)
 
 def _is_test_file(file_path: str) -> bool:
     """Check if a file path belongs to a test file."""
@@ -597,9 +613,20 @@ class SqlMapper:
         ops: list[DbOperation],
     ) -> None:
         """Extract table references from raw SQL patterns in text."""
+        # Collect CTE aliases (WITH ... AS) to avoid false table matches.
+        # e.g. WITH ins AS (INSERT INTO ...) SELECT * FROM ins — "ins" is not a table.
+        cte_aliases: set[str] = set()
+        for cte_match in re.finditer(r"\bWITH\s+(\w+)\s+AS\s*\(", text, re.IGNORECASE):
+            cte_aliases.add(cte_match.group(1).lower())
+        # Also handle comma-separated CTEs: WITH a AS (...), b AS (...)
+        for cte_match in re.finditer(r",\s*(\w+)\s+AS\s*\(", text, re.IGNORECASE):
+            cte_aliases.add(cte_match.group(1).lower())
+
+        skip = _SQL_NOISE | cte_aliases
+
         for match in _SQL_SELECT_RE.finditer(text):
             table = match.group(1).lower()
-            if table not in _SQL_NOISE:
+            if table not in skip:
                 ops.append(DbOperation(
                     op_type="read",
                     table_name=table,
@@ -611,7 +638,7 @@ class SqlMapper:
         for regex in (_SQL_INSERT_RE, _SQL_UPDATE_RE, _SQL_DELETE_RE):
             for match in regex.finditer(text):
                 table = match.group(1).lower()
-                if table not in _SQL_NOISE:
+                if table not in skip:
                     ops.append(DbOperation(
                         op_type="write",
                         table_name=table,
@@ -623,7 +650,7 @@ class SqlMapper:
         for regex in (_SQL_CREATE_TABLE_RE, _SQL_ALTER_TABLE_RE, _SQL_DROP_TABLE_RE):
             for match in regex.finditer(text):
                 table = match.group(1).lower()
-                if table not in _SQL_NOISE:
+                if table not in skip:
                     ops.append(DbOperation(
                         op_type="migrate",
                         table_name=table,
@@ -700,3 +727,104 @@ class SqlMapper:
             )
 
         return edges
+
+    # ------------------------------------------------------------------
+    # Raw SQL file parsing
+    # ------------------------------------------------------------------
+
+    def parse_sql_file(self, file_path: "Path", root_path: "Path") -> None:
+        """Parse a raw .sql file for SQL statements.
+
+        Creates a virtual node ID for the SQL file and extracts all DDL/DML
+        operations as DbOperations referencing that virtual node.
+        Also detects CREATE INDEX and pg_cron scheduled jobs.
+        """
+        from pathlib import Path
+
+        text = file_path.read_text(encoding="utf-8", errors="replace")
+
+        # Strip SQL comments to avoid false matches
+        clean = _SQL_LINE_COMMENT_RE.sub("", text)
+        clean = _SQL_BLOCK_COMMENT_RE.sub("", clean)
+
+        # Virtual node ID: sql.<relative_path_dotted>
+        rel = file_path.relative_to(root_path)
+        parts = list(rel.with_suffix("").parts)
+        node_id = "sql." + ".".join(parts)
+
+        # Store for get_sql_file_nodes()
+        if not hasattr(self, "_sql_files"):
+            self._sql_files: dict[str, dict] = {}
+        self._sql_files[node_id] = {
+            "file_path": str(rel),
+            "name": rel.name,
+            "tables_found": [],
+        }
+
+        # Create a dummy node for _extract_raw_sql
+        dummy = Node(
+            id=node_id,
+            type=NodeType.MODULE,
+            name=rel.stem,
+            qualified_name=node_id,
+            file_path=str(rel),
+            start_line=1,
+            end_line=text.count("\n") + 1,
+            source_code=text,
+        )
+
+        # Use existing _extract_raw_sql for SELECT/INSERT/UPDATE/DELETE/CREATE/ALTER/DROP
+        ops: list[DbOperation] = []
+        self._extract_raw_sql(clean, dummy, 1, ops)
+
+        # Also detect CREATE INDEX → table reference
+        for m in _SQL_CREATE_INDEX_RE.finditer(clean):
+            table = m.group(1).lower()
+            if table not in _SQL_NOISE:
+                ops.append(DbOperation(
+                    op_type="migrate",
+                    table_name=table,
+                    caller_node_id=node_id,
+                    file_path=str(rel),
+                    line=clean[: m.start()].count("\n") + 1,
+                ))
+
+        # Detect pg_cron scheduled jobs
+        for m in _PG_CRON_RE.finditer(clean):
+            schedule = m.group(1)
+            sql_body = m.group(2)
+            # Parse the SQL inside the cron job
+            self._extract_raw_sql(sql_body, dummy, clean[: m.start()].count("\n") + 1, ops)
+
+        self._operations.extend(ops)
+
+        # Track tables found in this file
+        tables = {op.table_name for op in ops}
+        self._sql_files[node_id]["tables_found"] = sorted(tables)
+
+    def get_sql_file_nodes(self) -> list[Node]:
+        """Create virtual nodes for parsed SQL files."""
+        if not hasattr(self, "_sql_files"):
+            return []
+
+        nodes: list[Node] = []
+        for node_id, info in self._sql_files.items():
+            tables = info["tables_found"]
+            source_parts = [f"# SQL file: {info['name']}"]
+            if tables:
+                source_parts.append(f"# Tables: {', '.join(tables)}")
+
+            nodes.append(Node(
+                id=node_id,
+                type=NodeType.MODULE,
+                name=info["name"],
+                qualified_name=node_id,
+                file_path=info["file_path"],
+                start_line=1,
+                end_line=1,
+                source_code="\n".join(source_parts),
+                docstring=f"SQL file: {info['name']}",
+                metadata={"is_virtual": True, "tables": tables},
+            ))
+
+        return nodes

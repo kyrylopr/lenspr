@@ -1,4 +1,4 @@
-"""Resolver-based tool handlers: API map, DB map, env map."""
+"""Resolver-based tool handlers: API map, DB map, env map, FFI map, infra map."""
 
 from __future__ import annotations
 
@@ -14,62 +14,59 @@ __all__ = [
     "handle_api_map",
     "handle_db_map",
     "handle_env_map",
+    "handle_ffi_map",
+    "handle_infra_map",
 ]
 
 
 def handle_api_map(params: dict, ctx: LensContext) -> ToolResponse:
     """Map API routes to frontend calls and create cross-language edges.
 
-    Scans backend code for route decorators (@app.get, @app.route) and
-    frontend code for fetch/axios calls, then matches them by path.
+    Reads pre-computed calls_api edges from graph.db (created during init/sync
+    by the ApiMapper pipeline). This is much more reliable than re-scanning
+    source because the mapper has full router-prefix context during parse time.
     """
+    import json
+
     ctx.ensure_synced()
-    all_nodes = database.get_nodes(ctx.graph_db)
+    raw_edges = database.get_edges_by_types(["calls_api"], ctx.graph_db)
 
-    from lenspr.resolvers.api_mapper import ApiMapper
+    # Group by backend handler (to_node) for a route-centric view
+    route_map: dict[str, list[dict]] = {}
+    matched_edges: list[dict] = []
 
-    mapper = ApiMapper()
-    routes = mapper.extract_routes(all_nodes)
-    calls = mapper.extract_api_calls(all_nodes)
-    edges = mapper.match()
+    for edge in raw_edges:
+        meta = {}
+        if edge.get("metadata"):
+            try:
+                meta = json.loads(edge["metadata"]) if isinstance(edge["metadata"], str) else edge["metadata"]
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        entry = {
+            "from": edge["from_node"],
+            "to": edge["to_node"],
+            "http_method": meta.get("http_method", ""),
+            "call_path": meta.get("path", ""),
+            "route_path": meta.get("route_path", ""),
+            "confidence": edge.get("confidence", ""),
+        }
+        matched_edges.append(entry)
+
+        handler = edge["to_node"]
+        route_map.setdefault(handler, []).append(edge["from_node"])
 
     return ToolResponse(
         success=True,
         data={
-            "routes": [
-                {
-                    "method": r.method,
-                    "path": r.path,
-                    "handler_node_id": r.handler_node_id,
-                    "file": r.file_path,
-                    "line": r.line,
-                }
-                for r in routes
-            ],
-            "api_calls": [
-                {
-                    "method": c.method,
-                    "path": c.path,
-                    "caller_node_id": c.caller_node_id,
-                    "file": c.file_path,
-                    "line": c.line,
-                }
-                for c in calls
-            ],
-            "matched_edges": [
-                {
-                    "from": e.from_node,
-                    "to": e.to_node,
-                    "http_method": e.metadata.get("http_method", ""),
-                    "call_path": e.metadata.get("path", ""),
-                    "route_path": e.metadata.get("route_path", ""),
-                }
-                for e in edges
-            ],
+            "matched_edges": matched_edges,
+            "route_map": {
+                handler: {"handler": handler, "callers": callers}
+                for handler, callers in route_map.items()
+            },
             "summary": {
-                "routes_found": len(routes),
-                "api_calls_found": len(calls),
-                "edges_matched": len(edges),
+                "edges_total": len(matched_edges),
+                "routes_with_callers": len(route_map),
             },
         },
     )
@@ -78,64 +75,48 @@ def handle_api_map(params: dict, ctx: LensContext) -> ToolResponse:
 def handle_db_map(params: dict, ctx: LensContext) -> ToolResponse:
     """Map database tables to the functions that read/write them.
 
-    Detects tables from SQLAlchemy __tablename__, Django models, and
-    CREATE TABLE statements. Maps SQL queries (SELECT, INSERT, UPDATE,
-    DELETE) to the containing functions.
+    Reads pre-computed reads_table / writes_table / migrates edges from
+    graph.db (created during init/sync by the SqlMapper pipeline).
     """
     ctx.ensure_synced()
-    all_nodes = database.get_nodes(ctx.graph_db)
+    raw_edges = database.get_edges_by_types(
+        ["reads_table", "writes_table", "migrates"], ctx.graph_db,
+    )
 
-    from lenspr.resolvers.sql_mapper import SqlMapper
-
-    mapper = SqlMapper()
-    tables = mapper.extract_tables(all_nodes)
-    ops = mapper.extract_operations(all_nodes)
-    edges = mapper.match()
-
-    # Group operations by table
+    # Group by table name (to_node is the table identifier)
     table_usage: dict[str, dict[str, list[str]]] = {}
-    for op in ops:
-        t = op.table_name
-        if t not in table_usage:
-            table_usage[t] = {"reads": [], "writes": []}
-        key = "writes" if op.op_type in ("write", "migrate") else "reads"
-        table_usage[t][key].append(op.caller_node_id)
+    edge_list: list[dict] = []
+
+    for edge in raw_edges:
+        table = edge["to_node"]
+        func = edge["from_node"]
+        etype = edge["type"]
+
+        if table not in table_usage:
+            table_usage[table] = {"reads": [], "writes": []}
+
+        if etype in ("writes_table", "migrates"):
+            table_usage[table]["writes"].append(func)
+        else:
+            table_usage[table]["reads"].append(func)
+
+        edge_list.append({
+            "from": func,
+            "to": table,
+            "type": etype,
+            "confidence": edge.get("confidence", ""),
+        })
 
     return ToolResponse(
         success=True,
         data={
-            "tables": [
-                {
-                    "name": t.name,
-                    "node_id": t.model_node_id,
-                    "file": t.file_path,
-                    "line": t.line,
-                }
-                for t in tables
-            ],
-            "operations": [
-                {
-                    "table": op.table_name,
-                    "operation": op.op_type,
-                    "node_id": op.caller_node_id,
-                    "file": op.file_path,
-                    "line": op.line,
-                }
-                for op in ops
-            ],
             "table_usage": table_usage,
-            "edges": [
-                {
-                    "from": e.from_node,
-                    "to": e.to_node,
-                    "type": e.type.value,
-                }
-                for e in edges
-            ],
+            "edges": edge_list,
             "summary": {
-                "tables_found": len(tables),
-                "operations_found": len(ops),
-                "edges_created": len(edges),
+                "tables_found": len(table_usage),
+                "edges_total": len(edge_list),
+                "reads": sum(len(v["reads"]) for v in table_usage.values()),
+                "writes": sum(len(v["writes"]) for v in table_usage.values()),
             },
         },
     )
@@ -151,27 +132,64 @@ def handle_env_map(params: dict, ctx: LensContext) -> ToolResponse:
     all_nodes = database.get_nodes(ctx.graph_db)
     project_root = ctx.project_root
 
-    from lenspr.resolvers.infra_mapper import InfraMapper
+    from lenspr.resolvers.infra_mapper import EnvVarDef, InfraMapper
 
     mapper = InfraMapper()
 
-    # Find and parse .env files
-    for env_file in sorted(project_root.glob(".env*")):
-        if env_file.is_file():
+    skip_dirs = {
+        "__pycache__", ".git", ".lens", ".venv", "venv", "env",
+        "node_modules", ".mypy_cache", ".pytest_cache", "dist", "build",
+    }
+
+    def _skip(path: Path) -> bool:
+        return any(part in skip_dirs for part in path.parts)
+
+    # Find and parse .env files (recursive — monorepo support)
+    for env_file in sorted(project_root.rglob(".env*")):
+        if env_file.is_file() and not _skip(env_file.relative_to(project_root)):
             mapper.parse_env_file(env_file)
 
-    # Find and parse docker-compose files
-    for compose_file in sorted(project_root.glob("docker-compose*.yml")):
-        if compose_file.is_file():
-            mapper.parse_compose(compose_file)
-    for compose_file in sorted(project_root.glob("docker-compose*.yaml")):
-        if compose_file.is_file():
-            mapper.parse_compose(compose_file)
-    # Also check compose.yml (Docker Compose v2 convention)
-    for name in ("compose.yml", "compose.yaml"):
-        candidate = project_root / name
-        if candidate.is_file():
-            mapper.parse_compose(candidate)
+    # Find and parse docker-compose files (recursive)
+    compose_patterns = ["docker-compose*.yml", "docker-compose*.yaml", "compose.yml", "compose.yaml"]
+    seen_compose: set[Path] = set()
+    for pattern in compose_patterns:
+        for compose_file in sorted(project_root.rglob(pattern)):
+            if compose_file.is_file() and compose_file not in seen_compose and not _skip(compose_file.relative_to(project_root)):
+                seen_compose.add(compose_file)
+                mapper.parse_compose(compose_file)
+
+    # Extract env var definitions from compose environment: sections
+    for svc in mapper._services.values():
+        for key, val in svc.environment.items():
+            mapper._env_vars.append(EnvVarDef(
+                name=key,
+                value=val,
+                source_file=svc.file_path,
+                line=0,
+            ))
+
+    # Also scan CI workflow files for env definitions
+    for wf_dir in [project_root / ".github" / "workflows", project_root / ".circleci"]:
+        if not wf_dir.is_dir():
+            continue
+        for wf_file in sorted(wf_dir.rglob("*.yml")) + sorted(wf_dir.rglob("*.yaml")):
+            if not wf_file.is_file():
+                continue
+            try:
+                text = wf_file.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            import re as _re
+            for m in _re.finditer(r"^\s+(\w+):\s*(.+)$", text, _re.MULTILINE):
+                name, val = m.group(1), m.group(2).strip()
+                # Only capture ALL_CAPS names (env vars, not YAML keys)
+                if name.isupper() and not val.endswith(":"):
+                    mapper._env_vars.append(EnvVarDef(
+                        name=name,
+                        value=val.strip("'\""),
+                        source_file=str(wf_file),
+                        line=text[:m.start()].count("\n") + 1,
+                    ))
 
     usages = mapper.extract_env_usages(all_nodes)
     edges = mapper.match()
@@ -211,6 +229,128 @@ def handle_env_map(params: dict, ctx: LensContext) -> ToolResponse:
                 "usages_found": len(usages),
                 "undefined_vars": len(undefined),
                 "edges_created": len(edges),
+            },
+        },
+    )
+
+
+def handle_ffi_map(params: dict, ctx: LensContext) -> ToolResponse:
+    """Map FFI bridges (NAPI, koffi, ffi-napi, WASM) between TS/JS and native code.
+
+    Reads pre-computed calls_native edges from graph.db (created during init/sync
+    by the FfiMapper pipeline).
+    """
+    import json
+
+    ctx.ensure_synced()
+    raw_edges = database.get_edges_by_types(["calls_native"], ctx.graph_db)
+
+    # Group by bridge type
+    bridge_map: dict[str, list[dict]] = {}
+    edge_list: list[dict] = []
+
+    for edge in raw_edges:
+        meta = {}
+        if edge.get("metadata"):
+            try:
+                meta = json.loads(edge["metadata"]) if isinstance(edge["metadata"], str) else edge["metadata"]
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        entry = {
+            "from": edge["from_node"],
+            "to": edge["to_node"],
+            "bridge_type": meta.get("bridge_type", "unknown"),
+            "bound_functions": meta.get("bound_functions", []),
+            "confidence": edge.get("confidence", ""),
+        }
+        edge_list.append(entry)
+
+        bridge_type = meta.get("bridge_type", "unknown")
+        bridge_map.setdefault(bridge_type, []).append(entry)
+
+    return ToolResponse(
+        success=True,
+        data={
+            "bridges": bridge_map,
+            "edges": edge_list,
+            "summary": {
+                "edges_total": len(edge_list),
+                "bridge_types": {bt: len(edges) for bt, edges in bridge_map.items()},
+            },
+        },
+    )
+
+
+def handle_infra_map(params: dict, ctx: LensContext) -> ToolResponse:
+    """Map infrastructure: Dockerfiles, CI/CD workflows, compose services.
+
+    Reads pre-computed infrastructure nodes and edges from graph.db
+    (created during init/sync by InfraMapper and CiMapper).
+    """
+    import json
+
+    ctx.ensure_synced()
+
+    # Collect infrastructure edges
+    infra_edge_types = ["depends_on", "exposes_port", "uses_env"]
+    raw_edges = database.get_edges_by_types(infra_edge_types, ctx.graph_db)
+
+    # Get infrastructure nodes
+    all_nodes = database.get_nodes(ctx.graph_db)
+    infra_nodes = [
+        n for n in all_nodes
+        if n.id.startswith(("infra.", "ci."))
+    ]
+
+    # Group edges by category
+    dockerfiles: list[dict] = []
+    ci_workflows: list[dict] = []
+    compose_services: list[dict] = []
+    edge_list: list[dict] = []
+
+    for node in infra_nodes:
+        entry = {
+            "id": node.id,
+            "name": node.name,
+            "type": node.type.value,
+            "file_path": node.file_path,
+        }
+        if node.id.startswith("infra.dockerfile."):
+            dockerfiles.append(entry)
+        elif node.id.startswith("ci.github."):
+            ci_workflows.append(entry)
+        elif node.id.startswith("infra.service."):
+            compose_services.append(entry)
+
+    for edge in raw_edges:
+        meta = {}
+        if edge.get("metadata"):
+            try:
+                meta = json.loads(edge["metadata"]) if isinstance(edge["metadata"], str) else edge["metadata"]
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        edge_list.append({
+            "from": edge["from_node"],
+            "to": edge["to_node"],
+            "type": edge["type"],
+            "relation": meta.get("ci_relation", meta.get("relation", "")),
+            "confidence": edge.get("confidence", ""),
+        })
+
+    return ToolResponse(
+        success=True,
+        data={
+            "dockerfiles": dockerfiles,
+            "ci_workflows": ci_workflows,
+            "compose_services": compose_services,
+            "edges": edge_list,
+            "summary": {
+                "dockerfiles": len(dockerfiles),
+                "ci_workflows": len(ci_workflows),
+                "compose_services": len(compose_services),
+                "edges_total": len(edge_list),
             },
         },
     )

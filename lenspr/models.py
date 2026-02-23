@@ -44,6 +44,8 @@ class EdgeType(Enum):
     DEPENDS_ON = "depends_on"  # Docker service depends on another service
     EXPOSES_PORT = "exposes_port"  # Service exposes a port
     USES_ENV = "uses_env"  # Code references an environment variable
+    # FFI edge types
+    CALLS_NATIVE = "calls_native"  # TS/JS calls native code via NAPI/koffi/FFI/WASM
 
 
 class EdgeConfidence(Enum):
