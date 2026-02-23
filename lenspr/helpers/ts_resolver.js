@@ -93,6 +93,15 @@ class TypeScriptResolver {
         // If no files from configs, find them manually
         if (fileNames.length === 0) {
             fileNames = this._findSourceFiles(this.projectRoot);
+        } else {
+            // tsconfig may only include .ts/.tsx — add .js/.jsx files too
+            // (allowJs + checkJs are enabled, so TS can resolve them)
+            const existingSet = new Set(fileNames.map(f => path.resolve(f)));
+            const jsFiles = this._findSourceFiles(this.projectRoot)
+                .filter(f => (f.endsWith('.js') || f.endsWith('.jsx')) && !existingSet.has(path.resolve(f)));
+            if (jsFiles.length > 0) {
+                fileNames.push(...jsFiles);
+            }
         }
 
         // Create the program
