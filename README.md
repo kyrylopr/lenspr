@@ -1,5 +1,7 @@
 # LensPR
 
+> **Status: Alpha (0.1.x)** — works on real projects, used daily by the author. Expect rough edges.
+
 AI coding assistants work with code as text — they grep, read, and guess at dependencies. This works for simple changes but breaks down when a function has callers across multiple files.
 
 LensPR parses your codebase into a dependency graph and gives your AI the tools to see what depends on what — before making changes.
@@ -77,6 +79,8 @@ Every search result shows which function contains the match. The AI immediately 
 
 ## Quick Start
 
+Requires **Python 3.10+**, **macOS or Linux**. For TypeScript/JS projects, also **Node.js 18+**.
+
 ```bash
 pip install 'lenspr[all]'
 cd ./my-project
@@ -86,7 +90,12 @@ lenspr setup .
 
 Restart your IDE. Your AI now has access to `lens_*` tools.
 
-That's it.
+| Step | What happens |
+|------|-------------|
+| `lenspr init .` | Parses your code into a dependency graph (`.lens/graph.db`) |
+| `lenspr setup .` | Registers MCP server for your IDE (`.mcp.json`) |
+
+> **Add `.lens/` to your `.gitignore`** — the graph is local and rebuilt from source.
 
 ---
 
@@ -120,9 +129,9 @@ Everything runs locally. Your code never leaves your machine.
 
 ---
 
-### Real-World Validation
+### Tested On
 
-Tested on a production monorepo (257 files, Python + React + Docker):
+Internal testing on a production monorepo (257 files, Python + React + Docker):
 
 | Metric | Value |
 |--------|-------|
@@ -177,18 +186,28 @@ LoginModal.jsx → authAPI.login() → POST /api/auth/login
 
 ---
 
+## Requirements
+
+| Requirement | Details |
+|-------------|---------|
+| **Python** | 3.10+ |
+| **OS** | macOS, Linux. **Windows is not supported.** |
+| **Node.js** | 18+ (only needed for TypeScript/JavaScript projects) |
+
 ## Works With
 
-- **Claude Code** (via MCP)
-- **Cursor** (via MCP)
-- **Any MCP-compatible AI assistant**
+| IDE | Setup |
+|-----|-------|
+| **Claude Code** | `lenspr setup .` — works automatically |
+| **Cursor** | Copy `.mcp.json` to `.cursor/mcp.json` |
+| **Any MCP client** | Run `lenspr serve <path>` as MCP server |
 
 ### Supported Languages
 
-| Language | Parser | Resolution |
-|----------|--------|------------|
-| Python | AST + Jedi (or Pyright) | 95%+ |
-| TypeScript / JavaScript | tree-sitter + TS Compiler API | 90%+ |
+| Language | Parser | Resolution | Notes |
+|----------|--------|------------|-------|
+| Python | AST + Jedi (or Pyright) | 95%+ | Module-level functions fully tracked. `self.method()` calls have limited resolution without runtime tracing. |
+| TypeScript / JavaScript | tree-sitter + TS Compiler API | 85-95% | Requires `node_modules` installed. Auto-installs during `lenspr init`. |
 
 ### Infrastructure & Config Files
 
@@ -419,13 +438,11 @@ The `lenspr setup` command includes interactive group selection. Config is saved
 ## Installation Options
 
 ```bash
-pip install lenspr                # Core (Python only)
-pip install 'lenspr[mcp]'        # + MCP server
+pip install lenspr                # Core (Python projects only)
+pip install 'lenspr[mcp]'        # + MCP server (needed for IDE integration)
 pip install 'lenspr[typescript]'  # + TypeScript/JS parser
-pip install 'lenspr[all]'        # Everything
+pip install 'lenspr[all]'        # Everything (recommended)
 ```
-
-TypeScript support requires Node.js 18+.
 
 ---
 
@@ -483,10 +500,52 @@ Rules are checked automatically on every `lens_update_node` call. Violations app
 
 ## Known Limitations
 
-- **Dynamic code** (`getattr`, `eval`, dynamic imports) can't be fully tracked — accounts for ~0.1% of edges in practice (9 unresolved out of 9,090 total)
-- **Instance method dispatch** — `self.method()` calls have limited resolution without runtime tracing (`lens_trace` on Python 3.12+ resolves these; 15.9% runtime confirmation rate observed)
-- **TypeScript needs Node.js 18+** for full type inference
-- **Security scanning** requires optional dependencies (`pip install bandit` and/or `pip install pip-audit`)
+### What works well
+
+- **Module-level functions** — callers, callees, impact analysis, dead code detection are reliable
+- **Cross-language edges** — frontend-to-backend API mapping, DB table tracking, env vars
+- **Infrastructure** — Docker, CI/CD, compose services, SQL migrations
+- **Git integration** — blame, history, commit scope at function level (uses git directly)
+
+### What doesn't work well yet
+
+- **`self.method()` calls** — the static parser can't resolve instance method dispatch (`self.foo()` → which `foo`?). This means `lens_explain` and `lens_get_connections` return incomplete results for ~50% of nodes (class methods). Workaround: `lens_trace` on Python 3.12+ resolves some of these at runtime.
+- **Windows** — `fcntl` dependency means LensPR won't run on Windows. macOS and Linux only.
+- **Dynamic code** — `getattr`, `eval`, dynamic imports can't be tracked statically (~0.1% of edges in practice)
+- **Security scanning** — `lens_security_scan` and `lens_dep_audit` require optional deps (`pip install bandit`, `pip install pip-audit`)
+
+---
+
+## Roadmap
+
+### Zero-touch setup (coming soon)
+
+The current setup requires 3 commands and creates files in your project. We're working on a zero-invasion mode:
+
+```bash
+# One-time global install (not per-project):
+pipx install lenspr
+lenspr install
+# Done. Works on every project you open. No per-project setup.
+```
+
+| Current | Planned |
+|---------|---------|
+| `pip install` in each project venv | `pipx install` once globally |
+| `lenspr init .` per project | Auto-init on first tool call |
+| `lenspr setup .` creates `.mcp.json` | `lenspr install` registers MCP globally |
+| `.lens/` directory in your project | Graph stored in `~/.lenspr/projects/` |
+| `.gitignore` edit needed | Nothing to ignore |
+
+**Zero files added to your project. Zero configuration. Zero dependencies.**
+
+Projects that want explicit control (team-shared graphs, pinned config) can still use `lenspr init .` to opt in to per-project mode.
+
+### Also planned
+
+- **Multi-agent setup** — auto-generate config for Cursor, Windsurf, Cline (not just Claude)
+- **Cloud graph API** — hosted service, no local setup needed at all
+- **Agent contributions** — agents that use LensPR can submit improvements back automatically
 
 ---
 
