@@ -183,3 +183,5 @@ MIT
 ---
 
 Built because AI kept breaking my code.
+
+<!-- mcp-name: io.github.kyrylopr/lenspr -->

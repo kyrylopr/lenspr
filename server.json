@@ -1,0 +1,20 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.kyrylopr/lenspr",
+  "description": "Code intelligence for AI coding agents. Builds a dependency graph so your AI sees what breaks before making changes. 60+ MCP tools for impact analysis, cross-language navigation, architecture rules, and more.",
+  "repository": {
+    "url": "https://github.com/kyrylopr/lenspr",
+    "source": "github"
+  },
+  "version": "0.1.1",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "lenspr",
+      "version": "0.1.1",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}
