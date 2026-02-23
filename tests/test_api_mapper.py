@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from lenspr.models import EdgeConfidence, EdgeType, Node, NodeType
 from lenspr.resolvers.api_mapper import ApiMapper
 
@@ -705,6 +707,17 @@ class TestEdgeMetadata:
 # ---------------------------------------------------------------------------
 
 
+try:
+    import tree_sitter  # noqa: F401
+    _HAS_TREE_SITTER = True
+except ImportError:
+    _HAS_TREE_SITTER = False
+
+
+@pytest.mark.skipif(
+    not _HAS_TREE_SITTER,
+    reason="tree-sitter required for TS parsing",
+)
 class TestParseProjectIntegration:
     def test_parse_project_creates_calls_api_edges(self, tmp_path) -> None:
         """parse_project produces CALLS_API edges for a mixed Python+TS project."""
