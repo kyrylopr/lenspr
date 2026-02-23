@@ -265,17 +265,36 @@ class TypeScriptParser(BaseParser):
         """
         # Try Node.js resolver first (batch mode for performance)
         if self._node_resolver is not None:
-            return self._resolve_edges_with_node(edges)
+            resolved = self._resolve_edges_with_node(edges)
+        elif self._lsp_resolver is not None:
+            resolved = self._resolve_edges_with_lsp(edges)
+        elif self._python_resolver is not None:
+            resolved = self._resolve_edges_with_python(edges)
+        else:
+            resolved = edges
 
-        # Try LSP tsserver resolver (go-to-definition)
-        if self._lsp_resolver is not None:
-            return self._resolve_edges_with_lsp(edges)
-
-        # Fall back to Python resolver
-        if self._python_resolver is not None:
-            return self._resolve_edges_with_python(edges)
-
-        return edges
+        # Post-processing: CSS module property accesses (e.g. ./Auth.module.css.formInput)
+        # are not function calls — mark them EXTERNAL so they don't inflate "unresolved".
+        css_exts = (".module.css.", ".module.scss.", ".module.sass.", ".module.less.")
+        result = []
+        for edge in resolved:
+            if (
+                edge.confidence == EdgeConfidence.INFERRED
+                and any(ext in edge.to_node for ext in css_exts)
+            ):
+                result.append(Edge(
+                    id=edge.id,
+                    from_node=edge.from_node,
+                    to_node=edge.to_node,
+                    type=edge.type,
+                    line_number=edge.line_number,
+                    confidence=EdgeConfidence.EXTERNAL,
+                    source=edge.source,
+                    metadata=edge.metadata,
+                ))
+            else:
+                result.append(edge)
+        return result
 
     def _resolve_edges_with_node(self, edges: list[Edge]) -> list[Edge]:
         """Resolve edges using Node.js TypeScript resolver (batch mode)."""

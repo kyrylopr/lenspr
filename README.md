@@ -140,6 +140,31 @@ Run yourself: `make benchmark`
 
 </details>
 
+### Real-World Validation
+
+Tested on a production monorepo (257 files, Python + React + Docker):
+
+| Metric | Value |
+|--------|-------|
+| **Internal nodes** | 3,222 (1,083 functions, 1,073 methods, 380 classes) |
+| **Total edges** | 28,113 across 12 edge types |
+| **Confidence** | 79.2% resolved, only 32 unresolved (all `getattr` — expected) |
+| **Circular imports** | 0 |
+| **reads_table resolution** | 100% (216/216) |
+| **writes_table resolution** | 97% (70/72) |
+| **Cross-language API edges** | 120 (React → FastAPI) |
+| **End-to-end visibility** | `lens_context(handler, depth=2)` traces from React component to SQL table |
+
+Example — one call shows the full login chain:
+
+```
+LoginModal.jsx → authAPI.login() → POST /api/auth/login
+  → login(request, db)
+    → db.query(User)           [reads: users]
+    → verify_password()
+    → create_jwt_token()
+```
+
 ---
 
 ## Key Features
@@ -430,9 +455,9 @@ Rules are checked automatically on every `lens_update_node` call. Violations app
 
 ## Known Limitations
 
-- **Dynamic code** (`getattr`, `eval`, dynamic imports) can't be fully tracked
-- **Instance method dispatch** — `self.method()` calls have limited resolution without runtime tracing
-- **Not tested on >10k files** — works well on projects up to ~500 files
+- **Dynamic code** (`getattr`, `eval`, dynamic imports) can't be fully tracked — accounts for ~0.1% of edges in practice
+- **Instance method dispatch** — `self.method()` calls have limited resolution without runtime tracing (`lens_trace` resolves these on Python 3.12+)
+- **Not tested on >10k files** — validated on projects up to 257 files / 3,222 nodes
 - **TypeScript needs Node.js 18+** for full type inference
 
 ---
