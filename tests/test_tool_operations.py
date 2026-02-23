@@ -308,12 +308,15 @@ class TestContext:
         result = _handle_context({"node_id": "app.nope"}, project_with_tests)
         assert not result.success
 
-    def test_caller_source_included(self, project_with_tests: LensContext) -> None:
+    def test_caller_metadata_included(self, project_with_tests: LensContext) -> None:
         result = _handle_context({"node_id": "app.greet"}, project_with_tests)
         assert result.success
         assert result.data is not None
         for caller in result.data["callers"]:
-            assert "source_code" in caller
+            assert "source_code" not in caller
+            assert "start_line" in caller
+            assert "end_line" in caller
+            assert "signature" in caller
 
 
 class TestGrep:
@@ -378,8 +381,13 @@ class TestContextIncludeSource:
         )
         assert result.success
         assert result.data is not None
+        # include_source=True affects only the target node
+        assert result.data["target"]["source_code"] is not None
+        # Callers always get metadata only
         for caller in result.data["callers"]:
-            assert "source_code" in caller
+            assert "source_code" not in caller
+            assert "start_line" in caller
+            assert "end_line" in caller
 
     def test_include_source_false(self, project_with_tests: LensContext) -> None:
         result = _handle_context(
@@ -388,6 +396,9 @@ class TestContextIncludeSource:
         )
         assert result.success
         assert result.data is not None
+        # include_source=False suppresses target source
+        assert result.data["target"]["source_code"] is None
+        # Callers always get metadata only (same as include_source=True)
         for caller in result.data["callers"]:
             assert "source_code" not in caller
             assert "start_line" in caller

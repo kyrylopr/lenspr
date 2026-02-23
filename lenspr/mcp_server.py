@@ -568,7 +568,8 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
         """Get full context for a node in one call: source, callers, callees, tests, imports.
 
         Replaces multiple get_node + get_connections calls. Returns the target node's
-        source code plus source code of all related nodes.
+        source code plus metadata for all related nodes (callers, callees, tests).
+        Use lens_get_node on any related node ID to get its full source.
 
         Args:
             node_id: The node identifier (e.g. app.models.User).
@@ -576,7 +577,7 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
             include_callees: Include nodes this node calls/uses.
             include_tests: Include related test functions.
             depth: How many levels of callers/callees to include.
-            include_source: Include full source code for callers/callees/tests.
+            include_source: Include full source code for the target node.
         """
         return _tool_result("lens_context", {
             "node_id": node_id,

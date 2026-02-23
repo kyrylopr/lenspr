@@ -305,19 +305,9 @@ def handle_context(params: dict, ctx: LensContext) -> ToolResponse:
                     "edge_type": edge_data.get("type", "unknown"),
                     "depth": _level + 1,
                 }
-                if include_source:
-                    caller_src = pred_node.source_code or ""
-                    if pred_node.type.value in _CONTAINER_TYPES and len(caller_src) > _LARGE_THRESHOLD:
-                        caller_info["source_code"] = None
-                        caller_info["source_note"] = (
-                            f"Large {pred_node.type.value}, "
-                            f"use lens_get_node('{pred_node.id}') for details"
-                        )
-                    else:
-                        caller_info["source_code"] = caller_src
-                else:
-                    caller_info["start_line"] = pred_node.start_line
-                    caller_info["end_line"] = pred_node.end_line
+                caller_info["start_line"] = pred_node.start_line
+                caller_info["end_line"] = pred_node.end_line
+                caller_info["docstring"] = (pred_node.docstring or "")[:200] or None
                 callers.append(caller_info)
                 if _level + 1 < depth:
                     next_frontier.extend(
@@ -357,19 +347,9 @@ def handle_context(params: dict, ctx: LensContext) -> ToolResponse:
                     "edge_type": edge_data.get("type", "unknown"),
                     "depth": _level + 1,
                 }
-                if include_source:
-                    callee_src = succ_node.source_code or ""
-                    if succ_node.type.value in _CONTAINER_TYPES and len(callee_src) > _LARGE_THRESHOLD:
-                        callee_info["source_code"] = None
-                        callee_info["source_note"] = (
-                            f"Large {succ_node.type.value}, "
-                            f"use lens_get_node('{succ_node.id}') for details"
-                        )
-                    else:
-                        callee_info["source_code"] = callee_src
-                else:
-                    callee_info["start_line"] = succ_node.start_line
-                    callee_info["end_line"] = succ_node.end_line
+                callee_info["start_line"] = succ_node.start_line
+                callee_info["end_line"] = succ_node.end_line
+                callee_info["docstring"] = (succ_node.docstring or "")[:200] or None
                 callees.append(callee_info)
                 if _level + 1 < depth:
                     next_frontier_out.extend(
@@ -396,9 +376,9 @@ def handle_context(params: dict, ctx: LensContext) -> ToolResponse:
                             "id": pred_node.id,
                             "name": pred_node.name,
                             "file_path": pred_node.file_path,
+                            "start_line": pred_node.start_line,
+                            "end_line": pred_node.end_line,
                         }
-                        if include_source:
-                            test_info["source_code"] = pred_node.source_code
                         tests.append(test_info)
 
         # Strategy 2: Find test functions by naming convention
@@ -412,9 +392,9 @@ def handle_context(params: dict, ctx: LensContext) -> ToolResponse:
                     "id": tn.id,
                     "name": tn.name,
                     "file_path": tn.file_path,
+                    "start_line": tn.start_line,
+                    "end_line": tn.end_line,
                 }
-                if include_source:
-                    tn_info["source_code"] = tn.source_code
                 tests.append(tn_info)
 
     result: dict[str, Any] = {"target": target}

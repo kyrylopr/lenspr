@@ -499,12 +499,19 @@ class CodeGraphVisitor(ast.NodeVisitor):
 
     def _extract_calls(self, func_node: ast.AST, caller_id: str) -> None:
         """Extract function/method call edges from an AST subtree."""
-        # Pre-scan: collect lazy imports inside this function body
-        # so the import table is populated before resolving calls.
-        # Without this, 'from X import Y; Y()' inside a function would
-        # fail to resolve Y because the import table is updated too late
-        # (in generic_visit, which runs after _extract_calls).
+        # Single-pass: collect lazy imports AND extract calls in one ast.walk.
+        # Imports must be processed before the calls that reference them,
+        # so we split into two lists first, then process imports -> calls.
+        import_nodes = []
+        call_nodes = []
         for node in ast.walk(func_node):
+            if isinstance(node, (ast.ImportFrom, ast.Import)):
+                import_nodes.append(node)
+            elif isinstance(node, ast.Call):
+                call_nodes.append(node)
+
+        # Phase 1: populate import table with lazy imports
+        for node in import_nodes:
             if isinstance(node, ast.ImportFrom):
                 module = node.module or ""
                 if node.level > 0:
@@ -519,10 +526,8 @@ class CodeGraphVisitor(ast.NodeVisitor):
                 for alias in node.names:
                     self.import_table.add_module_import(alias.name, alias.asname)
 
-        # Now extract calls with the fully populated import table
-        for node in ast.walk(func_node):
-            if not isinstance(node, ast.Call):
-                continue
+        # Phase 2: extract call edges with fully populated import table
+        for node in call_nodes:
 
             call_name = self._resolve_name_from_ast(node.func)
             if not call_name:

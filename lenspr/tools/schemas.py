@@ -316,8 +316,9 @@ LENS_TOOLS: list[dict[str, Any]] = [
                 "include_source": {
                     "type": "boolean",
                     "description": (
-                        "Include full source code for callers/callees/tests. "
-                        "When false, returns only signature, file, line. Default: true."
+                        "Include full source code for the TARGET node. "
+                        "Callers/callees/tests always return metadata only "
+                        "(id, signature, file, lines, docstring). Default: true."
                     ),
                 },
             },

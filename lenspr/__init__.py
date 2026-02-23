@@ -87,9 +87,9 @@ def init(
         # Load existing context
         _ctx = LensContext(root, lens_dir)
 
-        # Auto-reinitialize if database is empty (previous failed init)
+        # Auto-reinitialize if database is empty or parser version changed
         g = _ctx.get_graph()
-        if g.number_of_nodes() == 0:
+        if g.number_of_nodes() == 0 or _ctx._needs_full_sync:
             force = True  # Fall through to reinitialize
         else:
             return _ctx, None
@@ -102,6 +102,7 @@ def init(
     # Write config
     config = {
         "version": __version__,
+        "parser_version": LensContext.PARSER_VERSION,
         "initialized_at": datetime.now(UTC).isoformat(),
         "last_sync": datetime.now(UTC).isoformat(),
         "exclude_patterns": [
@@ -110,6 +111,12 @@ def init(
     }
     config_path = lens_dir / "config.json"
     config_path.write_text(json.dumps(config, indent=2))
+
+    # Clear stale resolve cache on force reinit — old cached resolutions
+    # can return wrong results after project structure changes
+    resolve_cache = lens_dir / "resolve_cache.db"
+    if force and resolve_cache.exists():
+        resolve_cache.unlink()
 
     # Create context and do initial parse
     _ctx = LensContext(root, lens_dir)

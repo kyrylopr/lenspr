@@ -253,6 +253,12 @@ def cmd_init(args: argparse.Namespace) -> None:
 
     print()  # After progress line
 
+    # Auto-update Claude Code permissions if setup was already run
+    mcp_config = path / ".mcp.json"
+    if mcp_config.exists():
+        _setup_claude_code_permissions(path)
+        print()
+
     _print_init_summary(ctx, stats, path)
 
 
@@ -665,6 +671,9 @@ def cmd_setup(args: argparse.Namespace) -> None:
         config["mcpServers"]["lenspr"] = server_config
         mcp_config_path.write_text(json.dumps(config, indent=2) + "\n")
         print(f"✓ Created {mcp_config_path}")
+
+    # Set up Claude Code permissions for MCP tools
+    _setup_claude_code_permissions(path)
 
     # Optionally update global Claude Desktop config
     if args.global_config:
@@ -1161,6 +1170,51 @@ def _update_global_claude_config(project_path: str, lenspr_bin: str) -> None:
         config["mcpServers"][server_key] = server_config
         config_path.write_text(json.dumps(config, indent=2) + "\n")
         print(f"  ✓ Added {server_key} to {config_path}")
+
+def _setup_claude_code_permissions(project_path: Path) -> None:
+    """Create/update .claude/settings.local.json with pre-approved LensPR tools.
+
+    Claude Code requires explicit permission for MCP tool calls.
+    Without pre-approved permissions, Task subagents cannot use lens_* tools
+    (they can't prompt the user interactively for approval).
+    """
+    from lenspr.tool_groups import get_all_tool_names
+
+    claude_dir = project_path / ".claude"
+    settings_path = claude_dir / "settings.local.json"
+
+    # Load existing settings
+    settings: dict = {}
+    if settings_path.exists():
+        try:
+            settings = json.loads(settings_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            settings = {}
+
+    permissions = settings.setdefault("permissions", {})
+    allow_list: list[str] = permissions.get("allow", [])
+
+    # Build set of MCP tool permission entries
+    all_tools = get_all_tool_names()
+    mcp_entries = {f"mcp__lenspr__{name}" for name in sorted(all_tools)}
+
+    # Keep existing non-LensPR permissions
+    existing_non_lenspr = [p for p in allow_list if not p.startswith("mcp__lenspr__")]
+
+    # Merge: existing non-LensPR + all LensPR tools
+    permissions["allow"] = existing_non_lenspr + sorted(mcp_entries)
+    settings["permissions"] = permissions
+
+    # Ensure .claude directory exists
+    claude_dir.mkdir(parents=True, exist_ok=True)
+
+    settings_path.write_text(
+        json.dumps(settings, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    print(f"✓ Claude Code permissions: {len(mcp_entries)} lens_* tools pre-approved")
+    print(f"  {settings_path}")
+
 
 
 if __name__ == "__main__":
