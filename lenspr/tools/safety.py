@@ -1,4 +1,5 @@
-"""Safety tool handlers: NFR checks, test coverage, security scanning, architecture rules, vibecheck."""
+"""Safety tool handlers: NFR checks, test coverage, security scanning,
+architecture rules, vibecheck."""
 
 from __future__ import annotations
 
@@ -272,7 +273,11 @@ def handle_nfr_check(params: dict, ctx: LensContext) -> ToolResponse:
 
     # 2. No structured logging (only flag functions with meaningful body)
     if line_count > 10:
-        has_logging = any(x in src for x in ["logger.", "logging.", "log.info", "log.error", "log.warning", "log.debug"])
+        _log_markers = [
+            "logger.", "logging.", "log.info",
+            "log.error", "log.warning", "log.debug",
+        ]
+        has_logging = any(x in src for x in _log_markers)
         if not has_logging:
             issues.append({
                 "severity": "MEDIUM",
@@ -291,7 +296,8 @@ def handle_nfr_check(params: dict, ctx: LensContext) -> ToolResponse:
             break  # one secret warning is enough
 
     # 4. Handler without input validation
-    is_handler = any(x in node.name.lower() for x in ["handler", "endpoint", "route", "view", "_api"])
+    _handler_markers = ["handler", "endpoint", "route", "view", "_api"]
+    is_handler = any(x in node.name.lower() for x in _handler_markers)
     has_validation = any(x in src for x in [
         "raise ValueError", "raise TypeError", "ValidationError",
         "validate_", "if not ", "HTTPException",
@@ -304,8 +310,17 @@ def handle_nfr_check(params: dict, ctx: LensContext) -> ToolResponse:
         })
 
     # 5. Auth-sensitive operation without auth check
-    auth_sensitive = any(x in node.name.lower() for x in ["admin", "delete", "update", "create", "write", "modify"])
-    has_auth = any(x in src for x in ["auth", "token", "permission", "require_auth", "login_required", "current_user"])
+    _sensitive_markers = [
+        "admin", "delete", "update", "create", "write", "modify",
+    ]
+    auth_sensitive = any(
+        x in node.name.lower() for x in _sensitive_markers
+    )
+    _auth_markers = [
+        "auth", "token", "permission",
+        "require_auth", "login_required", "current_user",
+    ]
+    has_auth = any(x in src for x in _auth_markers)
     if auth_sensitive and not has_auth:
         issues.append({
             "severity": "MEDIUM",
@@ -412,7 +427,13 @@ def handle_test_coverage(params: dict, ctx: LensContext) -> ToolResponse:
     total = len(covered) + len(uncovered)
     pct = round(len(covered) / total * 100) if total else 100
 
-    grade = "A" if pct >= 80 else "B" if pct >= 60 else "C" if pct >= 40 else "D" if pct >= 20 else "F"
+    grade = (
+        "A" if pct >= 80
+        else "B" if pct >= 60
+        else "C" if pct >= 40
+        else "D" if pct >= 20
+        else "F"
+    )
 
     warnings = [
         f"\u26a0\ufe0f Only {pct}% test coverage (grade {grade}) — "
@@ -598,7 +619,10 @@ def handle_dep_audit(params: dict, ctx: LensContext) -> ToolResponse:
                 "tool": "pip-audit",
                 "vulnerable_packages": len(vulns),
                 "vulnerabilities": vulns,
-                "hint": "Run `pip install --upgrade <package>` to fix vulnerabilities" if vulns else None,
+                "hint": (
+                    "Run `pip install --upgrade <package>` "
+                    "to fix vulnerabilities"
+                ) if vulns else None,
             },
             warnings=(
                 [f"⚠️ {len(vulns)} Python package(s) have known vulnerabilities"]
@@ -633,7 +657,10 @@ def handle_dep_audit(params: dict, ctx: LensContext) -> ToolResponse:
                     "tool": "npm audit",
                     "total_vulnerabilities": total,
                     "summary": summary,
-                    "hint": "Run `npm audit fix` to automatically fix compatible issues" if total else None,
+                    "hint": (
+                        "Run `npm audit fix` to automatically "
+                        "fix compatible issues"
+                    ) if total else None,
                 },
                 warnings=(
                     [f"⚠️ {total} npm package vulnerabilities ({critical} critical, {high} high)"]
@@ -700,7 +727,7 @@ def handle_arch_rule_add(params: dict, ctx: LensContext) -> ToolResponse:
         data={
             "rule": rule,
             "total_rules": len(rules),
-            "message": f"Rule added. It will be checked on every lens_update_node call.",
+            "message": "Rule added. It will be checked on every lens_update_node call.",
         },
     )
 
@@ -792,7 +819,10 @@ def handle_arch_check(params: dict, ctx: LensContext) -> ToolResponse:
                             "rule_type": rule_type,
                             "description": desc,
                             "violation": nid,
-                            "message": f"Class '{ndata.get('name', nid)}' has {count} methods (max: {threshold})",
+                            "message": (
+                                f"Class '{ndata.get('name', nid)}' has "
+                                f"{count} methods (max: {threshold})"
+                            ),
                         })
 
         elif rule_type == "required_test":
@@ -837,7 +867,10 @@ def handle_arch_check(params: dict, ctx: LensContext) -> ToolResponse:
             "passed": len(violations) == 0,
         },
         warnings=(
-            [f"⚠️ {len(violations)} architecture rule violation(s) — run lens_arch_check for details"]
+            [
+                f"⚠️ {len(violations)} architecture rule "
+                "violation(s) — run lens_arch_check for details"
+            ]
             if violations
             else []
         ),
@@ -1095,14 +1128,20 @@ def handle_fix_plan(params: dict, ctx: LensContext) -> ToolResponse:
                 # Count callers (higher = more urgent)
                 caller_count = sum(
                     1 for pred_id in nx_graph.predecessors(node.id)
-                    if not (nx_graph.nodes.get(pred_id, {}).get("file_path") or "").startswith("tests/")
+                    if not (
+                        nx_graph.nodes.get(pred_id, {})
+                        .get("file_path") or ""
+                    ).startswith("tests/")
                 )
                 actions.append({
                     "action_type": "add_error_handling",
                     "target_node_id": node.id,
                     "target_name": node.name,
                     "file": node.file_path,
-                    "reason": f"IO/network/DB operations without try/except ({caller_count} callers)",
+                    "reason": (
+                        "IO/network/DB operations without "
+                        f"try/except ({caller_count} callers)"
+                    ),
                     "priority": "HIGH" if caller_count > 2 else "MEDIUM",
                     "expected_score_impact": 0.0,  # NFR doesn't affect vibecheck score directly
                     "hint": "Wrap IO operations in try/except; log errors with logger.error()",
@@ -1119,7 +1158,10 @@ def handle_fix_plan(params: dict, ctx: LensContext) -> ToolResponse:
             if not has_test:
                 prod_callers = sum(
                     1 for pred_id in nx_graph.predecessors(node.id)
-                    if "test" not in (nx_graph.nodes.get(pred_id, {}).get("file_path") or "").lower()
+                    if "test" not in (
+                        nx_graph.nodes.get(pred_id, {})
+                        .get("file_path") or ""
+                    ).lower()
                 )
                 actions.append({
                     "action_type": "add_tests",
@@ -1127,7 +1169,11 @@ def handle_fix_plan(params: dict, ctx: LensContext) -> ToolResponse:
                     "target_name": node.name,
                     "file": node.file_path,
                     "reason": f"No test coverage ({prod_callers} production callers)",
-                    "priority": "HIGH" if prod_callers > 5 else "MEDIUM" if prod_callers > 1 else "LOW",
+                    "priority": (
+                        "HIGH" if prod_callers > 5
+                        else "MEDIUM" if prod_callers > 1
+                        else "LOW"
+                    ),
                     "expected_score_impact": pts_per_test,
                     "hint": f"lens_generate_test_skeleton('{node.id}')",
                 })
@@ -1151,7 +1197,10 @@ def handle_fix_plan(params: dict, ctx: LensContext) -> ToolResponse:
                     "reason": "No callers found in call graph",
                     "priority": "LOW",
                     "expected_score_impact": pts_per_dead,
-                    "hint": f"Verify first: lens_find_usages('{dead_id}'). May be called via dynamic dispatch.",
+                    "hint": (
+                        f"Verify first: lens_find_usages('{dead_id}'). "
+                        "May be called via dynamic dispatch."
+                    ),
                 })
 
     # --- 5. Missing docstrings (LOW effort, small but real impact) ---
@@ -1197,7 +1246,8 @@ def handle_fix_plan(params: dict, ctx: LensContext) -> ToolResponse:
             "estimated_score_gain": total_impact,
             "summary": (
                 f"{total_actions} actions identified{scope_note}. "
-                f"Estimated +{total_impact} pts toward grade {target_grade.upper()} (needs {target_pts}/100)."
+                f"Estimated +{total_impact} pts toward grade "
+                f"{target_grade.upper()} (needs {target_pts}/100)."
             ),
             "protocol": (
                 "1. Work through actions in priority order (CRITICAL first). "

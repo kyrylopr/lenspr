@@ -18,7 +18,6 @@ from lenspr.models import Node, SyncResult
 from lenspr.parsers.base import ProgressCallback
 from lenspr.parsers.multi import (
     MultiParser,
-    normalize_edge_targets,
     normalize_edges_by_ids,
 )
 from lenspr.patcher import PatchBuffer

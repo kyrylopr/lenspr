@@ -29,9 +29,13 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from lenspr.models import Edge, EdgeConfidence, EdgeSource, EdgeType, Node, NodeType
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -732,14 +736,13 @@ class SqlMapper:
     # Raw SQL file parsing
     # ------------------------------------------------------------------
 
-    def parse_sql_file(self, file_path: "Path", root_path: "Path") -> None:
+    def parse_sql_file(self, file_path: Path, root_path: Path) -> None:
         """Parse a raw .sql file for SQL statements.
 
         Creates a virtual node ID for the SQL file and extracts all DDL/DML
         operations as DbOperations referencing that virtual node.
         Also detects CREATE INDEX and pg_cron scheduled jobs.
         """
-        from pathlib import Path
 
         text = file_path.read_text(encoding="utf-8", errors="replace")
 
@@ -791,7 +794,7 @@ class SqlMapper:
 
         # Detect pg_cron scheduled jobs
         for m in _PG_CRON_RE.finditer(clean):
-            schedule = m.group(1)
+            _schedule = m.group(1)  # noqa: F841
             sql_body = m.group(2)
             # Parse the SQL inside the cron job
             self._extract_raw_sql(sql_body, dummy, clean[: m.start()].count("\n") + 1, ops)

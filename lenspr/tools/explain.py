@@ -52,7 +52,7 @@ def handle_explain(params: dict, ctx: LensContext) -> ToolResponse:
     # Get usage examples from callers if requested
     usage_examples = []
     if include_examples and callers:
-        usage_examples = _extract_usage_examples(node.name, callers)
+        usage_examples = _extract_usage_examples(node.name, callers, ctx)
 
     return ToolResponse(
         success=True,
@@ -83,12 +83,6 @@ def handle_explain(params: dict, ctx: LensContext) -> ToolResponse:
                 "callee_count": nx_graph.out_degree(node_id) if nx_graph.has_node(node_id) else 0,
             },
             "usage_examples": usage_examples,
-            # Hint for Claude
-            "llm_hint": (
-                "Use the source code, analysis, and context to provide "
-                "a clear, concise explanation of what this function does. "
-                "Focus on the 'why' not just the 'what'."
-            ),
         },
     )
 
@@ -106,14 +100,17 @@ def _get_callers_context(
         if not pred_node:
             continue
 
+        source_lines = (pred_node.source_code or "").splitlines()
         callers.append({
             "id": pred_id,
             "name": pred_node.name,
             "type": pred_node.type.value,
             "file_path": pred_node.file_path,
             "signature": pred_node.signature,
-            # Include source for context
-            "source_code": pred_node.source_code,
+            "source_preview": (
+                "\n".join(source_lines[:3])
+                + ("..." if len(source_lines) > 3 else "")
+            ),
         })
         if len(callers) >= limit:
             break
@@ -437,12 +434,16 @@ def _generate_explanation(
     return " ".join(parts) if parts else "No detailed analysis available."
 
 
-def _extract_usage_examples(func_name: str, callers: list[dict]) -> list[dict]:
+def _extract_usage_examples(
+    func_name: str, callers: list[dict], ctx: LensContext,
+) -> list[dict]:
     """Extract usage examples from caller source code."""
     examples = []
 
     for caller in callers[:3]:  # Limit to 3 examples
-        source = caller.get("source_code", "")
+        # Fetch full source from DB (not stored in response to keep it lean)
+        caller_node = database.get_node(caller["id"], ctx.graph_db)
+        source = caller_node.source_code if caller_node else ""
         if not source:
             continue
 

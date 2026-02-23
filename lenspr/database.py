@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from datetime import UTC
 from pathlib import Path
 
 from lenspr.models import Edge, Node
@@ -630,7 +631,8 @@ def resolve_node_id(
 
     Strategy chain (stops at first match):
       1. Exact match:   WHERE id = ?
-      2. Suffix match:  WHERE id LIKE '%.<query>'  (e.g. "auth.login" → "backend.routers.auth.login")
+      2. Suffix match:  WHERE id LIKE '%.<query>'
+         (e.g. "auth.login" -> "backend.routers.auth.login")
       3. Contains match: WHERE id LIKE '%<query>%'
       4. Name match:    WHERE name = ?             (e.g. "login" → node whose name == "login")
 
@@ -763,15 +765,17 @@ def get_project_metrics(db_path: Path) -> dict:
 
 def write_session_note(key: str, value: str, session_db: Path) -> None:
     """Write or overwrite a session note by key."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    updated_at = datetime.now(timezone.utc).isoformat()
+    updated_at = datetime.now(UTC).isoformat()
     with _connect(session_db) as conn:
         conn.execute(_SESSION_SCHEMA)  # ensure table exists
         conn.execute(
             """INSERT INTO notes (key, value, updated_at)
                VALUES (?, ?, ?)
-               ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at""",
+               ON CONFLICT(key) DO UPDATE
+               SET value=excluded.value,
+                   updated_at=excluded.updated_at""",
             (key, value, updated_at),
         )
 

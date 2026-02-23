@@ -482,7 +482,10 @@ LENS_TOOLS: list[dict[str, Any]] = [
                 "node_ids": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Multiple nodes to find usages of (batch mode). Overrides node_id.",
+                    "description": (
+                        "Multiple nodes to find usages of"
+                        " (batch mode). Overrides node_id."
+                    ),
                 },
                 "include_tests": {
                     "type": "boolean",

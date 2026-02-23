@@ -101,8 +101,16 @@ class TestBatchRollbackOnReparseFailure:
         result = handle_batch(
             {
                 "updates": [
-                    {"node_id": "mod_a.func_a", "new_source": "def func_a():\n    return 'NEW_A'\n"},
-                    {"node_id": "mod_b.func_b", "new_source": "def func_b():\n    return 'NEW_B'\n"},
+                    {
+                        "node_id": "mod_a.func_a",
+                        "new_source": "def func_a():\n"
+                                      "    return 'NEW_A'\n",
+                    },
+                    {
+                        "node_id": "mod_b.func_b",
+                        "new_source": "def func_b():\n"
+                                      "    return 'NEW_B'\n",
+                    },
                 ],
             },
             project,
@@ -128,7 +136,11 @@ class TestBatchRollbackOnFlushFailure:
             result = handle_batch(
                 {
                     "updates": [
-                        {"node_id": "mod_a.func_a", "new_source": "def func_a():\n    return 'GONE'\n"},
+                        {
+                            "node_id": "mod_a.func_a",
+                            "new_source": "def func_a():\n"
+                                          "    return 'GONE'\n",
+                        },
                     ],
                 },
                 project,
@@ -192,7 +204,11 @@ class TestBatchVerifyTests:
             result = handle_batch(
                 {
                     "updates": [
-                        {"node_id": "mod_a.func_a", "new_source": "def func_a():\n    return 'BAD'\n"},
+                        {
+                            "node_id": "mod_a.func_a",
+                            "new_source": "def func_a():\n"
+                                          "    return 'BAD'\n",
+                        },
                     ],
                     "verify_tests": True,
                 },
@@ -217,7 +233,11 @@ class TestBatchVerifyTests:
             result = handle_batch(
                 {
                     "updates": [
-                        {"node_id": "mod_a.func_a", "new_source": "def func_a():\n    return 'GOOD'\n"},
+                        {
+                            "node_id": "mod_a.func_a",
+                            "new_source": "def func_a():\n"
+                                          "    return 'GOOD'\n",
+                        },
                     ],
                     "verify_tests": True,
                 },
@@ -245,7 +265,11 @@ class TestBatchVerifyTests:
             result = handle_batch(
                 {
                     "updates": [
-                        {"node_id": "mod_a.func_a", "new_source": "def func_a():\n    return 'OK'\n"},
+                        {
+                            "node_id": "mod_a.func_a",
+                            "new_source": "def func_a():\n"
+                                          "    return 'OK'\n",
+                        },
                     ],
                     "verify_tests": True,
                 },

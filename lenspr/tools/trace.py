@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import subprocess
 import time
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from lenspr import database
@@ -152,7 +151,9 @@ def handle_trace_stats(params: dict, ctx: LensContext) -> ToolResponse:
 
         # Runtime call totals from metadata
         runtime_meta_rows = conn.execute(
-            "SELECT metadata FROM edges WHERE source IN ('runtime', 'both') AND metadata IS NOT NULL"
+            "SELECT metadata FROM edges "
+            "WHERE source IN ('runtime', 'both') "
+            "AND metadata IS NOT NULL"
         ).fetchall()
 
         total_runtime_calls = 0
@@ -168,19 +169,28 @@ def handle_trace_stats(params: dict, ctx: LensContext) -> ToolResponse:
         # Top 10 nodes with most runtime-discovered connections
         top_rows = conn.execute("""
             SELECT node_id, SUM(cnt) as total FROM (
-                SELECT from_node as node_id, COUNT(*) as cnt FROM edges WHERE source = 'runtime' GROUP BY from_node
+                SELECT from_node as node_id, COUNT(*) as cnt
+                FROM edges WHERE source = 'runtime'
+                GROUP BY from_node
                 UNION ALL
-                SELECT to_node as node_id, COUNT(*) as cnt FROM edges WHERE source = 'runtime' GROUP BY to_node
-            ) GROUP BY node_id ORDER BY total DESC LIMIT 10
+                SELECT to_node as node_id, COUNT(*) as cnt
+                FROM edges WHERE source = 'runtime'
+                GROUP BY to_node
+            ) GROUP BY node_id
+            ORDER BY total DESC LIMIT 10
         """).fetchall()
-        top_runtime_nodes = [{"node_id": r["node_id"], "runtime_connections": r["total"]} for r in top_rows]
+        top_runtime_nodes = [
+            {"node_id": r["node_id"],
+             "runtime_connections": r["total"]}
+            for r in top_rows
+        ]
     finally:
         conn.close()
 
     static_only = source_counts.get("static", 0)
     runtime_only = source_counts.get("runtime", 0)
     both = source_counts.get("both", 0)
-    inferred = source_counts.get("inferred", 0)
+    _inferred = source_counts.get("inferred", 0)  # noqa: F841
     total_edges = sum(source_counts.values())
 
     # Trace file freshness

@@ -587,8 +587,8 @@ class TestExplain:
         result = _handle_explain({"node_id": "app.nope"}, project_with_tests)
         assert not result.success
 
-    def test_includes_llm_hint(self, project_with_tests: LensContext) -> None:
+    def test_no_llm_hint(self, project_with_tests: LensContext) -> None:
         result = _handle_explain({"node_id": "app.greet"}, project_with_tests)
         assert result.success
         assert result.data is not None
-        assert "llm_hint" in result.data
+        assert "llm_hint" not in result.data

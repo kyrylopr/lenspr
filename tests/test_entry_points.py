@@ -3,21 +3,19 @@
 from __future__ import annotations
 
 import networkx as nx
-import pytest
 
 from lenspr.tools.entry_points import (
+    _CUSTOM_PREDICATES,
+    ENTRY_POINT_PATTERNS,
     CheckField,
     EntryPointPattern,
     MatchOp,
-    _CUSTOM_PREDICATES,
     _check_op,
     collect_entry_points,
     collect_public_api,
     expand_entry_points,
     matches_pattern,
-    ENTRY_POINT_PATTERNS,
 )
-
 
 # ---------------------------------------------------------------------------
 # _check_op — low-level match operations

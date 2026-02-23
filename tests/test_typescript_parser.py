@@ -147,7 +147,10 @@ class TestBasicParsing:
 
         # No call edges should come from the module (the "black hole")
         module_calls = [e for e in call_edges if e.from_node == module_id]
-        assert module_calls == [], f"Black hole: edges from module: {[(e.from_node, e.to_node) for e in module_calls]}"
+        assert module_calls == [], (
+            "Black hole: edges from module: "
+            f"{[(e.from_node, e.to_node) for e in module_calls]}"
+        )
 
         # All three functions should have fetch edges
         func_names_with_fetch = {

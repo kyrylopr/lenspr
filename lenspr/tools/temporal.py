@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections import Counter
+from datetime import UTC
 from typing import TYPE_CHECKING
 
 from lenspr import database
@@ -32,10 +33,10 @@ def _parse_since(since: str | None) -> str | None:
         return None
     since = since.strip()
     if since.endswith("d") and since[:-1].isdigit():
-        from datetime import datetime, timedelta, timezone
+        from datetime import datetime, timedelta
 
         days = int(since[:-1])
-        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        cutoff = datetime.now(UTC) - timedelta(days=days)
         return cutoff.isoformat()
     return since
 
@@ -285,7 +286,6 @@ def _git_node_history(ctx: LensContext, node) -> list[dict]:
     """Get git commit history for a node's line range."""
     import subprocess
 
-    file_path = str(ctx.project_root / node.file_path)
     cmd = [
         "git", "log",
         f"-L{node.start_line},{node.end_line}:{node.file_path}",
@@ -309,10 +309,10 @@ def _git_node_history(ctx: LensContext, node) -> list[dict]:
         parts = line.split("|", 3)
         if len(parts) < 4:
             continue
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         try:
-            ts = datetime.fromtimestamp(int(parts[2]), tz=timezone.utc)
+            ts = datetime.fromtimestamp(int(parts[2]), tz=UTC)
         except (ValueError, OSError):
             continue
 

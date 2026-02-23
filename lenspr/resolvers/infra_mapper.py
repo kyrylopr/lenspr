@@ -208,7 +208,7 @@ def _parse_compose_minimal(text: str) -> dict[str, ServiceInfo]:
     in_services = False
     current_service: str | None = None
     current_section: str | None = None  # "depends_on", "ports", "environment"
-    indent_level = 0
+    _indent_level = 0  # noqa: F841
 
     for line in lines:
         stripped = line.strip()
@@ -294,7 +294,9 @@ def _parse_compose_minimal(text: str) -> dict[str, ServiceInfo]:
             #   depends_on:
             #     db:
             #       condition: service_healthy
-            if current_section == "depends_on" and stripped.endswith(":") and not stripped.startswith("-"):
+            if (current_section == "depends_on"
+                    and stripped.endswith(":")
+                    and not stripped.startswith("-")):
                 dep_name = stripped[:-1].strip()
                 if dep_name and dep_name.isidentifier():
                     svc.depends_on.append(dep_name)

@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from lenspr.models import Edge, EdgeConfidence, EdgeSource, EdgeType, Node
 
@@ -435,7 +435,7 @@ class ApiMapper:
     @staticmethod
     def _build_import_map(
         file_path: str,
-        all_nodes: list["Node"],
+        all_nodes: list[Node],
     ) -> dict[str, str]:
         """Build local name -> module path mapping from imports in a file.
 
@@ -486,8 +486,8 @@ class ApiMapper:
     @staticmethod
     def _resolve_router_ref(
         ref: str,
-        source_node: "Node",
-        all_nodes: list["Node"],
+        source_node: Node,
+        all_nodes: list[Node],
         known_files: set[str],
     ) -> str | None:
         """Resolve a router reference to a file path.

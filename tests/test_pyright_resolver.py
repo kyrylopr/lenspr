@@ -10,7 +10,6 @@ import pytest
 from lenspr.models import Edge, EdgeConfidence, EdgeSource, EdgeType
 from lenspr.resolvers.pyright_resolver import PyrightResolver, is_pyright_available
 
-
 # Skip all tests if pyright is not installed
 pytestmark = pytest.mark.skipif(
     not is_pyright_available(),

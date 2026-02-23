@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from lenspr import database
@@ -86,8 +86,11 @@ def handle_session_handoff(params: dict, ctx: LensContext) -> ToolResponse:
                 entry["reasoning"] = ch.reasoning
             changes.append(entry)
 
-    # 2. Current notes
-    notes = database.read_session_notes(ctx.session_db)
+    # 2. Current notes — filter _log_* (already in recent changes above),
+    #    handoff/handoff_at (previous handoff, not useful in new one)
+    all_notes = database.read_session_notes(ctx.session_db)
+    skip_prefixes = ("_log_", "handoff_at", "handoff")
+    notes = [n for n in all_notes if not n["key"].startswith(skip_prefixes)]
 
     # 3. Build handoff text
     lines = ["# Session Handoff", ""]
@@ -120,7 +123,7 @@ def handle_session_handoff(params: dict, ctx: LensContext) -> ToolResponse:
     handoff_text = "\n".join(lines)
 
     # Save as a session note so next session picks it up automatically
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     database.write_session_note("handoff", handoff_text, ctx.session_db)
     database.write_session_note("handoff_at", now[:19].replace("T", " "), ctx.session_db)
 
@@ -134,7 +137,7 @@ def handle_session_handoff(params: dict, ctx: LensContext) -> ToolResponse:
         hint="Handoff saved as session note 'handoff'. Next session: lens_session_read().",
     )
 
-def handle_resume(params: dict, ctx) -> "ToolResponse":
+def handle_resume(params: dict, ctx) -> ToolResponse:
     """Reconstruct previous session context from the auto-generated action log.
 
     Every successful lens_update_node / lens_patch_node / lens_add_node /
@@ -172,17 +175,24 @@ def handle_resume(params: dict, ctx) -> "ToolResponse":
 
     if action_entries:
         lines.append(f"## Action log — {len(action_entries)} change(s)\n")
-        for i, entry in enumerate(action_entries, 1):
-            ts = entry.get("timestamp", "")[:19].replace("T", " ")
-            action = entry.get("action", "?")
-            node_id = entry.get("node_id", "?")
-            reasoning = entry.get("reasoning", "(no reasoning)")
-            impact = entry.get("impact_summary", "")
 
-            lines.append(f"**{i}. {action.upper()}** `{node_id}` — {ts}")
-            lines.append(f"   - Why: {reasoning}")
-            if impact and impact not in ("added", "deleted"):
-                lines.append(f"   - Impact: {impact}")
+        # Group by file for scannable output
+        from collections import OrderedDict
+        by_file: OrderedDict[str, list] = OrderedDict()
+        for entry in action_entries:
+            fpath = entry.get("file_path", "unknown")
+            by_file.setdefault(fpath, []).append(entry)
+
+        for fpath, entries in by_file.items():
+            lines.append(f"### {fpath} ({len(entries)} change{'s' if len(entries) != 1 else ''})")
+            for entry in entries:
+                action = entry.get("action", "?")
+                node_id = entry.get("node_id", "?")
+                reasoning = entry.get("reasoning", "")
+                line = f"- **{action}** `{node_id}`"
+                if reasoning:
+                    line += f" — {reasoning}"
+                lines.append(line)
             lines.append("")
     else:
         lines.append("_No auto-logged actions found._\n")

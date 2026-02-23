@@ -136,7 +136,7 @@ class Component:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> "Component":
+    def from_dict(cls, data: dict) -> Component:
         """Deserialize from dictionary."""
         pattern_val = data.get("pattern")
         return cls(

@@ -215,4 +215,5 @@ def save_tool_config(config_path: Path, enabled_groups: list[str]) -> None:
         "enabled": sorted(enabled_set),
         "disabled": disabled,
     }
-    config_path.write_text(json.dumps(config, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    text = json.dumps(config, indent=2, ensure_ascii=False) + "\n"
+    config_path.write_text(text, encoding="utf-8")

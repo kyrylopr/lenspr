@@ -243,7 +243,10 @@ def handle_components(params: dict, ctx: LensContext) -> ToolResponse:
                 ],
                 "count": len(components),
                 "avg_cohesion": avg_cohesion,
-                "hint": "Use mode='full' for complete node lists, or component='<id>' to drill into one.",
+                "hint": (
+                    "Use mode='full' for complete node lists,"
+                    " or component='<id>' to drill into one."
+                ),
             },
         )
 

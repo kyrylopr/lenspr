@@ -18,7 +18,6 @@ from lenspr.tools.safety import (
     handle_vibecheck,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -358,7 +357,7 @@ class TestVibecheck:
         assert result.success
         # run_benchmark is the only function in eval/; production functions
         # are fetch_data, process, create_item → total should be 3
-        total = result.data["stats"]["total_functions"]
+        _total = result.data["stats"]["total_functions"]  # noqa: F841
         # We can't assert exact number since parser may differ, but eval funcs
         # should NOT be counted: verify coverage % is sane (≤100)
         assert result.data["breakdown"]["test_coverage"]["score"] <= 25

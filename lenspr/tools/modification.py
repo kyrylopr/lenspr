@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from datetime import UTC
 from typing import TYPE_CHECKING
 
 from lenspr import database, graph
@@ -15,6 +16,8 @@ from lenspr.validator import validate_full, validate_syntax
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from lenspr.context import LensContext
 
 
@@ -814,10 +817,10 @@ def _log_modification(
         ctx: LensContext — provides ctx.session_db.
     """
     import json
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     try:
-        ts = datetime.now(timezone.utc)
+        ts = datetime.now(UTC)
         # Key is sortable and guaranteed unique: _log_<ISO>_<short_id>
         short_id = node_id.replace(".", "_")[-40:]
         key = f"_log_{ts.strftime('%Y%m%dT%H%M%SZ')}_{short_id}"

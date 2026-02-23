@@ -238,7 +238,7 @@ class TestLazyImports:
         ]
 
         # The call to helper() should resolve to lib.helper (not bare 'helper')
-        assert len(call_edges) >= 1, f"Expected CALLS edge from my_func, got none"
+        assert len(call_edges) >= 1, "Expected CALLS edge from my_func, got none"
         targets = [e.to_node for e in call_edges]
         assert any(
             "lib.helper" in t for t in targets
@@ -264,7 +264,8 @@ class TestLazyImports:
         # The edge should come from the function, not the module
         for e in module_import_edges:
             assert "my_func" in e.from_node, (
-                f"IMPORTS edge from module 'caller' instead of function: {e.from_node} -> {e.to_node}"
+                "IMPORTS edge from module 'caller' instead of"
+                f" function: {e.from_node} -> {e.to_node}"
             )
 
 
@@ -273,6 +274,7 @@ class TestSelfMethodResolution:
 
     def _parse_source(self, source, module_id="mod", file_path="mod.py"):
         import ast
+
         from lenspr.parsers.python_parser import CodeGraphVisitor
 
         visitor = CodeGraphVisitor(source.splitlines(), module_id, file_path)
@@ -358,6 +360,7 @@ class TestMockPatchExtraction:
 
     def _parse_source(self, source, module_id="test_mod", file_path="test_mod.py"):
         import ast
+
         from lenspr.parsers.python_parser import CodeGraphVisitor
 
         visitor = CodeGraphVisitor(source.splitlines(), module_id, file_path)

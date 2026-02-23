@@ -528,6 +528,8 @@ def _find_usages_for_node(
     if not node:
         return None
 
+    _COMPACT_THRESHOLD = 30
+
     usages: list[dict] = []
     if node_id in nx_graph:
         for pred_id in nx_graph.predecessors(node_id):
@@ -550,6 +552,15 @@ def _find_usages_for_node(
                 "is_test": pred_name.startswith("test_") or "test_" in pred_file,
             })
 
+    # Adaptive density: compact format for large result sets
+    # All items preserved — only per-item detail reduced
+    compact = len(usages) > _COMPACT_THRESHOLD
+    if compact:
+        usages = [
+            {"id": u["id"], "file_path": u["file_path"], "edge_type": u["edge_type"]}
+            for u in usages
+        ]
+
     callers = [u for u in usages if u["edge_type"] == "calls"]
     importers = [u for u in usages if u["edge_type"] == "imports"]
     inheritors = [u for u in usages if u["edge_type"] == "inherits"]
@@ -569,8 +580,11 @@ def _find_usages_for_node(
         "inheritors": inheritors,
         "inheritor_count": len(inheritors),
         "other": other,
-        "test_usages": len([u for u in usages if u["is_test"]]),
     }
+    if not compact:
+        result["test_usages"] = len([u for u in usages if u.get("is_test")])
+    if compact:
+        result["format"] = "compact"
 
     if len(usages) == 0:
         result["warning"] = (

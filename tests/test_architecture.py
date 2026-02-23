@@ -10,7 +10,6 @@ from lenspr import database
 from lenspr.architecture import compute_all_metrics, detect_components
 from lenspr.context import LensContext
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

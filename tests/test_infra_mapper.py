@@ -4,15 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from lenspr.models import EdgeType, Node, NodeType
 from lenspr.resolvers.infra_mapper import (
     InfraMapper,
-    ServiceInfo,
     _parse_compose_minimal,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

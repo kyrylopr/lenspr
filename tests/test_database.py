@@ -1,11 +1,10 @@
 """Tests for SQLite database operations."""
 
+import sqlite3
 import tempfile
 from pathlib import Path
 
 import pytest
-
-import sqlite3
 
 from lenspr.database import (
     _connect,

@@ -4,16 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from lenspr.models import NodeType
 from lenspr.resolvers.ci_mapper import (
     CiMapper,
-    CiStep,
     _parse_workflow_minimal,
     _workflow_name_from_path,
 )
-
 
 # ---------------------------------------------------------------------------
 # _workflow_name_from_path
@@ -236,7 +232,11 @@ class TestCiMapperParsing:
         return wf_file
 
     def test_parse_creates_workflow(self, tmp_path: Path) -> None:
-        wf_file = self._write_workflow(tmp_path, "ci.yml", "name: CI\non: push\njobs:\n  build:\n    steps:\n      - run: npm build\n")
+        wf_file = self._write_workflow(
+            tmp_path, "ci.yml",
+            "name: CI\non: push\njobs:\n  build:\n"
+            "    steps:\n      - run: npm build\n",
+        )
         mapper = CiMapper()
         wf = mapper.parse_github_workflow(wf_file, tmp_path)
         assert wf is not None

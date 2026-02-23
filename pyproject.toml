@@ -75,11 +75,13 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]
+ignore = ["N806"]  # Function-local UPPER_CASE constants are intentional throughout
 
 [tool.ruff.lint.per-file-ignores]
-"lenspr/graph.py" = ["N803", "N806"]
-"lenspr/claude_tools.py" = ["N806"]
-"tests/test_graph.py" = ["N806"]
+"lenspr/graph.py" = ["N803"]
+"tests/test_graph.py" = []
+"tests/test_entry_points.py" = ["N803"]
+"tests/test_helpers.py" = ["N803"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

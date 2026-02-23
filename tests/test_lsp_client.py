@@ -2,29 +2,21 @@
 
 from __future__ import annotations
 
-import json
-import subprocess
 import sys
-import threading
-import time
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pytest
 
-from lenspr.resolvers.lsp_client import (
-    LSPClient,
-    LSPError,
-    Location,
-    SymbolInfo,
-    _parse_single_location,
-)
 from lenspr.resolvers.config import (
     get_language_for_extension,
     get_server_config,
-    is_server_available,
 )
-
+from lenspr.resolvers.lsp_client import (
+    Location,
+    LSPClient,
+    LSPError,
+    _parse_single_location,
+)
 
 # ---------------------------------------------------------------------------
 # Mock LSP server script — echoes back predictable responses

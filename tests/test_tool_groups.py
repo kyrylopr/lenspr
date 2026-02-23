@@ -7,8 +7,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 from lenspr.tool_groups import (
     ALL_GROUPS,
     ALWAYS_ON,
@@ -18,7 +16,6 @@ from lenspr.tool_groups import (
     resolve_enabled_tools,
     save_tool_config,
 )
-
 
 # ---------------------------------------------------------------------------
 # Group Registry

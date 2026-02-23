@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-import pytest
-
 from lenspr.models import EdgeConfidence, EdgeType, Node, NodeType
 from lenspr.resolvers.ffi_mapper import (
     FfiMapper,
-    NativeBinding,
     _module_name_from_path,
 )
 

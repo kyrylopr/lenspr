@@ -21,7 +21,6 @@ from lenspr.models import (
     NodeType,
 )
 
-
 # =============================================================================
 # Component Detection
 # =============================================================================
@@ -176,7 +175,9 @@ def compute_all_metrics(
             for edge in all_class_edges:
                 if edge.type in (EdgeType.CALLS, EdgeType.IMPORTS):
                     target = all_nodes.get(edge.to_node)
-                    if target and target.type in (NodeType.METHOD, NodeType.FUNCTION, NodeType.CLASS):
+                    if target and target.type in (
+                        NodeType.METHOD, NodeType.FUNCTION, NodeType.CLASS
+                    ):
                         parts = edge.to_node.rsplit(".", 1)
                         if len(parts) == 2 and parts[0] != node.id:
                             dependencies.add(parts[0])

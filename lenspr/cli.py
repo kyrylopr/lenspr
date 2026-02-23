@@ -398,7 +398,10 @@ def _print_init_summary(ctx, stats, path: Path) -> None:
         ("Infrastructure", ["depends_on", "uses_env", "exposes_port"]),
     ]
     for cat_name, types in edge_categories:
-        cat_edges = [(t, edge_type_counts.get(t, 0)) for t in types if edge_type_counts.get(t, 0) > 0]
+        cat_edges = [
+            (t, edge_type_counts.get(t, 0))
+            for t in types if edge_type_counts.get(t, 0) > 0
+        ]
         if not cat_edges:
             continue
         first = True
@@ -744,7 +747,10 @@ def cmd_tools(args: argparse.Namespace) -> None:
             always = " (always on)" if name in ALWAYS_ON else ""
             status = "ON " if is_on else "OFF"
             tool_word = "tool" if count == 1 else "tools"
-            print(f"  [{status}] {name:<16} ({count:>2} {tool_word})  {info['description']}{always}")
+            print(
+                f"  [{status}] {name:<16} ({count:>2} {tool_word})"
+                f"  {info['description']}{always}"
+            )
         print()
         print(f"  {total_enabled}/{total_tools} tools enabled")
         print()
@@ -816,7 +822,10 @@ def _configure_tools_interactive(config_path: Path) -> None:
     print()
 
     try:
-        answer = input("Enter numbers to toggle OFF (comma-separated), 'all' to keep all, 'q' to skip: ").strip()
+        answer = input(
+            "Enter numbers to toggle OFF (comma-separated),"
+            " 'all' to keep all, 'q' to skip: "
+        ).strip()
     except (EOFError, KeyboardInterrupt):
         print()
         return
@@ -979,7 +988,6 @@ def cmd_annotate(args: argparse.Namespace) -> None:
 def cmd_architecture(args: argparse.Namespace) -> None:
     """Analyze codebase architecture using pre-computed metrics."""
     import lenspr
-    from lenspr import database
     from lenspr.tools.arch import (
         handle_class_metrics,
         handle_components,
@@ -1012,7 +1020,9 @@ def cmd_architecture(args: argparse.Namespace) -> None:
             print(f"Name: {data.get('name', 'unknown')}")
             print(f"Methods: {data.get('method_count', 0)}")
             print(f"Lines: {data.get('lines', 0)}")
-            print(f"Public/Private: {data.get('public_methods', 0)}/{data.get('private_methods', 0)}")
+            pub = data.get('public_methods', 0)
+            priv = data.get('private_methods', 0)
+            print(f"Public/Private: {pub}/{priv}")
             print(f"Dependencies: {data.get('dependency_count', 0)}")
             print(f"Internal calls: {data.get('internal_calls', 0)}")
             print(f"Percentile rank: {data.get('percentile_rank', 0):.1f}%")
@@ -1050,7 +1060,10 @@ def cmd_architecture(args: argparse.Namespace) -> None:
 
             for cls in data.get("classes", []):
                 print(f"  {cls['name']}: {cls['method_count']} methods")
-                print(f"    {cls['lines']} lines, {cls['dependency_count']} deps, p{cls['percentile_rank']:.0f}")
+                lines = cls['lines']
+                deps = cls['dependency_count']
+                prank = cls['percentile_rank']
+                print(f"    {lines} lines, {deps} deps, p{prank:.0f}")
                 print()
 
         return
@@ -1081,7 +1094,9 @@ def cmd_architecture(args: argparse.Namespace) -> None:
                     print(f"    Classes: {len(c.get('classes', []))}")
                     print()
 
-            print(f"Total: {data.get('count', 0)} components, avg cohesion: {data.get('avg_cohesion', 0):.0%}")
+            total = data.get('count', 0)
+            avg_coh = data.get('avg_cohesion', 0)
+            print(f"Total: {total} components, avg cohesion: {avg_coh:.0%}")
 
         return
 
@@ -1118,7 +1133,11 @@ def cmd_architecture(args: argparse.Namespace) -> None:
         if classes:
             print("Largest classes:")
             for cls in classes[:10]:
-                print(f"  {cls['name']}: {cls['method_count']} methods (p{cls['percentile_rank']:.0f})")
+                prank = cls['percentile_rank']
+                print(
+                    f"  {cls['name']}: {cls['method_count']}"
+                    f" methods (p{prank:.0f})"
+                )
         print()
 
     print("Use --explain <class> to see detailed metrics for a class.")

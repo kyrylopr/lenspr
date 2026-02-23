@@ -8,6 +8,8 @@ from lenspr import database
 from lenspr.models import ToolResponse
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from lenspr.context import LensContext
 
 __all__ = [
@@ -39,7 +41,11 @@ def handle_api_map(params: dict, ctx: LensContext) -> ToolResponse:
         meta = {}
         if edge.get("metadata"):
             try:
-                meta = json.loads(edge["metadata"]) if isinstance(edge["metadata"], str) else edge["metadata"]
+                meta = (
+                    json.loads(edge["metadata"])
+                    if isinstance(edge["metadata"], str)
+                    else edge["metadata"]
+                )
             except (json.JSONDecodeError, TypeError):
                 pass
 
@@ -157,11 +163,18 @@ def handle_env_map(params: dict, ctx: LensContext) -> ToolResponse:
             mapper.parse_env_file(env_file)
 
     # Find and parse docker-compose files (recursive)
-    compose_patterns = ["docker-compose*.yml", "docker-compose*.yaml", "compose.yml", "compose.yaml"]
+    compose_patterns = [
+        "docker-compose*.yml", "docker-compose*.yaml",
+        "compose.yml", "compose.yaml",
+    ]
     seen_compose: set[Path] = set()
     for pattern in compose_patterns:
         for compose_file in sorted(project_root.rglob(pattern)):
-            if compose_file.is_file() and compose_file not in seen_compose and not _skip(compose_file.relative_to(project_root)):
+            if (
+                compose_file.is_file()
+                and compose_file not in seen_compose
+                and not _skip(compose_file.relative_to(project_root))
+            ):
                 seen_compose.add(compose_file)
                 mapper.parse_compose(compose_file)
 
@@ -216,7 +229,10 @@ def handle_env_map(params: dict, ctx: LensContext) -> ToolResponse:
 
     # Find undefined env vars (used but not defined)
     defined_names = {d.name for d in definitions}
-    undefined = [name for name in env_summary if name not in defined_names and env_summary[name]["used_by"]]
+    undefined = [
+        name for name in env_summary
+        if name not in defined_names and env_summary[name]["used_by"]
+    ]
 
     summary_counts = {
         "definitions_found": len(definitions),
@@ -259,7 +275,10 @@ def handle_env_map(params: dict, ctx: LensContext) -> ToolResponse:
                 "env_vars": compact_vars,
                 "undefined_vars": undefined,
                 "summary": summary_counts,
-                "hint": "Use mode='full' for complete usage details, or env_var='NAME' to drill into one.",
+                "hint": (
+                    "Use mode='full' for complete usage details,"
+                    " or env_var='NAME' to drill into one."
+                ),
             },
         )
 
@@ -301,7 +320,11 @@ def handle_ffi_map(params: dict, ctx: LensContext) -> ToolResponse:
         meta = {}
         if edge.get("metadata"):
             try:
-                meta = json.loads(edge["metadata"]) if isinstance(edge["metadata"], str) else edge["metadata"]
+                meta = (
+                    json.loads(edge["metadata"])
+                    if isinstance(edge["metadata"], str)
+                    else edge["metadata"]
+                )
             except (json.JSONDecodeError, TypeError):
                 pass
 
@@ -382,7 +405,11 @@ def handle_infra_map(params: dict, ctx: LensContext) -> ToolResponse:
         meta = {}
         if edge.get("metadata"):
             try:
-                meta = json.loads(edge["metadata"]) if isinstance(edge["metadata"], str) else edge["metadata"]
+                meta = (
+                    json.loads(edge["metadata"])
+                    if isinstance(edge["metadata"], str)
+                    else edge["metadata"]
+                )
             except (json.JSONDecodeError, TypeError):
                 pass
 
@@ -413,7 +440,10 @@ def handle_infra_map(params: dict, ctx: LensContext) -> ToolResponse:
             })
         elif focus_lower == "docker":
             docker_ids = {d["id"] for d in dockerfiles}
-            focused_edges = [e for e in edge_list if e["from"] in docker_ids or e["to"] in docker_ids]
+            focused_edges = [
+                e for e in edge_list
+                if e["from"] in docker_ids or e["to"] in docker_ids
+            ]
             return ToolResponse(success=True, data={
                 "focus": "docker", "dockerfiles": dockerfiles,
                 "edges": focused_edges, "summary": summary_counts,
@@ -440,7 +470,11 @@ def handle_infra_map(params: dict, ctx: LensContext) -> ToolResponse:
                 "compose_services": compose_services,
                 "edge_summary": edge_type_counts,
                 "summary": summary_counts,
-                "hint": "Use mode='full' for complete edge list, or focus='ci'|'docker'|'compose' for subsystem detail.",
+                "hint": (
+                    "Use mode='full' for complete edge list,"
+                    " or focus='ci'|'docker'|'compose'"
+                    " for subsystem detail."
+                ),
             },
         )
 

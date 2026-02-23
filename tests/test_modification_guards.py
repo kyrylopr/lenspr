@@ -9,8 +9,6 @@ import sys
 import types
 from unittest.mock import patch
 
-import pytest
-
 from lenspr.tools.modification import _reload_lenspr_module_if_needed
 
 

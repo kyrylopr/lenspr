@@ -22,15 +22,15 @@ from lenspr.tools.annotation import (
     handle_batch_save_annotations,
     handle_save_annotation,
 )
-from lenspr.tools.explain import (
-    handle_explain,
-)
 from lenspr.tools.arch import (
     handle_class_metrics,
     handle_compare_classes,
     handle_components,
     handle_largest_classes,
     handle_project_metrics,
+)
+from lenspr.tools.explain import (
+    handle_explain,
 )
 from lenspr.tools.git import (
     handle_blame,
@@ -55,39 +55,39 @@ from lenspr.tools.navigation import (
     handle_list_nodes,
     handle_search,
 )
-from lenspr.tools.session import (
-    handle_session_handoff,
-    handle_session_read,
-    handle_session_write,
-)
-from lenspr.tools.testing import (
-    handle_run_tests,
-)
-from lenspr.tools.safety import (
-    handle_nfr_check,
-    handle_test_coverage,
-    handle_security_scan,
-    handle_dep_audit,
-    handle_arch_rule_add,
-    handle_arch_rule_list,
-    handle_arch_rule_delete,
-    handle_arch_check,
-    handle_vibecheck,
-)
 from lenspr.tools.resolvers import (
     handle_api_map,
     handle_db_map,
     handle_env_map,
 )
+from lenspr.tools.safety import (
+    handle_arch_check,
+    handle_arch_rule_add,
+    handle_arch_rule_delete,
+    handle_arch_rule_list,
+    handle_dep_audit,
+    handle_nfr_check,
+    handle_security_scan,
+    handle_test_coverage,
+    handle_vibecheck,
+)
+from lenspr.tools.schemas import LENS_TOOLS
+from lenspr.tools.session import (
+    handle_session_handoff,
+    handle_session_read,
+    handle_session_write,
+)
 from lenspr.tools.temporal import (
     handle_hotspots,
     handle_node_timeline,
+)
+from lenspr.tools.testing import (
+    handle_run_tests,
 )
 from lenspr.tools.trace import (
     handle_trace,
     handle_trace_stats,
 )
-from lenspr.tools.schemas import LENS_TOOLS
 
 if TYPE_CHECKING:
     from lenspr.context import LensContext

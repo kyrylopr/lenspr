@@ -106,7 +106,9 @@ _TS_JS_EXTENSIONS = {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"}
 class NativeBinding:
     """A native FFI binding detected in code."""
 
-    bridge_type: str  # "napi", "koffi", "ffi-napi", "wasm", "child_process", "bindings", "ctypes", "cffi"
+    # "napi", "koffi", "ffi-napi", "wasm",
+    # "child_process", "bindings", "ctypes", "cffi"
+    bridge_type: str
     native_module: str  # Import source or library path
     caller_node_id: str  # Node ID that imports/uses the binding
     file_path: str

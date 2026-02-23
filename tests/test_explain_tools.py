@@ -10,7 +10,6 @@ from lenspr import database
 from lenspr.context import LensContext
 from lenspr.tools.explain import handle_explain
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

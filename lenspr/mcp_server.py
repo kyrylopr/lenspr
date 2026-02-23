@@ -54,21 +54,8 @@ def _wrap_result_with_pending(result: str) -> str:
     except json.JSONDecodeError:
         return result
 
-    # Add pending annotations to response
-    node_ids = [n["id"] for n in pending[:10]]  # Limit to 10
-    remaining = len(pending) - 10 if len(pending) > 10 else 0
-
-    data["_pending_annotations"] = {
-        "count": len(pending),
-        "nodes": pending[:10],
-        "hint": (
-            f"ACTION REQUIRED: {len(pending)} node(s) were added/modified and need annotation. "
-            f"Please analyze: {', '.join(node_ids)}"
-            + (f" (+{remaining} more)" if remaining > 0 else "")
-            + ". Call lens_batch_save_annotations([{node_id, summary}, ...]). "
-            "Only provide summary (1-2 sentences) - role/side_effects are auto-detected."
-        ),
-    }
+    # Passive metadata — LLM sees which nodes need annotation, decides when to act
+    data["_meta"] = {"unannotated": [n["id"] for n in pending[:10]]}
 
     return json.dumps(data, indent=2)
 
@@ -315,8 +302,8 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
         hot_reload: Enable hot-reload of lenspr modules (for development).
     """
     import lenspr
+    from lenspr.tool_groups import load_tool_config, resolve_enabled_tools
     from lenspr.tools import enable_hot_reload
-    from lenspr.tool_groups import resolve_enabled_tools, load_tool_config
 
     lenspr.init(project_path)
 
@@ -325,6 +312,23 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
     enabled_tools = resolve_enabled_tools(load_tool_config(_config_path))
 
     instructions = lenspr.get_system_prompt(enabled_tools=enabled_tools)
+
+    # Note unavailable external tools in the system prompt
+    import shutil
+    _unavailable: list[str] = []
+    if "lens_security_scan" in enabled_tools and not shutil.which("bandit"):
+        _unavailable.append(
+            "`lens_security_scan` requires `bandit`"
+            " — install with `pip install bandit`"
+        )
+    if "lens_dep_audit" in enabled_tools:
+        if not shutil.which("pip-audit") and not shutil.which("npm"):
+            _unavailable.append(
+                "`lens_dep_audit` requires `pip-audit` or `npm`"
+                " — install with `pip install pip-audit`"
+            )
+    if _unavailable:
+        instructions += "\n\n## Tool Availability\n\n" + "\n".join(f"- {t}" for t in _unavailable)
 
     # Enable hot-reload in tool dispatch if requested
     if hot_reload:
@@ -601,7 +605,8 @@ def run_server(project_path: str, hot_reload: bool = False) -> None:
 
         Args:
             pattern: Text or regex pattern to search for.
-            file_glob: Glob pattern to filter files (e.g. '*.py', 'tests/**'). Empty = all supported languages.
+            file_glob: Glob pattern to filter files (e.g. '*.py',
+                'tests/**'). Empty = all supported languages.
             max_results: Maximum number of results to return.
         """
         return _tool_result("lens_grep", {

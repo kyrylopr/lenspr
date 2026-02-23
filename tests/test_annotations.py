@@ -350,10 +350,8 @@ class TestPendingAnnotationsQueue:
 
         result = json.loads(wrapped)
 
-        assert "_pending_annotations" in result
-        assert result["_pending_annotations"]["count"] == 1
-        assert "ACTION REQUIRED" in result["_pending_annotations"]["hint"]
-        assert result["_pending_annotations"]["nodes"][0]["id"] == "app.new_func"
+        assert "_meta" in result
+        assert result["_meta"]["unannotated"] == ["app.new_func"]
 
 
 class TestValidRoles:

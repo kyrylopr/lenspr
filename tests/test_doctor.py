@@ -4,10 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from lenspr.doctor import DoctorReport, format_doctor_report, run_doctor
-
 
 # ---------------------------------------------------------------------------
 # run_doctor

@@ -10,10 +10,9 @@ import pytest
 from lenspr.models import Edge, EdgeConfidence, EdgeSource, EdgeType
 from lenspr.resolvers.tsserver_resolver import (
     TsServerResolver,
-    is_tsserver_available,
     _is_external,
+    is_tsserver_available,
 )
-
 
 # Skip all tests if typescript-language-server is not available
 pytestmark = pytest.mark.skipif(

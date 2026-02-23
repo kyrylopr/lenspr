@@ -217,10 +217,18 @@ def get_system_prompt(enabled_tools: set[str] | None = None) -> str:
                     for note in user_notes:
                         value = note["value"]
                         if len(value) > NOTE_MAX:
-                            value = value[:NOTE_MAX] + "\n... (truncated — use lens_session_read() for full text)"
+                            value = (
+                                value[:NOTE_MAX]
+                                + "\n... (truncated — use"
+                                " lens_session_read() for full text)"
+                            )
                         entry = f"### {note['key']}\n{value}"
                         if total + len(entry) > TOTAL_MAX:
-                            lines.append(f"_({len(user_notes) - len(lines) + 1} more notes — use lens_session_read())_")
+                            remaining = len(user_notes) - len(lines) + 1
+                            lines.append(
+                                f"_({remaining} more notes"
+                                " — use lens_session_read())_"
+                            )
                             break
                         lines.append(entry)
                         total += len(entry)
@@ -323,7 +331,7 @@ def _load_prompt_template() -> str:
 
 def _generate_tool_listing(enabled_tools: set[str] | None = None) -> str:
     """Generate markdown tool listing from TOOL_GROUPS, filtered to enabled tools."""
-    from lenspr.tool_groups import TOOL_GROUPS, ALWAYS_ON, resolve_enabled_tools
+    from lenspr.tool_groups import ALWAYS_ON, TOOL_GROUPS, resolve_enabled_tools
 
     if enabled_tools is None:
         enabled_tools = resolve_enabled_tools(None)
@@ -427,7 +435,8 @@ of code nodes and their relationships.
 1. **SESSION START**: call `lens_resume()` before any other action
 2. **AFTER EVERY CHANGE**: call `lens_run_tests()` — no exceptions
 3. **BEFORE EVERY MODIFICATION**: call `lens_check_impact` to understand consequences
-4. Connections marked "unresolved" cannot be statically determined (dynamic dispatch, eval, getattr). Warn the user about these.
+4. Connections marked "unresolved" cannot be statically determined
+   (dynamic dispatch, eval, getattr). Warn the user about these.
 5. Prefer small, focused changes over large rewrites
 6. When impact zone is large (>10 nodes), confirm with the user before proceeding
 
@@ -436,7 +445,8 @@ of code nodes and their relationships.
 When generating or reviewing code, **always verify** these NFRs are present:
 
 - **Error handling** — IO/network/DB operations must have try/except with meaningful messages
-- **Structured logging** — use `logger.info/error/warning`, not `print()`, for significant operations
+- **Structured logging** — use `logger.info/error/warning`, not
+  `print()`, for significant operations
 - **Input validation** — validate at system boundaries (handlers, endpoints, CLI entry points)
 - **No hardcoded secrets** — passwords, API keys, tokens must come from env vars or config
 - **Auth checks** — create/update/delete operations must verify the caller is authorized
@@ -452,7 +462,9 @@ The graph is built from **static analysis**. It may miss:
 - **Framework magic**: decorators that register routes/commands/signals (e.g. Flask, Django, Click)
 - **Monkey-patching**: runtime modifications to classes/modules
 
-When `lens_find_usages` or `lens_dead_code` reports 0 usages, **always verify with `lens_grep`** before recommending deletion. A function with 0 graph usages may still be used dynamically.
+When `lens_find_usages` or `lens_dead_code` reports 0 usages,
+**always verify with `lens_grep`** before recommending deletion.
+A function with 0 graph usages may still be used dynamically.
 
 ## Current Project Structure
 

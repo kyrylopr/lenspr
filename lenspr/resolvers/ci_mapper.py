@@ -8,7 +8,6 @@ Extracts workflows, jobs, steps, dependencies, secret/env references from
 from __future__ import annotations
 
 import logging
-import os
 import re
 import uuid
 from dataclasses import dataclass, field
@@ -152,8 +151,6 @@ def _parse_triggers(text: str, result: dict) -> None:
     """Extract trigger events from the 'on:' block."""
     lines = text.splitlines()
     in_on = False
-    on_indent = 0
-
     for line in lines:
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
@@ -173,7 +170,7 @@ def _parse_triggers(text: str, result: dict) -> None:
                     result["triggers"] = [rest.strip("'\"")]
                 return
             in_on = True
-            on_indent = leading
+            _on_indent = leading  # noqa: F841
             continue
 
         if in_on:
@@ -326,7 +323,7 @@ class CiMapper:
         """Parse a single GitHub Actions workflow YAML file."""
         try:
             text = file_path.read_text(encoding="utf-8", errors="replace")
-        except (OSError, IOError):
+        except OSError:
             logger.debug("Cannot read workflow file: %s", file_path)
             return None
 
@@ -406,7 +403,11 @@ class CiMapper:
                     elif s.run:
                         steps_lines.append(f"  - run: {s.run}")
                     if s.name:
-                        steps_lines[-1] = f"  - name: {s.name}\n" + steps_lines[-1] if steps_lines else f"  - name: {s.name}"
+                        steps_lines[-1] = (
+                            f"  - name: {s.name}\n" + steps_lines[-1]
+                            if steps_lines
+                            else f"  - name: {s.name}"
+                        )
 
                 needs_str = f"needs: [{', '.join(job.needs)}]" if job.needs else ""
                 job_source = (
@@ -425,7 +426,11 @@ class CiMapper:
                     start_line=1,
                     end_line=1,
                     source_code=job_source,
-                    docstring=f"CI job: {job_key}" + (f" (needs: {', '.join(job.needs)})" if job.needs else ""),
+                    docstring=(
+                        f"CI job: {job_key}"
+                        + (f" (needs: {', '.join(job.needs)})"
+                           if job.needs else "")
+                    ),
                 ))
 
         return nodes

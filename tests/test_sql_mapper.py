@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import pytest
-
-from lenspr.models import Edge, EdgeConfidence, EdgeSource, EdgeType, Node, NodeType
-from lenspr.resolvers.sql_mapper import DbOperation, SqlMapper, TableInfo
-
+from lenspr.models import EdgeType, Node, NodeType
+from lenspr.resolvers.sql_mapper import SqlMapper
 
 # ---------------------------------------------------------------------------
 # Helpers
