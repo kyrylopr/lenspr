@@ -42,5 +42,9 @@ eval/
 # Node.js
 node_modules/
 
-# Claude Code (temporary files, plans)
-.claude/plans/
+# Claude Code
+.claude/
+
+# Internal dev files
+plan.md
+demo.tape
