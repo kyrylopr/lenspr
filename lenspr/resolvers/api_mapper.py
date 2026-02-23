@@ -61,7 +61,7 @@ class ApiCallInfo:
 
 # Python decorators: @app.get("/path"), @router.post("/path")
 _DECORATOR_ROUTE_RE = re.compile(
-    r"@\w+\.(get|post|put|delete|patch|head|options)\s*\(\s*[\"']([^\"']+)[\"']",
+    r"@\w+\.(get|post|put|delete|patch|head|options)\s*\(\s*[\"']([^\"']*)[\"']",
     re.IGNORECASE,
 )
 

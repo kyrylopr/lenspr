@@ -150,9 +150,39 @@ _SA_QUERY_RE = re.compile(
     r"""\b\w+\.query\s*\(\s*(\w+)""",
 )
 
-# SQLAlchemy: session.add/delete/merge/commit/flush/refresh, db.add(), etc.
-_SA_SESSION_WRITE_RE = re.compile(
-    r"""\b\w+\.(?:add|add_all|delete|merge|commit|flush|refresh)\s*\(""",
+# SQLAlchemy: session.add/delete/merge — capture receiver, method, and argument
+_SA_SESSION_WRITE_METHOD_RE = re.compile(
+    r"""\b(\w+)\.(add|delete|merge)\s*\(\s*(\w+)""",
+)
+# SQLAlchemy: session.add_all([...]) — list argument, hard to resolve
+_SA_SESSION_ADD_ALL_RE = re.compile(
+    r"""\b\w+\.add_all\s*\(""",
+)
+# Note: commit(), flush(), refresh() are intentionally excluded — they are
+# session lifecycle methods that don't target specific tables.
+
+# Receiver names that indicate a DB session (used to distinguish db.add()
+# from set.add(), list.delete(), etc.)
+_DB_SESSION_RECEIVER_NAMES = frozenset({
+    "db", "session", "sess", "async_session", "tx", "conn", "connection",
+    "s", "db_session",
+})
+
+# Variable assignment to model constructor: var = Model(...)
+# Used to resolve session.add(var) → Model → table
+_VAR_MODEL_ASSIGN_RE = re.compile(
+    r"""\b(\w+)\s*(?::\s*[\w.]+\s*)?=\s*(\w+)\s*\(""",
+)
+
+# Query-result assignment: var = db.query(Model).first()  / var = await db.get(Model, id)
+# Used to resolve db.delete(var) where var was loaded from a query.
+# Single-line version (line-by-line scan):
+_QUERY_RESULT_RE = re.compile(
+    r"""(\w+)\s*=\s*(?:await\s+)?\w+\.(?:query|get)\s*\(\s*(\w+)""",
+)
+# Multi-line version: var = (\n    db.query(Model)...
+_QUERY_RESULT_MULTI_RE = re.compile(
+    r"""(\w+)\s*=\s*\(?[\s\n]*(?:await\s+)?\w+\.(?:query|get)\s*\(\s*(\w+)""",
 )
 
 # SQLAlchemy 2.0 statement-style queries
@@ -162,6 +192,13 @@ _SA2_SELECT_RE = re.compile(
 _SA2_WRITE_RE = re.compile(
     r"""\b(?:insert|update|delete)\s*\(\s*(\w+)""",
 )
+
+# Supabase / PostgREST client: .table("table_name").select/insert/update/delete/upsert
+_SUPABASE_TABLE_RE = re.compile(
+    r"""\.table\s*\(\s*['"]([^'"]+)['"]\s*\)""",
+)
+_SUPABASE_READ_METHODS = {"select", "rpc"}
+_SUPABASE_WRITE_METHODS = {"insert", "update", "upsert", "delete"}
 
 # General: .execute("SQL...")
 _EXECUTE_RE = re.compile(
@@ -177,12 +214,17 @@ _SQL_NOISE = {
     "primary", "key", "foreign", "references", "constraint", "default",
     "autoincrement", "integer", "text", "real", "blob", "varchar", "char",
     "boolean", "timestamp", "date", "exists", "if",
+    # Common English words matched in text/JSX content
+    "the", "a", "an", "this", "that", "it", "is", "are", "was", "were",
     # Filesystem operations falsely matched as table names
     "disk", "file", "path", "directory", "folder", "tmp", "temp",
     # System/catalog tables (not user tables)
     "information_schema", "pg_catalog", "pg_stat", "pg_class",
     "sqlite_master", "sqlite_sequence", "sqlite_temp_master",
     "sys", "dual",
+    # Service/platform names matched in comments/docstrings
+    "supabase", "firebase", "dynamo", "redis", "mongo", "postgres",
+    "database", "storage", "server", "cloud",
 }
 
 def _is_test_file(file_path: str) -> bool:
@@ -206,6 +248,85 @@ class SqlMapper:
         self._operations: list[DbOperation] = []
         self._model_to_table: dict[str, str] = {}  # ModelName → table_name
         self._edge_counter = 0
+
+    def _resolve_write_target(
+        self, arg: str, var_to_model: dict[str, str],
+    ) -> str:
+        """Resolve the argument of session.add/delete/merge to a table name.
+
+        Tries three strategies:
+        1. Direct model class: session.add(User(...)) — arg is the model name
+        2. Variable tracking: user = User(...); session.add(user)
+        3. Capitalized-name fallback (same heuristic as reads)
+
+        Returns the resolved table name or "<unknown>".
+        """
+        # 1. Direct model class reference: session.add(ModelName(...))
+        if arg in self._model_to_table:
+            return self._model_to_table[arg]
+
+        # 2. Variable tracking: var was assigned from a model constructor
+        model = var_to_model.get(arg)
+        if model is not None:
+            if model in self._model_to_table:
+                return self._model_to_table[model]
+            # Capitalized model not in known tables — infer table name
+            if model[0].isupper():
+                return model.lower() + "s"
+
+        # 3. Arg itself is capitalized (e.g., session.add(SomeModel))
+        if arg[0:1].isupper() and arg.lower() not in _SQL_NOISE:
+            return arg.lower() + "s"
+
+        return "<unknown>"
+
+    @staticmethod
+    def _build_var_to_model(
+        lines: list[str], model_to_table: dict[str, str],
+    ) -> dict[str, str]:
+        """Build a mapping of variable names to model class names.
+
+        Scans function body for assignments like ``var = ModelName(...)``
+        where ``ModelName`` is a known model or starts with an uppercase
+        letter.
+        """
+        var_to_model: dict[str, str] = {}
+        for line_text in lines:
+            # Pattern 1: var = Model(...) — constructor assignment
+            for m in _VAR_MODEL_ASSIGN_RE.finditer(line_text):
+                var_name = m.group(1)
+                model_name = m.group(2)
+                # Accept if it's a known model OR looks like a class name
+                if model_name in model_to_table or (
+                    model_name[0:1].isupper()
+                    and model_name.lower() not in _SQL_NOISE
+                ):
+                    var_to_model[var_name] = model_name
+
+            # Pattern 2: var = db.query(Model).first() — query result (single-line)
+            for m in _QUERY_RESULT_RE.finditer(line_text):
+                var_name = m.group(1)
+                model_name = m.group(2)
+                if model_name in model_to_table or (
+                    model_name[0:1].isupper()
+                    and model_name.lower() not in _SQL_NOISE
+                ):
+                    var_to_model[var_name] = model_name
+
+        # Pattern 3: Multi-line query results — var = (\n   db.query(Model)...\n)
+        full_source = "\n".join(lines)
+        for m in _QUERY_RESULT_MULTI_RE.finditer(full_source):
+            var_name = m.group(1)
+            model_name = m.group(2)
+            if var_name not in var_to_model and (
+                model_name in model_to_table or (
+                    model_name[0:1].isupper()
+                    and model_name.lower() not in _SQL_NOISE
+                )
+            ):
+                var_to_model[var_name] = model_name
+
+        return var_to_model
 
     def extract_tables(self, nodes: list[Node]) -> list[TableInfo]:
         """Extract table definitions from SQLAlchemy/Django model classes."""
@@ -289,6 +410,14 @@ class SqlMapper:
 
             source = node.source_code
             lines = source.splitlines()
+            is_python = node.file_path.endswith(".py")
+
+            # Build variable → model mapping for this function body
+            # so we can resolve session.add(var) → Model → table
+            var_to_model: dict[str, str] = (
+                self._build_var_to_model(lines, self._model_to_table)
+                if is_python else {}
+            )
 
             for i, line in enumerate(lines):
                 line_num = node.start_line + i
@@ -296,92 +425,160 @@ class SqlMapper:
                 # Raw SQL in strings
                 self._extract_raw_sql(line, node, line_num, ops)
 
-                # Django ORM reads
-                for match in _DJANGO_READ_RE.finditer(line):
-                    model = match.group(1)
-                    table = self._model_to_table.get(model, model.lower() + "s")
-                    ops.append(DbOperation(
-                        op_type="read",
-                        table_name=table,
-                        caller_node_id=node.id,
-                        file_path=node.file_path,
-                        line=line_num,
-                    ))
+                # Supabase / PostgREST: .table("name").select/insert/update/delete
+                # Check first — if found, skip ORM patterns (they false-match
+                # on chained methods like .insert(data))
+                supabase_matches = list(_SUPABASE_TABLE_RE.finditer(line))
+                if supabase_matches:
+                    for match in supabase_matches:
+                        table_name = match.group(1)
+                        if table_name.lower() in _SQL_NOISE:
+                            continue
+                        rest = line[match.end():]
+                        method_match = re.search(r'\.(\w+)\s*\(', rest)
+                        if method_match:
+                            method = method_match.group(1)
+                            if method in _SUPABASE_WRITE_METHODS:
+                                op_type = "write"
+                            else:
+                                op_type = "read"
+                        else:
+                            op_type = "read"
+                        ops.append(DbOperation(
+                            op_type=op_type,
+                            table_name=table_name,
+                            caller_node_id=node.id,
+                            file_path=node.file_path,
+                            line=line_num,
+                        ))
+                    continue  # skip ORM patterns for this line
 
-                # Django ORM writes
-                for match in _DJANGO_WRITE_RE.finditer(line):
-                    model = match.group(1)
-                    table = self._model_to_table.get(model, model.lower() + "s")
-                    ops.append(DbOperation(
-                        op_type="write",
-                        table_name=table,
-                        caller_node_id=node.id,
-                        file_path=node.file_path,
-                        line=line_num,
-                    ))
+                # Python ORM patterns — only apply to .py files
+                if is_python:
+                    # Django ORM reads
+                    for match in _DJANGO_READ_RE.finditer(line):
+                        model = match.group(1)
+                        table = self._model_to_table.get(model)
+                        if table is None:
+                            if not model[0].isupper():
+                                continue
+                            table = model.lower() + "s"
+                        ops.append(DbOperation(
+                            op_type="read",
+                            table_name=table,
+                            caller_node_id=node.id,
+                            file_path=node.file_path,
+                            line=line_num,
+                        ))
 
-                # SQLAlchemy: session.query(Model)
-                for match in _SA_QUERY_RE.finditer(line):
-                    model = match.group(1)
-                    table = self._model_to_table.get(model, model.lower() + "s")
-                    ops.append(DbOperation(
-                        op_type="read",
-                        table_name=table,
-                        caller_node_id=node.id,
-                        file_path=node.file_path,
-                        line=line_num,
-                    ))
+                    # Django ORM writes
+                    for match in _DJANGO_WRITE_RE.finditer(line):
+                        model = match.group(1)
+                        table = self._model_to_table.get(model)
+                        if table is None:
+                            if not model[0].isupper():
+                                continue
+                            table = model.lower() + "s"
+                        ops.append(DbOperation(
+                            op_type="write",
+                            table_name=table,
+                            caller_node_id=node.id,
+                            file_path=node.file_path,
+                            line=line_num,
+                        ))
 
-                # SQLAlchemy: session.add/delete/merge
-                if _SA_SESSION_WRITE_RE.search(line):
-                    # Can't determine table from session.add(obj) easily,
-                    # but we note it as a generic write
-                    ops.append(DbOperation(
-                        op_type="write",
-                        table_name="<unknown>",
-                        caller_node_id=node.id,
-                        file_path=node.file_path,
-                        line=line_num,
-                    ))
+                    # SQLAlchemy: session.query(Model)
+                    for match in _SA_QUERY_RE.finditer(line):
+                        model = match.group(1)
+                        table = self._model_to_table.get(model)
+                        if table is None:
+                            if not model[0].isupper():
+                                continue
+                            table = model.lower() + "s"
+                        ops.append(DbOperation(
+                            op_type="read",
+                            table_name=table,
+                            caller_node_id=node.id,
+                            file_path=node.file_path,
+                            line=line_num,
+                        ))
 
-                # SQLAlchemy 2.0: select(Model).where(...)
-                for match in _SA2_SELECT_RE.finditer(line):
-                    model = match.group(1)
-                    # Skip SQL keywords that look like function calls
-                    if model.lower() in _SQL_NOISE:
-                        continue
-                    table = self._model_to_table.get(model, model.lower() + "s")
-                    ops.append(DbOperation(
-                        op_type="read",
-                        table_name=table,
-                        caller_node_id=node.id,
-                        file_path=node.file_path,
-                        line=line_num,
-                    ))
+                    # SQLAlchemy: session.add/delete/merge — resolve to model
+                    sa_write_match = _SA_SESSION_WRITE_METHOD_RE.search(line)
+                    if sa_write_match:
+                        receiver = sa_write_match.group(1)
+                        arg = sa_write_match.group(3)
+                        table = self._resolve_write_target(arg, var_to_model)
+                        if table != "<unknown>":
+                            # Resolved to a real model — always create edge
+                            ops.append(DbOperation(
+                                op_type="write",
+                                table_name=table,
+                                caller_node_id=node.id,
+                                file_path=node.file_path,
+                                line=line_num,
+                            ))
+                        elif receiver.lower() in _DB_SESSION_RECEIVER_NAMES:
+                            # Unresolved but receiver is a DB session
+                            ops.append(DbOperation(
+                                op_type="write",
+                                table_name="<unknown>",
+                                caller_node_id=node.id,
+                                file_path=node.file_path,
+                                line=line_num,
+                            ))
+                        # else: skip — likely set.add(), list.delete(), etc.
+                    elif _SA_SESSION_ADD_ALL_RE.search(line):
+                        ops.append(DbOperation(
+                            op_type="write",
+                            table_name="<unknown>",
+                            caller_node_id=node.id,
+                            file_path=node.file_path,
+                            line=line_num,
+                        ))
 
-                # SQLAlchemy 2.0: insert(Model), update(Model), delete(Model)
-                for match in _SA2_WRITE_RE.finditer(line):
-                    model = match.group(1)
-                    if model.lower() in _SQL_NOISE:
-                        continue
-                    table = self._model_to_table.get(model, model.lower() + "s")
-                    ops.append(DbOperation(
-                        op_type="write",
-                        table_name=table,
-                        caller_node_id=node.id,
-                        file_path=node.file_path,
-                        line=line_num,
-                    ))
+                    # SQLAlchemy 2.0: select(Model).where(...)
+                    for match in _SA2_SELECT_RE.finditer(line):
+                        model = match.group(1)
+                        if model.lower() in _SQL_NOISE:
+                            continue
+                        if not model[0].isupper():
+                            continue
+                        table = self._model_to_table.get(model, model.lower() + "s")
+                        ops.append(DbOperation(
+                            op_type="read",
+                            table_name=table,
+                            caller_node_id=node.id,
+                            file_path=node.file_path,
+                            line=line_num,
+                        ))
 
-                # Django instance writes: obj.save(), obj.delete()
-                if _DJANGO_INSTANCE_WRITE_RE.search(line):
-                    ops.append(DbOperation(
-                        op_type="write",
-                        table_name="<unknown>",
-                        caller_node_id=node.id,
-                        file_path=node.file_path,
-                        line=line_num,
-                    ))
+                    # SQLAlchemy 2.0: insert(Model), update(Model), delete(Model)
+                    for match in _SA2_WRITE_RE.finditer(line):
+                        model = match.group(1)
+                        if model.lower() in _SQL_NOISE:
+                            continue
+                        if not model[0].isupper():
+                            continue
+                        table = self._model_to_table.get(model, model.lower() + "s")
+                        ops.append(DbOperation(
+                            op_type="write",
+                            table_name=table,
+                            caller_node_id=node.id,
+                            file_path=node.file_path,
+                            line=line_num,
+                        ))
+
+                    # Django instance writes: obj.save(), obj.delete()
+                    # Skip if already matched by SA session write (db.delete matches both)
+                    if not sa_write_match and _DJANGO_INSTANCE_WRITE_RE.search(line):
+                        ops.append(DbOperation(
+                            op_type="write",
+                            table_name="<unknown>",
+                            caller_node_id=node.id,
+                            file_path=node.file_path,
+                            line=line_num,
+                        ))
 
             # Also check .execute() calls with SQL strings
             for match in _EXECUTE_RE.finditer(source):

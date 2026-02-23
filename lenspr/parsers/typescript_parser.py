@@ -698,9 +698,18 @@ class _DeclarationMixin:
             is_generator = value.type == "generator_function"
             self._handle_function(value, name_override=name, is_generator=is_generator)
         elif name:
-            # Not a function, might be a constant or React component
-            for child in node.children:
-                self.visit(child)
+            # Check for object literal: const api = { method: () => ... }
+            has_object = any(child.type == "object" for child in node.children)
+            if has_object:
+                self._push_scope(name)
+                if self._in_export:
+                    self._register_export(name, self._current_scope)
+                for child in node.children:
+                    self.visit(child)
+                self._pop_scope()
+            else:
+                for child in node.children:
+                    self.visit(child)
 
     def _unwrap_to_function(
         self, node: Any, func_types: frozenset[str]  # type: ignore
@@ -736,6 +745,34 @@ class _DeclarationMixin:
             else:
                 return None
         return None
+
+    # === Object literal pair handling ===
+
+    def visit_pair(self, node: Any) -> None:  # type: ignore
+        """Handle property: value pairs in object literals.
+
+        Detects arrow functions / function expressions assigned to object
+        keys like ``{ createItem: (data) => api.post(...) }`` and creates
+        FUNCTION nodes for them.
+        """
+        _FUNC_TYPES = frozenset((
+            "arrow_function", "function_expression", "generator_function",
+        ))
+        name = value = None
+        for child in node.children:
+            if child.type in ("property_identifier", "string") and name is None:
+                name = self._get_text(child).strip("'\"")
+            elif child.type in _FUNC_TYPES:
+                value = child
+        if name and value:
+            self._handle_function(
+                value,
+                name_override=name,
+                is_generator=value.type == "generator_function",
+            )
+        else:
+            for child in node.children:
+                self.visit(child)
 
     # === Class handling ===
 

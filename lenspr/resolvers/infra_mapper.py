@@ -111,6 +111,28 @@ _DOTENV_RE = re.compile(
     re.MULTILINE,
 )
 
+# Pydantic BaseSettings: class Settings(BaseSettings):
+_PYDANTIC_BASESETTINGS_RE = re.compile(
+    r"""class\s+\w+\s*\([^)]*\bBaseSettings\b""",
+)
+
+# Pydantic Field with explicit env=: Field(..., env="ENV_NAME")
+_PYDANTIC_FIELD_ENV_RE = re.compile(
+    r"""Field\s*\([^)]*\benv\s*=\s*['"](\w+)['"]""",
+)
+
+# Pydantic attribute with primitive type annotation (env var by convention)
+# Matches lowercase (database_url: str) and UPPER (DATABASE_URL: str)
+# Skips nested model types (retry: RetryConfig) via primitive type filter
+_PYDANTIC_ATTR_RE = re.compile(
+    r"""^\s{4}(\w+)\s*:\s*(?:Optional\s*\[)?\s*(?:str|int|float|bool|Literal)""",
+)
+
+# env_prefix in pydantic Config inner class or model_config
+_PYDANTIC_ENV_PREFIX_RE = re.compile(
+    r"""env_prefix\s*=\s*['"](\w*)['"]""",
+)
+
 
 # ---------------------------------------------------------------------------
 # Docker Compose YAML parser (minimal, no PyYAML dependency)
@@ -174,6 +196,13 @@ def _parse_compose_minimal(text: str) -> dict[str, ServiceInfo]:
             if stripped in ("depends_on:", "ports:", "environment:"):
                 current_section = stripped.rstrip(":")
                 continue
+
+            # Any other section header at indent 4 (volumes:, healthcheck:, etc.)
+            # Reset current_section so list items below don't leak into previous section
+            if leading == 4 and stripped.endswith(":") and not stripped.startswith("-"):
+                if stripped.rstrip(":") not in ("depends_on", "ports", "environment"):
+                    current_section = None
+                    continue
 
             # image: xxx
             if stripped.startswith("image:"):
@@ -348,6 +377,45 @@ class InfraMapper:
                 for match in _TS_IMPORT_META_ENV_RE.finditer(line):
                     usages.append(EnvVarUsage(
                         name=match.group(1),
+                        caller_node_id=node.id,
+                        file_path=node.file_path,
+                        line=line_num,
+                    ))
+
+        # Pydantic BaseSettings classes — each attribute maps to an env var
+        for node in nodes:
+            if not node.source_code:
+                continue
+            if node.type.value != "class":
+                continue
+            if not _PYDANTIC_BASESETTINGS_RE.search(node.source_code):
+                continue
+
+            # Detect env_prefix (e.g. env_prefix = "CRAWLER_")
+            prefix_match = _PYDANTIC_ENV_PREFIX_RE.search(node.source_code)
+            env_prefix = prefix_match.group(1) if prefix_match else ""
+
+            lines = node.source_code.splitlines()
+            for i, line in enumerate(lines):
+                line_num = node.start_line + i
+                # Check for Field(env="X") — explicit mapping
+                field_match = _PYDANTIC_FIELD_ENV_RE.search(line)
+                if field_match:
+                    usages.append(EnvVarUsage(
+                        name=field_match.group(1),
+                        caller_node_id=node.id,
+                        file_path=node.file_path,
+                        line=line_num,
+                    ))
+                    continue
+                # Typed attribute with primitive type → env var
+                # pydantic-settings converts field name to UPPER_CASE
+                attr_match = _PYDANTIC_ATTR_RE.match(line)
+                if attr_match:
+                    attr_name = attr_match.group(1)
+                    env_name = env_prefix + attr_name.upper()
+                    usages.append(EnvVarUsage(
+                        name=env_name,
                         caller_node_id=node.id,
                         file_path=node.file_path,
                         line=line_num,
