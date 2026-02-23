@@ -145,14 +145,22 @@ _DJANGO_INSTANCE_WRITE_RE = re.compile(
     r"""\b\w+\.(?:save|delete)\s*\(""",
 )
 
-# SQLAlchemy: session.query(Model)
+# SQLAlchemy: session.query(Model), db.query(Model), async_session.query(Model)
 _SA_QUERY_RE = re.compile(
-    r"""\bsession\.query\s*\(\s*(\w+)""",
+    r"""\b\w+\.query\s*\(\s*(\w+)""",
 )
 
-# SQLAlchemy: session.add/delete/merge
+# SQLAlchemy: session.add/delete/merge/commit/flush/refresh, db.add(), etc.
 _SA_SESSION_WRITE_RE = re.compile(
-    r"""\bsession\.(?:add|add_all|delete|merge)\s*\(""",
+    r"""\b\w+\.(?:add|add_all|delete|merge|commit|flush|refresh)\s*\(""",
+)
+
+# SQLAlchemy 2.0 statement-style queries
+_SA2_SELECT_RE = re.compile(
+    r"""\bselect\s*\(\s*(\w+)""",
+)
+_SA2_WRITE_RE = re.compile(
+    r"""\b(?:insert|update|delete)\s*\(\s*(\w+)""",
 )
 
 # General: .execute("SQL...")
@@ -169,6 +177,12 @@ _SQL_NOISE = {
     "primary", "key", "foreign", "references", "constraint", "default",
     "autoincrement", "integer", "text", "real", "blob", "varchar", "char",
     "boolean", "timestamp", "date", "exists", "if",
+    # Filesystem operations falsely matched as table names
+    "disk", "file", "path", "directory", "folder", "tmp", "temp",
+    # System/catalog tables (not user tables)
+    "information_schema", "pg_catalog", "pg_stat", "pg_class",
+    "sqlite_master", "sqlite_sequence", "sqlite_temp_master",
+    "sys", "dual",
 }
 
 def _is_test_file(file_path: str) -> bool:
@@ -330,6 +344,45 @@ class SqlMapper:
                         line=line_num,
                     ))
 
+                # SQLAlchemy 2.0: select(Model).where(...)
+                for match in _SA2_SELECT_RE.finditer(line):
+                    model = match.group(1)
+                    # Skip SQL keywords that look like function calls
+                    if model.lower() in _SQL_NOISE:
+                        continue
+                    table = self._model_to_table.get(model, model.lower() + "s")
+                    ops.append(DbOperation(
+                        op_type="read",
+                        table_name=table,
+                        caller_node_id=node.id,
+                        file_path=node.file_path,
+                        line=line_num,
+                    ))
+
+                # SQLAlchemy 2.0: insert(Model), update(Model), delete(Model)
+                for match in _SA2_WRITE_RE.finditer(line):
+                    model = match.group(1)
+                    if model.lower() in _SQL_NOISE:
+                        continue
+                    table = self._model_to_table.get(model, model.lower() + "s")
+                    ops.append(DbOperation(
+                        op_type="write",
+                        table_name=table,
+                        caller_node_id=node.id,
+                        file_path=node.file_path,
+                        line=line_num,
+                    ))
+
+                # Django instance writes: obj.save(), obj.delete()
+                if _DJANGO_INSTANCE_WRITE_RE.search(line):
+                    ops.append(DbOperation(
+                        op_type="write",
+                        table_name="<unknown>",
+                        caller_node_id=node.id,
+                        file_path=node.file_path,
+                        line=line_num,
+                    ))
+
             # Also check .execute() calls with SQL strings
             for match in _EXECUTE_RE.finditer(source):
                 sql_fragment = match.group(1)
@@ -394,6 +447,23 @@ class SqlMapper:
 
         for op in self._operations:
             if op.table_name == "<unknown>":
+                # Still create edge for generic writes (session.add, etc.)
+                # so the function is marked as DB-writing even without table resolution
+                if op.op_type in ("write",):
+                    key = (op.caller_node_id, op.op_type, "<unknown>")
+                    if key not in seen:
+                        seen.add(key)
+                        self._edge_counter += 1
+                        edges.append(Edge(
+                            id=f"db_edge_{self._edge_counter}",
+                            from_node=op.caller_node_id,
+                            to_node="db.write.unknown",
+                            type=EdgeType.WRITES_TABLE,
+                            line_number=op.line,
+                            confidence=EdgeConfidence.INFERRED,
+                            source=EdgeSource.STATIC,
+                            metadata={"table": "<unknown>", "operation": op.op_type},
+                        ))
                 continue
 
             key = (op.caller_node_id, op.op_type, op.table_name)

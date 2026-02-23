@@ -664,22 +664,78 @@ class _DeclarationMixin:
     def _handle_variable_declarator(
         self, node: Any  # type: ignore
     ) -> None:
-        """Handle variable declarator (const x = ...)."""
+        """Handle variable declarator (const x = ...).
+
+        Detects arrow functions, function expressions, and generator functions
+        assigned to variables and creates FUNCTION nodes for them.  Also
+        unwraps TypeScript wrapper expressions (``as``, ``satisfies``,
+        parenthesised) so that patterns like
+        ``const fn = (async () => {}) as MyType`` are recognised.
+        """
+        _FUNC_TYPES = frozenset((
+            "arrow_function",
+            "function_expression",
+            "generator_function",
+        ))
+
         name = None
         value = None
 
         for child in node.children:
             if child.type == "identifier":
                 name = self._get_text(child)
-            elif child.type in ("arrow_function", "function"):
+            elif child.type in _FUNC_TYPES:
                 value = child
+            elif value is None and child.type in (
+                "as_expression",
+                "satisfies_expression",
+                "parenthesized_expression",
+            ):
+                # Unwrap TS type wrappers to find the underlying function
+                value = self._unwrap_to_function(child, _FUNC_TYPES)
 
         if name and value:
-            self._handle_function(value, name_override=name)
+            is_generator = value.type == "generator_function"
+            self._handle_function(value, name_override=name, is_generator=is_generator)
         elif name:
             # Not a function, might be a constant or React component
             for child in node.children:
                 self.visit(child)
+
+    def _unwrap_to_function(
+        self, node: Any, func_types: frozenset[str]  # type: ignore
+    ) -> Any | None:
+        """Unwrap TS type wrappers to find an underlying function node.
+
+        Handles ``as_expression``, ``satisfies_expression``, and
+        ``parenthesized_expression`` which can wrap arrow functions or
+        function expressions in TypeScript.  Recurses at most 5 levels
+        deep to avoid pathological nesting.
+        """
+        for _ in range(5):  # bounded recursion
+            if node.type in func_types:
+                return node
+            if node.type in (
+                "as_expression",
+                "satisfies_expression",
+                "parenthesized_expression",
+            ):
+                # The function is typically the first meaningful child
+                for child in node.children:
+                    if child.type in func_types:
+                        return child
+                    if child.type in (
+                        "as_expression",
+                        "satisfies_expression",
+                        "parenthesized_expression",
+                    ):
+                        node = child
+                        break
+                else:
+                    return None  # No wrapper child found
+            else:
+                return None
+        return None
 
     # === Class handling ===
 
@@ -858,6 +914,79 @@ class _DeclarationMixin:
 
     # === JSX handling ===
 
+    def _extract_jsx_prop_refs(self, element_node: Any) -> None:  # type: ignore
+        """Extract USES edges from JSX attribute prop references.
+
+        Handles two patterns inside JSX attributes:
+        - Bare identifier:      onSave={handleSave}   -> USES edge
+        - Member expression:    handler={obj.method}   -> USES edge
+        - Arrow/call in prop:   onClick={() => save()} -> already handled by
+          _extract_calls in _handle_function, so we skip those here.
+        """
+        for child in element_node.children:
+            if child.type != "jsx_attribute":
+                continue
+
+            # Find the jsx_expression value of this attribute
+            for attr_child in child.children:
+                if attr_child.type != "jsx_expression":
+                    continue
+
+                # Look for bare identifier or member_expression references
+                for expr_child in attr_child.children:
+                    if expr_child.type == "identifier":
+                        ref_name = self._get_text(expr_child)
+                        if not ref_name:
+                            continue
+
+                        # Resolve through imports
+                        target = self._imports.get(ref_name, ref_name)
+
+                        self.edges.append(
+                            Edge(
+                                id=_edge_id(),
+                                from_node=self._current_scope,
+                                to_node=target,
+                                type=EdgeType.USES,
+                                line_number=expr_child.start_point[0] + 1,
+                                confidence=EdgeConfidence.INFERRED,
+                                source=EdgeSource.STATIC,
+                                metadata={
+                                    "jsx_prop": True,
+                                    "column": expr_child.start_point[1],
+                                    "file": self.file_path,
+                                },
+                            )
+                        )
+                    elif expr_child.type == "member_expression":
+                        # Handle dotted references: obj.method
+                        ref_name = self._get_member_expression(expr_child)
+                        if not ref_name:
+                            continue
+
+                        # Resolve first part through imports
+                        parts = ref_name.split(".", 1)
+                        target = self._imports.get(parts[0], parts[0])
+                        if len(parts) > 1:
+                            target = f"{target}.{parts[1]}"
+
+                        self.edges.append(
+                            Edge(
+                                id=_edge_id(),
+                                from_node=self._current_scope,
+                                to_node=target,
+                                type=EdgeType.USES,
+                                line_number=expr_child.start_point[0] + 1,
+                                confidence=EdgeConfidence.INFERRED,
+                                source=EdgeSource.STATIC,
+                                metadata={
+                                    "jsx_prop": True,
+                                    "column": expr_child.start_point[1],
+                                    "file": self.file_path,
+                                },
+                            )
+                        )
+
     def visit_jsx_element(self, node: Any) -> None:  # type: ignore
         """Handle JSX elements as component calls."""
         for child in node.children:
@@ -884,6 +1013,8 @@ class _DeclarationMixin:
                                     },
                                 )
                             )
+                # Extract prop function references from JSX attributes
+                self._extract_jsx_prop_refs(child)
             self.visit(child)
 
     def visit_jsx_self_closing_element(
@@ -911,6 +1042,8 @@ class _DeclarationMixin:
                             },
                         )
                     )
+        # Extract prop function references from JSX attributes
+        self._extract_jsx_prop_refs(node)
 
 
 class _TreeSitterVisitor(_ImportExportMixin, _DeclarationMixin):

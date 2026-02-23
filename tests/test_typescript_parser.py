@@ -83,6 +83,95 @@ class TestBasicParsing:
         assert len(func_nodes) == 1
         assert func_nodes[0].metadata.get("is_async") is True
 
+    def test_parse_function_expression(self, parser, tmp_project: Path) -> None:
+        """Parse a function expression assigned to const."""
+        src = tmp_project / "utils.js"
+        src.write_text(
+            "const handler = function(req, res) {\n"
+            "    return res.json({ok: true});\n"
+            "};\n"
+        )
+
+        nodes, edges = parser.parse_file(src, tmp_project)
+
+        func_nodes = [n for n in nodes if n.name == "handler"]
+        assert len(func_nodes) == 1
+        assert func_nodes[0].type.value == "function"
+
+    def test_parse_exported_function_expression(self, parser, tmp_project: Path) -> None:
+        """Parse an exported function expression assigned to const."""
+        src = tmp_project / "api.js"
+        src.write_text(
+            "export const updateUser = function(id, data) {\n"
+            "    return fetch('/api/users/' + id, { method: 'PUT' });\n"
+            "};\n"
+        )
+
+        nodes, edges = parser.parse_file(src, tmp_project)
+
+        func_nodes = [n for n in nodes if n.name == "updateUser"]
+        assert len(func_nodes) == 1
+        assert func_nodes[0].type.value == "function"
+        assert func_nodes[0].metadata.get("is_exported") is True
+        # Edge should come from the function, not the module
+        call_edges = [e for e in edges if e.type.value == "calls" and "updateUser" in e.from_node]
+        assert len(call_edges) == 1
+        assert call_edges[0].to_node == "fetch"
+
+    def test_parse_api_client_no_black_hole(self, parser, tmp_project: Path) -> None:
+        """All fetch() edges should come from individual functions, not module.
+
+        Regression test for the 'api/client.js black hole' issue where
+        all calls_api edges pointed to the module node instead of the
+        individual exported functions.
+        """
+        src = tmp_project / "client.js"
+        src.write_text(
+            "export const triggerCrawl = async (params) => {\n"
+            "    return fetch('/api/crawl/trigger');\n"
+            "};\n"
+            "\n"
+            "export const getUpdates = async () => {\n"
+            "    return fetch('/api/dashboard/updates');\n"
+            "};\n"
+            "\n"
+            "export const updateUser = function(id, data) {\n"
+            "    return fetch('/api/users/' + id, { method: 'PUT' });\n"
+            "};\n"
+        )
+
+        nodes, edges = parser.parse_file(src, tmp_project)
+
+        module_id = next(n.id for n in nodes if n.type.value == "module")
+        call_edges = [e for e in edges if e.type.value == "calls"]
+
+        # No call edges should come from the module (the "black hole")
+        module_calls = [e for e in call_edges if e.from_node == module_id]
+        assert module_calls == [], f"Black hole: edges from module: {[(e.from_node, e.to_node) for e in module_calls]}"
+
+        # All three functions should have fetch edges
+        func_names_with_fetch = {
+            e.from_node.split(".")[-1]
+            for e in call_edges
+            if e.to_node == "fetch"
+        }
+        assert func_names_with_fetch == {"triggerCrawl", "getUpdates", "updateUser"}
+
+    def test_parse_generator_function_expression(self, parser, tmp_project: Path) -> None:
+        """Parse a generator function expression assigned to const."""
+        src = tmp_project / "generators.js"
+        src.write_text(
+            "const gen = function* () {\n"
+            "    yield getData();\n"
+            "};\n"
+        )
+
+        nodes, edges = parser.parse_file(src, tmp_project)
+
+        func_nodes = [n for n in nodes if n.name == "gen" and n.type.value == "function"]
+        assert len(func_nodes) == 1
+        assert func_nodes[0].metadata.get("is_generator") is True
+
 
 class TestClassParsing:
     """Test class and method parsing."""

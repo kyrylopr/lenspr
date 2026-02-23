@@ -186,8 +186,8 @@ def handle_env_map(params: dict, ctx: LensContext) -> ToolResponse:
             "used_by": [],
         }
     for u in usages:
-        entry = env_summary.setdefault(u.env_name, {"defined_in": None, "default": None, "used_by": []})
-        entry["used_by"].append({"node_id": u.node_id, "file": u.file_path, "line": u.line})
+        entry = env_summary.setdefault(u.name, {"defined_in": None, "default": None, "used_by": []})
+        entry["used_by"].append({"node_id": u.caller_node_id, "file": u.file_path, "line": u.line})
 
     # Find undefined env vars (used but not defined)
     defined_names = {d.name for d in definitions}

@@ -35,8 +35,8 @@ class TestInit:
 
     def test_init_shows_node_count(self, sample_project: Path) -> None:
         result = run_cli("init", str(sample_project))
-        assert "Total nodes:" in result.stdout
-        assert "Total edges:" in result.stdout
+        assert "Nodes:" in result.stdout
+        assert "Edges:" in result.stdout
 
     def test_init_shows_language_stats(self, sample_project: Path) -> None:
         result = run_cli("init", str(sample_project))

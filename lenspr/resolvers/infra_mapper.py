@@ -107,7 +107,7 @@ _TS_IMPORT_META_ENV_RE = re.compile(
 
 # .env file: KEY=value or KEY="value"
 _DOTENV_RE = re.compile(
-    r"""^([A-Z][A-Z0-9_]*)\s*=\s*(.*)$""",
+    r"""^(?:export\s+)?([A-Z][A-Z0-9_]*)\s*=\s*(.*)$""",
     re.MULTILINE,
 )
 
@@ -202,6 +202,16 @@ def _parse_compose_minimal(text: str) -> dict[str, ServiceInfo]:
                         svc.environment[key.strip()] = val.strip()
                     else:
                         svc.environment[item.strip()] = ""
+                continue
+
+            # Dict-style depends_on (with conditions):
+            #   depends_on:
+            #     db:
+            #       condition: service_healthy
+            if current_section == "depends_on" and stripped.endswith(":") and not stripped.startswith("-"):
+                dep_name = stripped[:-1].strip()
+                if dep_name and dep_name.isidentifier():
+                    svc.depends_on.append(dep_name)
                 continue
 
             # Inline depends_on: [db, redis]

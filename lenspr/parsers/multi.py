@@ -237,6 +237,12 @@ class MultiParser(BaseParser):
                 continue
 
             if file_path.suffix.lower() not in extensions:
+                # Track unparsed file types
+                if stats and file_path.suffix:
+                    ext = file_path.suffix.lower()
+                    stats.unparsed_extensions[ext] = (
+                        stats.unparsed_extensions.get(ext, 0) + 1
+                    )
                 continue
 
             files_to_parse.append(file_path)

@@ -320,5 +320,5 @@ class TestRegistryCompleteness:
     def test_categories_cover_expected_domains(self) -> None:
         categories = {p.category for p in ENTRY_POINT_PATTERNS}
         expected = {"main", "test", "structural", "cli", "mcp", "handler", "web",
-                    "migration", "pytest", "django", "dunder", "visitor"}
+                    "migration", "task_queue", "pytest", "django", "dunder", "visitor"}
         assert expected.issubset(categories), f"Missing categories: {expected - categories}"

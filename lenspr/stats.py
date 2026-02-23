@@ -55,6 +55,7 @@ class ParseStats:
     project_root: Path
     languages: dict[str, LanguageStats] = field(default_factory=dict)
     skipped_dirs: dict[str, int] = field(default_factory=dict)  # dir_name -> file_count
+    unparsed_extensions: dict[str, int] = field(default_factory=dict)  # ext -> file_count
     warnings: list[str] = field(default_factory=list)
     total_time_ms: float = 0.0
 
@@ -220,6 +221,26 @@ def format_stats_report(stats: ParseStats) -> str:
             lines.append(f"    Unresolved: {unresolved:>5} (dynamic)")
 
     lines.append("")
+
+    # Unparsed file types
+    if stats.unparsed_extensions:
+        lines.append("Not parsed (no parser):")
+        # Sort by count descending, show top entries
+        sorted_exts = sorted(
+            stats.unparsed_extensions.items(), key=lambda x: x[1], reverse=True
+        )
+        shown = sorted_exts[:12]
+        for ext, count in shown:
+            label = f"  {ext}:".ljust(16)
+            lines.append(f"{label}{count:>6} files")
+        if len(sorted_exts) > 12:
+            rest_count = sum(c for _, c in sorted_exts[12:])
+            rest_types = len(sorted_exts) - 12
+            lines.append(f"  ... +{rest_types} other types ({rest_count} files)")
+        total_unparsed = sum(stats.unparsed_extensions.values())
+        lines.append("  " + "-" * 35)
+        lines.append(f"  {'Total skipped:'.ljust(12)}{total_unparsed:>6} files")
+        lines.append("")
 
     # Warnings
     if stats.warnings:

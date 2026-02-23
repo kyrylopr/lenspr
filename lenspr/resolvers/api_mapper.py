@@ -459,7 +459,16 @@ class ApiMapper:
                 continue
 
             source = node.source_code
-            lines = source.splitlines()
+
+            # Collapse multiline fetch/axios calls so regex can match
+            # Join lines where a call starts on one line and the URL is on the next
+            collapsed_source = source
+            collapsed_source = re.sub(
+                r'((?:fetch|axios\.(?:get|post|put|patch|delete|request))\s*\()\s*\n\s*',
+                r'\1',
+                collapsed_source,
+            )
+            lines = collapsed_source.splitlines()
 
             for i, line in enumerate(lines):
                 line_num = node.start_line + i
@@ -610,6 +619,8 @@ class ApiMapper:
         path = re.sub(r"\{[^}]+\}", ":param", path)
         # Express: :param_name
         path = re.sub(r":([a-zA-Z_]\w*)", ":param", path)
+        # Strip query string
+        path = path.split("?")[0]
         # Remove trailing slash
         path = path.rstrip("/")
         return path

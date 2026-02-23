@@ -328,13 +328,23 @@ def sync_file(
         unchanged_ids = (old_node_ids & new_node_ids) - modified_ids
         changed_ids = added_ids | modified_ids  # need edge refresh
 
-        # 3. Delete outgoing edges from changed/deleted nodes
+        # 3. Delete outgoing edges from changed/deleted nodes.
+        #    Preserve mapper-produced cross-language edges (calls_api,
+        #    reads_table, writes_table, etc.) — these are only recreated
+        #    during full sync when the mappers run.
+        _MAPPER_EDGE_TYPES = (
+            "calls_api", "handles_route",
+            "reads_table", "writes_table", "migrates",
+            "depends_on", "exposes_port", "uses_env",
+        )
         ids_to_clear = changed_ids | deleted_ids
         if ids_to_clear:
             placeholders = ",".join("?" * len(ids_to_clear))
+            type_placeholders = ",".join("?" * len(_MAPPER_EDGE_TYPES))
             conn.execute(
-                f"DELETE FROM edges WHERE from_node IN ({placeholders})",
-                list(ids_to_clear),
+                f"DELETE FROM edges WHERE from_node IN ({placeholders})"
+                f" AND type NOT IN ({type_placeholders})",
+                list(ids_to_clear) + list(_MAPPER_EDGE_TYPES),
             )
 
         # 4. Delete stale incoming edges to deleted nodes

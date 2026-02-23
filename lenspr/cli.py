@@ -240,7 +240,7 @@ def cmd_init(args: argparse.Namespace) -> None:
     if stats:
         print(format_stats_report(stats))
 
-    # Final summary — always show file breakdown from the graph
+    # Final summary — show file breakdown + edge types from the graph
     g = ctx.get_graph()
 
     from lenspr.database import load_graph
@@ -258,7 +258,7 @@ def cmd_init(args: argparse.Namespace) -> None:
         elif ext_lower in ts_exts:
             files_by_lang["Frontend (TS/JS)"].add(fp)
 
-    # Count total source files in project (not just parsed)
+    # Count total parseable source files in project
     all_exts = py_exts | ts_exts
     skip_dirs = {
         "__pycache__", ".git", ".lens", ".venv", "venv", "env",
@@ -274,6 +274,7 @@ def cmd_init(args: argparse.Namespace) -> None:
             total_source += 1
 
     parsed_files = sum(len(s) for s in files_by_lang.values())
+    unparsed_total = sum(stats.unparsed_extensions.values()) if stats else 0
 
     db_size = (ctx.lens_dir / "graph.db").stat().st_size / 1024  # KB
     if db_size > 1024:
@@ -281,16 +282,72 @@ def cmd_init(args: argparse.Namespace) -> None:
     else:
         db_size_str = f"{db_size:.0f} KB"
 
+    # Count edges by type for the summary
+    edge_type_counts: dict[str, int] = {}
+    for edge in all_edges:
+        etype = edge.type.value
+        edge_type_counts[etype] = edge_type_counts.get(etype, 0) + 1
+
+    # Count nodes by type
+    node_type_counts: dict[str, int] = {}
+    for node in all_nodes:
+        ntype = node.type.value
+        node_type_counts[ntype] = node_type_counts.get(ntype, 0) + 1
+
     print("=" * 50)
     print("Graph created successfully!")
     print()
-    print(f"  Files parsed:   {parsed_files} / {total_source}")
+    print(f"  Files parsed:     {parsed_files} / {parsed_files + unparsed_total}")
     for lang, file_set in sorted(files_by_lang.items()):
         if file_set:
             print(f"    {lang}:{' ' * (20 - len(lang))}{len(file_set):>4} files")
     print()
-    print(f"  Total nodes:  {g.number_of_nodes()}")
-    print(f"  Total edges:  {g.number_of_edges()}")
+
+    # Node breakdown
+    print(f"  Nodes:  {g.number_of_nodes()}")
+    for ntype in ["module", "function", "method", "class", "block"]:
+        count = node_type_counts.get(ntype, 0)
+        if count > 0:
+            print(f"    {ntype + ':'.ljust(12)}{count:>6}")
+    print()
+
+    # Edge breakdown — grouped by category
+    total_edges = g.number_of_edges()
+    print(f"  Edges:  {total_edges}")
+
+    # Code edges
+    code_types = ["calls", "imports", "uses", "inherits", "decorates", "contains", "mocks"]
+    code_edges = [(t, edge_type_counts.get(t, 0)) for t in code_types if edge_type_counts.get(t, 0) > 0]
+    if code_edges:
+        print("    Code:")
+        for etype, count in code_edges:
+            print(f"      {etype + ':'.ljust(14)}{count:>6}")
+
+    # Cross-language edges
+    cross_types = ["calls_api", "handles_route"]
+    cross_edges = [(t, edge_type_counts.get(t, 0)) for t in cross_types if edge_type_counts.get(t, 0) > 0]
+    if cross_edges:
+        print("    Cross-language:")
+        for etype, count in cross_edges:
+            print(f"      {etype + ':'.ljust(14)}{count:>6}")
+
+    # Database edges
+    db_types = ["reads_table", "writes_table", "migrates"]
+    db_edges = [(t, edge_type_counts.get(t, 0)) for t in db_types if edge_type_counts.get(t, 0) > 0]
+    if db_edges:
+        print("    Database:")
+        for etype, count in db_edges:
+            print(f"      {etype + ':'.ljust(14)}{count:>6}")
+
+    # Infrastructure edges
+    infra_types = ["depends_on", "uses_env", "exposes_port"]
+    infra_edges = [(t, edge_type_counts.get(t, 0)) for t in infra_types if edge_type_counts.get(t, 0) > 0]
+    if infra_edges:
+        print("    Infrastructure:")
+        for etype, count in infra_edges:
+            print(f"      {etype + ':'.ljust(14)}{count:>6}")
+
+    print()
     if stats:
         print(f"  Confidence:   {stats.overall_resolution_pct:.0f}%")
         print(f"  Parse time:   {stats.total_time_ms / 1000:.1f}s")
