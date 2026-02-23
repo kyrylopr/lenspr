@@ -37,10 +37,7 @@ htmlcov/
 .DS_Store
 Thumbs.db
 .env
-eval/.env
-eval/results/
-eval/results_v2/
-!eval/results/*.png
+eval/
 
 # Node.js
 node_modules/
