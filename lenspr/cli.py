@@ -21,7 +21,11 @@ def main() -> None:
     p_init.add_argument("--force", action="store_true", help="Reinitialize even if .lens/ exists")
     p_init.add_argument(
         "--install-deps", action="store_true",
-        help="Auto-install npm dependencies for JS/TS packages"
+        help="(deprecated, now default) Auto-install npm dependencies"
+    )
+    p_init.add_argument(
+        "--skip-deps", action="store_true",
+        help="Skip auto-installing npm dependencies for JS/TS packages"
     )
 
     # -- sync --
@@ -215,8 +219,11 @@ def cmd_init(args: argparse.Namespace) -> None:
             print(f"Detected JS/TS package: {pkg.name or pkg.path.name}")
 
         if missing_count > 0:
-            if args.install_deps:
-                print(f"Installing dependencies for {missing_count} package(s)...")
+            if args.skip_deps:
+                print(f"  ⚠ {missing_count} package(s) missing node_modules (skipped)")
+                print()
+            else:
+                print(f"  Installing dependencies for {missing_count} package(s)...")
 
                 def npm_progress(current: int, total: int, pkg_path: str) -> None:
                     name = Path(pkg_path).name
@@ -228,21 +235,9 @@ def cmd_init(args: argparse.Namespace) -> None:
                 )
                 success = sum(1 for v in results.values() if v)
                 if success < missing_count:
-                    print(f"  Warning: {missing_count - success} package(s) failed to install")
-                print()
-            else:
-                # Show hint about --install-deps
-                print(f"  ⚠ {missing_count} package(s) missing node_modules")
-                for pkg_path in monorepo.missing_node_modules[:3]:
-                    rel = pkg_path.relative_to(path) if pkg_path != path else Path(".")
-                    print(f"    - {rel}")
-                if missing_count > 3:
-                    print(f"    ... and {missing_count - 3} more")
-                print()
-                print("  Tip: Use --install-deps to auto-install, or run:")
-                for pkg_path in monorepo.missing_node_modules[:2]:
-                    rel = pkg_path.relative_to(path) if pkg_path != path else Path(".")
-                    print(f"    cd {rel} && npm install")
+                    print(f"  ⚠ {missing_count - success} package(s) failed to install")
+                else:
+                    print(f"  ✓ All {success} package(s) installed")
                 print()
 
     try:
