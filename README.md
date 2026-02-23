@@ -1,6 +1,10 @@
-# LensPR
+<p align="center">
+  <img src="assets/LensPR.png" alt="LensPR" width="200">
+</p>
 
-**Code intelligence for AI coding agents. Your AI sees dependencies before making changes.**
+<h1 align="center">LensPR</h1>
+
+<p align="center"><strong>Code intelligence for AI coding agents. Your AI sees dependencies before making changes.</strong></p>
 
 > Alpha (0.1.x) — works on real projects, used daily by the author. Expect rough edges.
 
