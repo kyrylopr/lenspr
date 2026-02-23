@@ -48,3 +48,7 @@ node_modules/
 # Internal dev files
 plan.md
 demo.tape
+assets/demo-*
+assets/demo-bin/
+package.json
+package-lock.json
