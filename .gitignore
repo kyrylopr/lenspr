@@ -37,6 +37,9 @@ htmlcov/
 .DS_Store
 Thumbs.db
 .env
+
+# MCP Registry tokens
+.mcpregistry_*
 eval/
 
 # Node.js
